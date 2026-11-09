@@ -1,0 +1,32 @@
+<Project>
+
+  <!--
+    Repo-wide defaults for every DevWeave .NET project.
+
+    TargetFramework is owned here rather than in individual project files. .NET 10 is the LTS
+    baseline recommended by SRS DWV-SRS-001 section 3.3. Pin the exact SDK and package versions in
+    the implementation bill of materials and review at least quarterly.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!--
+    Test projects opt out of warnings-as-errors: descriptive test names and inline fixture data
+    legitimately violate production-oriented style rules.
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-minimum</AnalysisLevel>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

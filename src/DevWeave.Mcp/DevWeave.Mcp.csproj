@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DevWeave.Domain\DevWeave.Domain.csproj" />
+    <ProjectReference Include="..\DevWeave.Contracts\DevWeave.Contracts.csproj" />
+    <ProjectReference Include="..\DevWeave.Application\DevWeave.Application.csproj" />
+    <ProjectReference Include="..\DevWeave.Infrastructure\DevWeave.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

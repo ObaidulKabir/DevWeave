@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-DevWeave.Workers-35065388-925b-49ea-9ccd-0d38bb9db50b</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DevWeave.Domain\DevWeave.Domain.csproj" />
+    <ProjectReference Include="..\DevWeave.Contracts\DevWeave.Contracts.csproj" />
+    <ProjectReference Include="..\DevWeave.Application\DevWeave.Application.csproj" />
+    <ProjectReference Include="..\DevWeave.Infrastructure\DevWeave.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,814 @@
+openapi: 3.1.0
+info:
+  title: DevWeave proposed capability API
+  version: 1.0.0-draft
+  description: >-
+    Contract-only proposal for capabilities not yet exposed by the existing API.
+    Routes below are NOT implemented or registered. Existing Slice 1-8 routes
+    remain defined by their versioned Contracts and endpoint modules.
+x-contract-only: true
+x-requirements: [TEN, GOV, PRJ, LFC, KNW, REV, SCH, REL, PRO, ART, SRH, AGT, AGI, INT, EXP, RPT, APP, OPS, API, WEB, UI, COL, MCP, MCO, COM, DATA, NFR]
+security:
+  - bearer: []
+paths:
+  /v1/planned/policies/evaluate:
+    post:
+      tags: [Governance]
+      operationId: evaluateResourcePolicy
+      x-port: IResourcePolicy
+      x-contract-only: true
+      x-request-type: PolicyCheck
+      requestBody: { $ref: '#/components/requestBodies/PolicyCheck' }
+      responses:
+        '200': { $ref: '#/components/responses/Decision' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/planned/support-access:
+    post:
+      tags: [Governance]
+      operationId: requestSupportAccess
+      x-port: ISupportAccess
+      x-contract-only: true
+      x-request-type: SupportAccessDraft
+      requestBody: { $ref: '#/components/requestBodies/SupportAccessDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/planned/work-items:
+    post:
+      tags: [Lifecycle]
+      operationId: createWorkItem
+      x-port: IWorkPlanning
+      x-contract-only: true
+      x-request-type: WorkItemDraft
+      requestBody: { $ref: '#/components/requestBodies/WorkItemDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [Lifecycle]
+      operationId: listWorkItems
+      x-port: IWorkPlanning
+      x-contract-only: true
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+  /v1/planned/lifecycle/transitions:
+    post:
+      tags: [Lifecycle]
+      operationId: recordLifecycleTransition
+      x-port: ILifecycleGovernance
+      x-contract-only: true
+      x-request-type: LifecycleTransitionDraft
+      requestBody: { $ref: '#/components/requestBodies/LifecycleTransitionDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/audit:
+    get:
+      tags: [Governance]
+      operationId: listAudit
+      x-port: IAuditJournal
+      x-contract-only: true
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+  /v1/planned/search:
+    post:
+      tags: [Search]
+      operationId: searchKnowledge
+      x-port: IKnowledgeSearch
+      x-contract-only: true
+      x-request-type: SearchQuery
+      requestBody: { $ref: '#/components/requestBodies/SearchQuery' }
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/planned/integrations:
+    post:
+      tags: [Integrations]
+      operationId: registerIntegration
+      x-port: IIntegrationRegistry
+      x-contract-only: true
+      x-request-type: IntegrationDraft
+      requestBody: { $ref: '#/components/requestBodies/IntegrationDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/integrations/events:
+    post:
+      tags: [Integrations]
+      operationId: acceptInboundEvent
+      x-port: IInboundEventProcessor
+      x-contract-only: true
+      x-request-type: IngressEnvelope
+      requestBody: { $ref: '#/components/requestBodies/IngressEnvelope' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/exports:
+    post:
+      tags: [Portability]
+      operationId: beginExport
+      x-port: IPortableArchive
+      x-contract-only: true
+      x-request-type: ExportDraft
+      requestBody: { $ref: '#/components/requestBodies/ExportDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/imports:
+    post:
+      tags: [Portability]
+      operationId: beginImport
+      x-port: IPortableArchive
+      x-contract-only: true
+      x-request-type: ImportDraft
+      requestBody: { $ref: '#/components/requestBodies/ImportDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/reports:
+    post:
+      tags: [Reporting]
+      operationId: generateProjectReport
+      x-port: IProjectReporting
+      x-contract-only: true
+      x-request-type: ReportDraft
+      requestBody: { $ref: '#/components/requestBodies/ReportDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/notifications:
+    post:
+      tags: [Notifications]
+      operationId: subscribeNotifications
+      x-port: INotificationDelivery
+      x-contract-only: true
+      x-request-type: NotificationDraft
+      requestBody: { $ref: '#/components/requestBodies/NotificationDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/annotations:
+    post:
+      tags: [Collaboration]
+      operationId: annotateRevision
+      x-port: ICollaboration
+      x-contract-only: true
+      x-request-type: AnnotationDraft
+      requestBody: { $ref: '#/components/requestBodies/AnnotationDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/applications:
+    post:
+      tags: [Applications]
+      operationId: registerApplication
+      x-port: IApplicationCatalogue
+      x-contract-only: true
+      x-request-type: ApplicationDraft
+      requestBody: { $ref: '#/components/requestBodies/ApplicationDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/operations/readiness:
+    get:
+      tags: [Operations]
+      operationId: getPlatformReadiness
+      x-port: IPlatformOperations
+      x-contract-only: true
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+  /v1/planned/retention/requests:
+    post:
+      tags: [Governance]
+      operationId: requestRetentionAction
+      x-port: IRetentionAndErasure
+      x-contract-only: true
+      x-request-type: RetentionActionDraft
+      requestBody: { $ref: '#/components/requestBodies/RetentionActionDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/baselines:
+    post:
+      tags: [Coordination]
+      operationId: lockPlanBaseline
+      x-port: IPlanBaselines
+      x-contract-only: true
+      x-request-type: BaselineDraft
+      requestBody: { $ref: '#/components/requestBodies/BaselineDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/codebase-targets:
+    post:
+      tags: [Coordination]
+      operationId: registerCodebaseTarget
+      x-port: ICodebaseRegistry
+      x-contract-only: true
+      x-request-type: CodebaseTargetDraft
+      requestBody: { $ref: '#/components/requestBodies/CodebaseTargetDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/campaigns:
+    post:
+      tags: [Coordination]
+      operationId: createCampaign
+      x-port: ICampaignCoordinator
+      x-contract-only: true
+      x-request-type: CampaignDraft
+      requestBody: { $ref: '#/components/requestBodies/CampaignDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/agent-runtimes:
+    post:
+      tags: [Coordination]
+      operationId: registerAgentRuntime
+      x-port: IRuntimeRegistry
+      x-contract-only: true
+      x-request-type: RuntimeRegistration
+      requestBody: { $ref: '#/components/requestBodies/RuntimeRegistration' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/participation-offers:
+    post:
+      tags: [Coordination]
+      operationId: submitParticipationOffer
+      x-port: IParticipationScheduler
+      x-contract-only: true
+      x-request-type: OfferDraft
+      requestBody: { $ref: '#/components/requestBodies/OfferDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/work-packages:
+    post:
+      tags: [Coordination]
+      operationId: createWorkPackage
+      x-port: IParticipationScheduler
+      x-contract-only: true
+      x-request-type: PackageDraft
+      requestBody: { $ref: '#/components/requestBodies/PackageDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/leases:
+    post:
+      tags: [Coordination]
+      operationId: acquireLease
+      x-port: ILeaseAuthority
+      x-contract-only: true
+      x-request-type: LeaseRequest
+      requestBody: { $ref: '#/components/requestBodies/LeaseRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/workspaces:
+    post:
+      tags: [Coordination]
+      operationId: prepareWorkspaceReference
+      x-port: IExternalWorkspaceProvider
+      x-contract-only: true
+      x-request-type: WorkspaceDraft
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/change-sets:
+    post:
+      tags: [Coordination]
+      operationId: recordChangeSet
+      x-port: ICodebaseRegistry
+      x-contract-only: true
+      x-request-type: ChangeSetDraft
+      requestBody: { $ref: '#/components/requestBodies/ChangeSetDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/integration-queue:
+    post:
+      tags: [Coordination]
+      operationId: enqueueIntegration
+      x-port: IIntegrationQueue
+      x-contract-only: true
+      x-request-type: QueueDraft
+      requestBody: { $ref: '#/components/requestBodies/QueueDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/mcp/services:
+    get:
+      tags: [MCP]
+      operationId: discoverProjectMcp
+      x-port: IProjectMcpDirectory
+      x-contract-only: true
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+  /v1/planned/mcp/channels:
+    post:
+      tags: [MCP]
+      operationId: openCoordinationChannel
+      x-port: ICoordinationChannels
+      x-contract-only: true
+      x-request-type: ChannelDraft
+      requestBody: { $ref: '#/components/requestBodies/ChannelDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/mcp/messages:
+    post:
+      tags: [MCP]
+      operationId: sendCoordinationMessage
+      x-port: ICoordinationChannels
+      x-contract-only: true
+      x-request-type: MessageDraft
+      requestBody: { $ref: '#/components/requestBodies/MessageDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/mcp/replay:
+    get:
+      tags: [MCP]
+      operationId: replayCoordinationMessages
+      x-port: ICoordinationChannels
+      x-contract-only: true
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+  /v1/planned/mcp/cursors:
+    post:
+      tags: [MCP]
+      operationId: acknowledgeCoordinationCursor
+      x-port: ICoordinationChannels
+      x-contract-only: true
+      x-request-type: CursorDraft
+      requestBody: { $ref: '#/components/requestBodies/CursorDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/mcp/handoffs:
+    post:
+      tags: [MCP]
+      operationId: proposeHandoff
+      x-port: IAgentHandoffs
+      x-contract-only: true
+      x-request-type: HandoffDraft
+      requestBody: { $ref: '#/components/requestBodies/HandoffDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/plans:
+    post:
+      tags: [Commercial]
+      operationId: publishPlan
+      x-port: IPlanCatalogue
+      x-contract-only: true
+      x-request-type: PlanDraft
+      requestBody: { $ref: '#/components/requestBodies/PlanDraft' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/entitlements/evaluate:
+    post:
+      tags: [Commercial]
+      operationId: evaluateEntitlement
+      x-port: IEntitlementEvaluator
+      x-contract-only: true
+      x-request-type: EntitlementCheck
+      requestBody: { $ref: '#/components/requestBodies/EntitlementCheck' }
+      responses:
+        '200': { $ref: '#/components/responses/Decision' }
+  /v1/planned/usage:
+    post:
+      tags: [Commercial]
+      operationId: recordUsage
+      x-port: IUsageMeter
+      x-contract-only: true
+      x-request-type: UsageObservation
+      requestBody: { $ref: '#/components/requestBodies/UsageObservation' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/planned/managed-runners:
+    post:
+      tags: [Commercial]
+      operationId: provisionManagedRunner
+      x-port: IManagedRuntimeProvider
+      x-contract-only: true
+      x-request-type: ManagedRunnerRequest
+      requestBody: { $ref: '#/components/requestBodies/ManagedRunnerRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /v1/planned/billing/reconciliations:
+    post:
+      tags: [Commercial]
+      operationId: reconcileUsage
+      x-port: IBillingReconciliation
+      x-contract-only: true
+      x-request-type: BillingWindow
+      requestBody: { $ref: '#/components/requestBodies/BillingWindow' }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  requestBodies:
+    PolicyCheck:
+      content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCheck' } } }
+    SupportAccessDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/SupportAccessDraft' } } }
+    LifecycleTransitionDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/LifecycleTransitionDraft' } } }
+    RetentionActionDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/RetentionActionDraft' } } }
+    ExportDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ExportDraft' } } }
+    ImportDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ImportDraft' } } }
+    ReportDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ReportDraft' } } }
+    NotificationDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/NotificationDraft' } } }
+    ResourceRef:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ResourceRef' } } }
+    WorkItemDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkItemDraft' } } }
+    TransitionCommand:
+      content: { application/json: { schema: { $ref: '#/components/schemas/TransitionCommand' } } }
+    SearchQuery:
+      content: { application/json: { schema: { $ref: '#/components/schemas/SearchQuery' } } }
+    IntegrationDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/IntegrationDraft' } } }
+    IngressEnvelope:
+      content: { application/json: { schema: { $ref: '#/components/schemas/IngressEnvelope' } } }
+    AnnotationDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/AnnotationDraft' } } }
+    ApplicationDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationDraft' } } }
+    BaselineDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/BaselineDraft' } } }
+    CodebaseTargetDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/CodebaseTargetDraft' } } }
+    CampaignDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/CampaignDraft' } } }
+    RuntimeRegistration:
+      content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeRegistration' } } }
+    OfferDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/OfferDraft' } } }
+    PackageDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/PackageDraft' } } }
+    LeaseRequest:
+      content: { application/json: { schema: { $ref: '#/components/schemas/LeaseRequest' } } }
+    ChangeSetDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ChangeSetDraft' } } }
+    WorkspaceDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceDraft' } } }
+    QueueDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/QueueDraft' } } }
+    ChannelDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ChannelDraft' } } }
+    CursorDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/CursorDraft' } } }
+    MessageDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/MessageDraft' } } }
+    HandoffDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/HandoffDraft' } } }
+    PlanDraft:
+      content: { application/json: { schema: { $ref: '#/components/schemas/PlanDraft' } } }
+    EntitlementCheck:
+      content: { application/json: { schema: { $ref: '#/components/schemas/EntitlementCheck' } } }
+    UsageObservation:
+      content: { application/json: { schema: { $ref: '#/components/schemas/UsageObservation' } } }
+    ManagedRunnerRequest:
+      content: { application/json: { schema: { $ref: '#/components/schemas/ManagedRunnerRequest' } } }
+    BillingWindow:
+      content: { application/json: { schema: { $ref: '#/components/schemas/BillingWindow' } } }
+  schemas:
+    PolicyCheck:
+      type: object
+      required: [action, resource]
+      properties:
+        action: { type: string }
+        resource: { $ref: '#/components/schemas/ResourceRef' }
+    SupportAccessDraft:
+      type: object
+      required: [targetTenantId, purpose, expiresAt]
+      properties:
+        targetTenantId: { type: string, format: uuid }
+        purpose: { type: string }
+        expiresAt: { type: string, format: date-time }
+    LifecycleTransitionDraft:
+      type: object
+      required: [targetId, transition]
+      properties:
+        targetId: { type: string, format: uuid }
+        transition: { $ref: '#/components/schemas/TransitionCommand' }
+    RetentionActionDraft:
+      type: object
+      required: [dataCategory, operation]
+      properties:
+        dataCategory: { type: string }
+        operation: { type: string }
+    ExportDraft:
+      type: object
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey: { type: string }
+    ImportDraft:
+      type: object
+      required: [validatedManifestRef, idempotencyKey]
+      properties:
+        validatedManifestRef: { type: string }
+        idempotencyKey: { type: string }
+    ReportDraft:
+      type: object
+      required: [declaredPurpose]
+      properties:
+        declaredPurpose: { type: string }
+    NotificationDraft:
+      type: object
+      required: [eventType, destinationRef]
+      properties:
+        eventType: { type: string }
+        destinationRef: { type: string }
+    ResourceRef:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        revisionId: { type: [string, 'null'], format: uuid }
+    WorkItemDraft:
+      type: object
+      required: [title, description, dependsOn, priority]
+      properties:
+        title: { type: string, maxLength: 200 }
+        description: { type: string }
+        milestoneId: { type: [string, 'null'], format: uuid }
+        dependsOn: { type: array, items: { type: string, format: uuid } }
+        dueAt: { type: [string, 'null'], format: date-time }
+        priority: { type: string }
+    TransitionCommand:
+      type: object
+      required: [targetState, reason, expectedVersion, idempotencyKey]
+      properties:
+        targetState: { type: string }
+        reason: { type: string }
+        expectedVersion: { type: integer, minimum: 0 }
+        idempotencyKey: { type: string, minLength: 1 }
+    SearchQuery:
+      type: object
+      required: [text, limit]
+      properties:
+        text: { type: string }
+        projectId: { type: [string, 'null'], format: uuid }
+        typeId: { type: [string, 'null'] }
+        lifecycle: { type: [string, 'null'] }
+        review: { type: [string, 'null'] }
+        verification: { type: [string, 'null'] }
+        currency: { type: [string, 'null'] }
+        actorId: { type: [string, 'null'], format: uuid }
+        since: { type: [string, 'null'], format: date-time }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        cursor: { type: [string, 'null'] }
+    IntegrationDraft:
+      type: object
+      required: [provider, scope, credentialRef, allowedMetadataFields]
+      properties:
+        provider: { type: string }
+        scope: { type: string }
+        credentialRef: { type: string }
+        allowedMetadataFields: { type: array, items: { type: string } }
+    IngressEnvelope:
+      type: object
+      required: [providerEventId, sentAt, schemaVersion, metadataJson]
+      properties:
+        providerEventId: { type: string }
+        sentAt: { type: string, format: date-time }
+        schemaVersion: { type: string }
+        metadataJson: { type: string }
+    AnnotationDraft:
+      type: object
+      required: [target, text, classification]
+      properties:
+        target: { $ref: '#/components/schemas/ResourceRef' }
+        text: { type: string }
+        classification: { type: string }
+    ApplicationDraft:
+      type: object
+      required: [key, version, lifecycleState, declaredCapabilities]
+      properties:
+        key: { type: string }
+        version: { type: string }
+        lifecycleState: { type: string }
+        declaredCapabilities: { type: array, items: { type: string } }
+    BaselineDraft:
+      type: object
+      required: [goal, approvedRevisions, dependencies, acceptanceCriteria, expectedPlanVersion]
+      properties:
+        goal: { type: string }
+        approvedRevisions: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        dependencies: { type: array, items: { type: string, format: uuid } }
+        acceptanceCriteria: { type: array, items: { type: string } }
+        expectedPlanVersion: { type: integer, minimum: 0 }
+    CodebaseTargetDraft:
+      type: object
+      required: [provider, repositoryId, targetBranch, baseCommitSha]
+      properties:
+        provider: { type: string }
+        repositoryId: { type: string }
+        targetBranch: { type: string }
+        baseCommitSha: { type: string }
+    CampaignDraft:
+      type: object
+      required: [baselineId, codebaseTargetIds, objective, executionMode, idempotencyKey]
+      properties:
+        baselineId: { type: string, format: uuid }
+        codebaseTargetIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        objective: { type: string }
+        executionMode: { type: string }
+        idempotencyKey: { type: string }
+    RuntimeRegistration:
+      type: object
+      required: [agentPrincipalId, runtimeClass, protocolVersion, capabilities, attestationRef]
+      properties:
+        agentPrincipalId: { type: string, format: uuid }
+        runtimeClass: { type: string }
+        protocolVersion: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        attestationRef: { type: string }
+    OfferDraft:
+      type: object
+      required: [campaignId, runtimeId, capabilities, availableUntil]
+      properties:
+        campaignId: { type: string, format: uuid }
+        runtimeId: { type: string, format: uuid }
+        capabilities: { type: array, items: { type: string } }
+        availableUntil: { type: string, format: date-time }
+    PackageDraft:
+      type: object
+      required: [campaignId, baselineId, objective, dependsOn, allowedScopes, acceptanceCriteria]
+      properties:
+        campaignId: { type: string, format: uuid }
+        baselineId: { type: string, format: uuid }
+        objective: { type: string }
+        dependsOn: { type: array, items: { type: string, format: uuid } }
+        allowedScopes: { type: array, items: { type: string } }
+        acceptanceCriteria: { type: array, items: { type: string } }
+    LeaseRequest:
+      type: object
+      required: [workPackageId, runtimeId, resourceScope, expiresAt, expectedFence, idempotencyKey]
+      properties:
+        workPackageId: { type: string, format: uuid }
+        runtimeId: { type: string, format: uuid }
+        resourceScope: { type: string }
+        expiresAt: { type: string, format: date-time }
+        expectedFence: { type: integer, format: int64, minimum: 0 }
+        idempotencyKey: { type: string }
+    ChangeSetDraft:
+      type: object
+      required: [workPackageId, codebaseTargetId, providerRef, commitSha, changedPathMetadata]
+      properties:
+        workPackageId: { type: string, format: uuid }
+        codebaseTargetId: { type: string, format: uuid }
+        providerRef: { type: string }
+        commitSha: { type: string }
+        changedPathMetadata: { type: array, items: { type: string } }
+    WorkspaceDraft:
+      type: object
+      required: [workPackageId, baseCommitSha]
+      properties:
+        workPackageId: { type: string, format: uuid }
+        baseCommitSha: { type: string }
+    QueueDraft:
+      type: object
+      required: [changeSetId, idempotencyKey]
+      properties:
+        changeSetId: { type: string, format: uuid }
+        idempotencyKey: { type: string }
+    ChannelDraft:
+      type: object
+      required: [channelType]
+      properties:
+        channelType: { type: string }
+        campaignId: { type: [string, 'null'], format: uuid }
+        workPackageId: { type: [string, 'null'], format: uuid }
+    CursorDraft:
+      type: object
+      required: [channelId, processedThroughSequence]
+      properties:
+        channelId: { type: string, format: uuid }
+        processedThroughSequence: { type: integer, format: int64, minimum: 0 }
+    MessageDraft:
+      type: object
+      required: [channelId, messageType, schemaVersion, allowedMetadataJson, references, idempotencyKey]
+      properties:
+        channelId: { type: string, format: uuid }
+        messageType: { type: string }
+        schemaVersion: { type: string }
+        allowedMetadataJson: { type: string, description: 'Content-policy checked metadata only; never source or secrets.' }
+        references: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        parentMessageId: { type: [string, 'null'], format: uuid }
+        idempotencyKey: { type: string }
+    HandoffDraft:
+      type: object
+      required: [workPackageId, sourceRuntimeId, targetRuntimeId, reason]
+      properties:
+        workPackageId: { type: string, format: uuid }
+        sourceRuntimeId: { type: string, format: uuid }
+        targetRuntimeId: { type: string, format: uuid }
+        reason: { type: string }
+    PlanDraft:
+      type: object
+      required: [key, version, effectiveFrom, entitlements]
+      properties:
+        key: { type: string }
+        version: { type: string }
+        effectiveFrom: { type: string, format: date-time }
+        entitlements: { type: array, items: { $ref: '#/components/schemas/EntitlementRule' } }
+    EntitlementRule:
+      type: object
+      required: [key, limit, unit, action]
+      properties:
+        key: { type: string }
+        limit: { type: number }
+        unit: { type: string }
+        action: { type: string }
+    EntitlementCheck:
+      type: object
+      required: [entitlementKey, requested]
+      properties:
+        entitlementKey: { type: string }
+        requested: { type: number, minimum: 0 }
+    UsageObservation:
+      type: object
+      required: [executionMode, resourceClass, meter, quantity, startedAt, endedAt, idempotencyKey]
+      properties:
+        projectId: { type: [string, 'null'], format: uuid }
+        campaignId: { type: [string, 'null'], format: uuid }
+        runtimeId: { type: [string, 'null'], format: uuid }
+        executionMode: { type: string }
+        resourceClass: { type: string }
+        meter: { type: string }
+        quantity: { type: number, minimum: 0 }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        idempotencyKey: { type: string }
+    ManagedRunnerRequest:
+      type: object
+      required: [campaignId, workPackageId, computeClass, credentialRef, expiresAt]
+      properties:
+        campaignId: { type: string, format: uuid }
+        workPackageId: { type: string, format: uuid }
+        computeClass: { type: string }
+        credentialRef: { type: string }
+        expiresAt: { type: string, format: date-time }
+    BillingWindow:
+      type: object
+      required: [from, to, idempotencyKey]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        idempotencyKey: { type: string }
+    OperationRef:
+      type: object
+      additionalProperties: false
+      required: [id, state]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string }
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [outcome, reason, policyVersion]
+      properties:
+        outcome: { type: string }
+        reason: { type: string }
+        policyVersion: { type: string }
+    Page:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { type: object } }
+        nextCursor: { type: [string, 'null'] }
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId, retryable]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }
+        retryable: { type: boolean }
+  responses:
+    Accepted:
+      description: Accepted for asynchronous processing; not proof of verification or delivery.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OperationRef' }
+    Decision:
+      description: Policy decision.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Decision' }
+    Page:
+      description: Bounded, authorized page of results.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Page' }
+    Forbidden:
+      description: Not authorized for this action and resource.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Stale version, lease fence, or idempotency-key conflict.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }

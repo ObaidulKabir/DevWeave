@@ -15,6 +15,20 @@ jobs:
   backend:
     name: Backend (build + test)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: devweave
+          POSTGRES_USER: devweave
+          POSTGRES_PASSWORD: change-me-locally
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U devweave -d devweave"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +44,11 @@ jobs:
         run: dotnet build DevWeave.sln --no-restore --configuration Release
 
       - name: Test
+        env:
+          DEVWEAVE_TEST_DB_HOST: localhost
+          DEVWEAVE_TEST_DB_PORT: '5433'
+          DEVWEAVE_TEST_DB_USER: devweave
+          DEVWEAVE_TEST_DB_PASSWORD: change-me-locally
         run: dotnet test DevWeave.sln --no-build --configuration Release --logger "trx" --results-directory artifacts/test-results
 
       - name: Upload test results

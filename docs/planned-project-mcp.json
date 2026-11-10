@@ -1,0 +1,113 @@
+{
+  "status": "contract-only",
+  "srs": "DWV-SRS-001 v1.5 MCP-001..036",
+  "protocolProfile": "pending-official-SDK-verification",
+  "identity": "verified tenant, project, principal and runtime per request; never clientInfo",
+  "toolSemantics": "Success acknowledges a durable commit, not recipient delivery, approval, or verification.",
+  "tools": [
+    {
+      "name": "devweave.channel.open",
+      "port": "ICoordinationChannels",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channelType"],
+        "properties": {
+          "channelType": { "type": "string" },
+          "campaignId": { "type": "string", "format": "uuid" },
+          "workPackageId": { "type": "string", "format": "uuid" }
+        }
+      }
+    },
+    {
+      "name": "devweave.message.send",
+      "port": "ICoordinationChannels",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channelId", "messageType", "schemaVersion", "allowedMetadataJson", "idempotencyKey"],
+        "properties": {
+          "channelId": { "type": "string", "format": "uuid" },
+          "messageType": { "type": "string" },
+          "schemaVersion": { "type": "string" },
+          "allowedMetadataJson": { "type": "string", "description": "Approved metadata only; subject to content inspection." },
+          "references": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+          "parentMessageId": { "type": "string", "format": "uuid" },
+          "idempotencyKey": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "devweave.message.acknowledge",
+      "port": "ICoordinationChannels",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channelId", "processedThroughSequence"],
+        "properties": {
+          "channelId": { "type": "string", "format": "uuid" },
+          "processedThroughSequence": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    {
+      "name": "devweave.participation.offer",
+      "port": "IParticipationScheduler",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["campaignId", "runtimeId", "capabilities", "availableUntil"],
+        "properties": {
+          "campaignId": { "type": "string", "format": "uuid" },
+          "runtimeId": { "type": "string", "format": "uuid" },
+          "capabilities": { "type": "array", "items": { "type": "string" } },
+          "availableUntil": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    {
+      "name": "devweave.lease.acquire",
+      "port": "ILeaseAuthority",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workPackageId", "runtimeId", "resourceScope", "expiresAt", "expectedFence", "idempotencyKey"],
+        "properties": {
+          "workPackageId": { "type": "string", "format": "uuid" },
+          "runtimeId": { "type": "string", "format": "uuid" },
+          "resourceScope": { "type": "string" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "expectedFence": { "type": "integer", "minimum": 0 },
+          "idempotencyKey": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "devweave.handoff.propose",
+      "port": "IAgentHandoffs",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workPackageId", "sourceRuntimeId", "targetRuntimeId", "reason"],
+        "properties": {
+          "workPackageId": { "type": "string", "format": "uuid" },
+          "sourceRuntimeId": { "type": "string", "format": "uuid" },
+          "targetRuntimeId": { "type": "string", "format": "uuid" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  ],
+  "resources": [
+    { "uriTemplate": "devweave://projects/{projectId}/participants", "port": "IProjectMcpDirectory" },
+    { "uriTemplate": "devweave://projects/{projectId}/channels/{channelId}/messages?after={sequence}", "port": "ICoordinationChannels" },
+    { "uriTemplate": "devweave://projects/{projectId}/campaigns/{campaignId}/events?after={sequence}", "port": "ICoordinationEvents" }
+  ],
+  "delivery": {
+    "ordering": "monotonic within channel only",
+    "notification": "best-effort signal; replay remains authoritative",
+    "replay": "authorized cursor-based paging with bounded limit",
+    "presence": "approximate and expiring",
+    "handoff": "proposal is not an authoritative lease transfer"
+  }
+}

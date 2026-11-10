@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DevWeave.Api\DevWeave.Api.csproj" />
+    <ProjectReference Include="..\..\src\DevWeave.Infrastructure\DevWeave.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

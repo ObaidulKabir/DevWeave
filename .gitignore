@@ -3,7 +3,7 @@
 [Oo]bj/
 [Dd]ebug/
 [Rr]elease/
-artifacts/
+/artifacts/
 *.user
 *.suo
 *.userprefs

@@ -1,0 +1,410 @@
+openapi: 3.1.0
+info:
+  title: DevWeave Work Planning API
+  version: 1.0.0
+  description: Implemented project-scoped lifecycle work planning surface (LFC-003..006).
+servers:
+  - url: /
+security:
+  - bearer: []
+paths:
+  /tenants/{tenantId}/projects/{projectId}/milestones:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      operationId: createMilestone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMilestoneRequest' }
+      responses:
+        '201':
+          description: Milestone created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilestoneResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      operationId: listMilestones
+      responses:
+        '200':
+          description: Project milestones
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MilestoneResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tenants/{tenantId}/projects/{projectId}/milestones/{milestoneId}/state:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: milestoneId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: transitionMilestone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransitionMilestoneRequest' }
+      responses:
+        '200':
+          description: Transition recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilestoneTransitionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/milestones/{milestoneId}/transitions:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: milestoneId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listMilestoneTransitions
+      responses:
+        '200':
+          description: Immutable milestone transition history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MilestoneTransitionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tenants/{tenantId}/projects/{projectId}/work-items:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      operationId: createWorkItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkItemRequest' }
+      responses:
+        '201':
+          description: Work item created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkItemResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      operationId: listWorkItems
+      responses:
+        '200':
+          description: Project work items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WorkItemResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/planned-state:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: changePlannedState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePlannedStateRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/WorkItemChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/report:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: reportWork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportWorkRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/WorkItemChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/verify:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: verifyWork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewWorkRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/WorkItemChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: approveWork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewWorkRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/WorkItemChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/reject-approval:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: rejectWorkApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewWorkRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/WorkItemChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tenants/{tenantId}/projects/{projectId}/work-items/{itemId}/transitions:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listWorkItemTransitions
+      responses:
+        '200':
+          description: Immutable work-item transition history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WorkItemTransitionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  parameters:
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    CreateMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required: [key, title]
+      properties:
+        key: { type: string, maxLength: 100 }
+        title: { type: string, maxLength: 200 }
+        dueAt: { type: [string, 'null'], format: date-time }
+    MilestoneResponse:
+      type: object
+      required: [id, tenantId, projectId, key, title, state, version, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        key: { type: string }
+        title: { type: string }
+        dueAt: { type: [string, 'null'], format: date-time }
+        state: { $ref: '#/components/schemas/MilestoneState' }
+        version: { type: integer, minimum: 1 }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TransitionMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required: [state, reason, expectedVersion]
+      properties:
+        state: { $ref: '#/components/schemas/MilestoneState' }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    MilestoneTransitionResponse:
+      type: object
+      required: [id, milestoneId, fromState, toState, actorId, reason, version, recordedAt]
+      properties:
+        id: { type: string, format: uuid }
+        milestoneId: { type: string, format: uuid }
+        fromState: { $ref: '#/components/schemas/MilestoneState' }
+        toState: { $ref: '#/components/schemas/MilestoneState' }
+        actorId: { type: string, format: uuid }
+        reason: { type: string }
+        version: { type: integer, minimum: 2 }
+        recordedAt: { type: string, format: date-time }
+    CreateWorkItemRequest:
+      type: object
+      additionalProperties: false
+      required: [key, title, description, priority, dependsOn]
+      properties:
+        key: { type: string, maxLength: 100 }
+        title: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 4000 }
+        milestoneId: { type: [string, 'null'], format: uuid }
+        ownerId: { type: [string, 'null'], format: uuid }
+        dueAt: { type: [string, 'null'], format: date-time }
+        priority: { $ref: '#/components/schemas/WorkPriority' }
+        dependsOn: { type: array, uniqueItems: true, items: { type: string, format: uuid } }
+    WorkItemResponse:
+      type: object
+      required: [id, tenantId, projectId, key, title, description, priority, plannedState, reportedState, verificationState, approvalState, version, dependsOn, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        key: { type: string }
+        title: { type: string }
+        description: { type: string }
+        milestoneId: { type: [string, 'null'], format: uuid }
+        ownerId: { type: [string, 'null'], format: uuid }
+        dueAt: { type: [string, 'null'], format: date-time }
+        priority: { $ref: '#/components/schemas/WorkPriority' }
+        plannedState: { $ref: '#/components/schemas/PlannedWorkState' }
+        reportedState: { $ref: '#/components/schemas/ReportedExecutionState' }
+        verificationState: { $ref: '#/components/schemas/WorkVerificationState' }
+        approvalState: { $ref: '#/components/schemas/WorkApprovalState' }
+        version: { type: integer, minimum: 1 }
+        dependsOn: { type: array, items: { type: string, format: uuid } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UpdatePlannedStateRequest:
+      type: object
+      required: [state, reason, expectedVersion]
+      properties:
+        state: { $ref: '#/components/schemas/PlannedWorkState' }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    ReportWorkRequest:
+      type: object
+      required: [state, reason, expectedVersion]
+      properties:
+        state: { $ref: '#/components/schemas/ReportedExecutionState' }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    ReviewWorkRequest:
+      type: object
+      required: [reason, expectedVersion]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    WorkItemTransitionResponse:
+      type: object
+      required: [id, workItemId, dimension, fromState, toState, actorId, reason, recordedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        workItemId: { type: string, format: uuid }
+        dimension: { type: string, enum: [Planned, Reported, Verification, Approval] }
+        fromState: { type: string }
+        toState: { type: string }
+        actorId: { type: string, format: uuid }
+        reason: { type: string }
+        recordedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 2 }
+    WorkItemChange:
+      type: object
+      required: [item, transitions]
+      properties:
+        item: { $ref: '#/components/schemas/WorkItemResponse' }
+        transitions:
+          type: array
+          items: { $ref: '#/components/schemas/WorkItemTransitionResponse' }
+    WorkPriority:
+      type: string
+      enum: [Low, Normal, High, Critical]
+    PlannedWorkState:
+      type: string
+      enum: [Planned, Ready, InProgress, Blocked, Cancelled]
+    ReportedExecutionState:
+      type: string
+      enum: [NotStarted, InProgress, Blocked, Completed, Failed]
+    WorkVerificationState:
+      type: string
+      enum: [Unverified, Verified]
+    WorkApprovalState:
+      type: string
+      enum: [Pending, Approved, Rejected]
+    MilestoneState:
+      type: string
+      enum: [Planned, InProgress, Completed, Cancelled]
+  responses:
+    WorkItemChange:
+      description: Updated state and durable transition records.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/WorkItemChange' }
+    BadRequest:
+      description: Invalid request.
+    Unauthorized:
+      description: Bearer authentication required.
+    NotFound:
+      description: Project, actor, membership, or resource not found in authorized scope.
+    Conflict:
+      description: Invalid state transition or stale concurrency version.

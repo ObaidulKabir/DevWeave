@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<GetKnowledgeItem>();
         services.AddScoped<ListKnowledgeItemsForProject>();
         services.AddScoped<ListKnowledgeItemsForTenant>();
+        services.AddScoped<SearchKnowledge>();
         services.AddScoped<AddRevision>();
         services.AddScoped<ApproveItem>();
         services.AddScoped<RejectItem>();

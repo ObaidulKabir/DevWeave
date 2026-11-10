@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Schema;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Schema.V1;
 using DevWeave.Domain.Schema;
 
@@ -16,9 +17,12 @@ public static class SchemaEndpoints
     {
         var group = endpoints.MapGroup("/schemas");
 
-        group.MapPost("", RegisterSchemaAsync);
-        group.MapPost("/{id:guid}/publish", PublishSchemaAsync);
-        group.MapPost("/{id:guid}/deprecate", DeprecateSchemaAsync);
+        group.MapPost("", RegisterSchemaAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
+        group.MapPost("/{id:guid}/publish", PublishSchemaAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
+        group.MapPost("/{id:guid}/deprecate", DeprecateSchemaAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
         group.MapGet("", ListSchemasAsync);
         group.MapGet("/discover", DiscoverSchemasAsync);
         group.MapGet("/{id:guid}", GetSchemaAsync);

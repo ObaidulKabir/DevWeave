@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Activities;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Activities.V1;
 using DevWeave.Domain.Activities;
 using DevWeave.Domain.Identity;
@@ -35,6 +36,7 @@ public static class ActivityEndpoints
         Guid tenantId,
         Guid projectId,
         RecordActivityRequest request,
+        HttpContext http,
         RecordActivity useCase,
         CancellationToken ct)
     {
@@ -44,7 +46,7 @@ public static class ActivityEndpoints
                 new TenantId(tenantId),
                 new ProjectId(projectId),
                 request.Type,
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 request.Purpose,
                 request.Status,
                 request.StartedAt,

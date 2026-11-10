@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Relations;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Relations.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
@@ -11,7 +12,8 @@ namespace DevWeave.Api.Endpoints;
 /// <summary>
 /// Relationships REST surface for Slice 5 (SRS REL-001, REL-002, REL-003, REL-004, REL-005, REL-007,
 /// SCH-007, BR-007). Relationship reads/writes are tenant-scoped; relation types are platform-global
-/// configuration (like schemas). OIDC is out of scope: the tenant identifier is passed in the route.
+/// configuration (like schemas). Tenant-scoped routes require a bearer identity matching the route
+/// tenant; mutation attribution is derived from the authenticated principal.
 /// </summary>
 public static class RelationshipEndpoints
 {
@@ -36,9 +38,11 @@ public static class RelationshipEndpoints
         var group = endpoints.MapGroup("/relation-types");
 
         group.MapGet("", ListRelationTypesAsync);
-        group.MapPost("", RegisterRelationTypeAsync);
+        group.MapPost("", RegisterRelationTypeAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
         group.MapGet("/{relationTypeId:guid}", GetRelationTypeAsync);
-        group.MapPost("/{relationTypeId:guid}/deprecate", DeprecateRelationTypeAsync);
+        group.MapPost("/{relationTypeId:guid}/deprecate", DeprecateRelationTypeAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
 
         return endpoints;
     }
@@ -47,6 +51,7 @@ public static class RelationshipEndpoints
         Guid tenantId,
         Guid projectId,
         CreateRelationshipRequest request,
+        HttpContext http,
         CreateRelationship useCase,
         CancellationToken ct)
     {
@@ -58,7 +63,7 @@ public static class RelationshipEndpoints
                 new KnowledgeItemId(request.SourceItemId),
                 new KnowledgeItemId(request.TargetItemId),
                 request.RelationTypeCode,
-                new PrincipalId(request.CreatedBy),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Created(

@@ -14,7 +14,7 @@ namespace DevWeave.Api.Security;
 /// </summary>
 public sealed class BearerTokenAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
-    public const string SchemeName = "Bearer";
+    public const string SchemeName = ApiAuthenticationSchemes.AgentBearer;
 
     private readonly IAccessTokenService _tokens;
 

@@ -152,7 +152,8 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);

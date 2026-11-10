@@ -14,7 +14,7 @@ public static class WorkPlanningEndpoints
     public static IEndpointRouteBuilder MapWorkPlanningEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/tenants/{tenantId:guid}/projects/{projectId:guid}")
-            .RequireAuthorization();
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/milestones", CreateMilestoneAsync);
         group.MapGet("/milestones", ListMilestonesAsync);

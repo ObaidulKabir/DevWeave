@@ -150,7 +150,11 @@ public sealed class WorkPlanningIntegrationTests(IdentityTestFactory factory)
         Assert.NotNull(milestoneTransitions);
         Assert.Equal(MilestoneState.InProgress, Assert.Single(milestoneTransitions).ToState);
 
-        var unauthenticated = await client.GetAsync($"{route}/work-items");
+        using var unauthenticatedRequest = new HttpRequestMessage(
+            HttpMethod.Get, $"{route}/work-items");
+        unauthenticatedRequest.Headers.Authorization =
+            new AuthenticationHeaderValue("Bearer", "invalid-token");
+        var unauthenticated = await client.SendAsync(unauthenticatedRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.StatusCode);
 
         // Two independent units of work read the same version; only one may advance the row.

@@ -108,7 +108,8 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
         form.Add(new StringContent("Internal"), "classification");
         form.Add(new StringContent(actor.Id.ToString()), "creator");
 
-        using var response = await _client.PostAsync($"/tenants/{tenant.Id}/projects/{project.Id}/artifacts", form);
+        using var client = _factory.CreateAuthenticatedHumanClient(tenant.Id, actor.Id);
+        using var response = await client.PostAsync($"/tenants/{tenant.Id}/projects/{project.Id}/artifacts", form);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var error = (await response.Content.ReadFromJsonAsync<ArtifactError>(JsonOptions))!;
@@ -226,7 +227,8 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -236,7 +238,8 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
 
     private async Task<ActivityResponse> CreateClaimAsync(Guid tenantId, Guid projectId, Guid actorId)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/activities",
             new RecordActivityRequest(
                 ActivityType.Claim,
@@ -277,7 +280,8 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
         form.Add(new StringContent(classification), "classification");
         form.Add(new StringContent(creator.ToString()), "creator");
 
-        using var response = await _client.PostAsync($"/tenants/{tenantId}/projects/{projectId}/artifacts", form);
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, creator);
+        using var response = await client.PostAsync($"/tenants/{tenantId}/projects/{projectId}/artifacts", form);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<ArtifactResponse>(JsonOptions))!;
     }
@@ -340,7 +344,8 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
 
     private async Task<EvidenceResponse> ReviewEvidenceAsync(Guid tenantId, Guid evidenceId, EvidenceReviewState state, Guid reviewer)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, reviewer);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/evidence/{evidenceId}/review",
             new ReviewEvidenceRequest(state, reviewer),
             JsonOptions);
@@ -476,7 +481,8 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -486,7 +492,8 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
 
     private async Task<ActivityResponse> CreateClaimAsync(Guid tenantId, Guid projectId, Guid actorId)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/activities",
             new RecordActivityRequest(
                 ActivityType.Claim,
@@ -527,7 +534,8 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
         form.Add(new StringContent(classification), "classification");
         form.Add(new StringContent(creator.ToString()), "creator");
 
-        using var response = await _client.PostAsync($"/tenants/{tenantId}/projects/{projectId}/artifacts", form);
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, creator);
+        using var response = await client.PostAsync($"/tenants/{tenantId}/projects/{projectId}/artifacts", form);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<ArtifactResponse>(JsonOptions))!;
     }

@@ -6,9 +6,9 @@ using DevWeave.Domain.Identity;
 namespace DevWeave.Api.Endpoints;
 
 /// <summary>
-/// Tenant and principal REST surface for Slice 1. Full OIDC authentication is out of scope for this
-/// slice: the tenant identifier is passed explicitly in the route and the server-side use cases
-/// enforce tenant scope (deny-by-default). An authorization layer can attach to these coordinates later.
+/// Tenant and principal REST surface. Tenant creation is the explicit anonymous bootstrap operation;
+/// tenant-scoped routes require a bearer identity whose signed tenant claim matches the route.
+/// Fine-grained tenant membership and administrative role checks remain application authorization gates.
 /// </summary>
 public static class IdentityEndpoints
 {
@@ -16,7 +16,7 @@ public static class IdentityEndpoints
     {
         var group = endpoints.MapGroup("/tenants");
 
-        group.MapPost("", CreateTenantAsync);
+        group.MapPost("", CreateTenantAsync).AllowAnonymous();
         group.MapGet("/{tenantId:guid}", GetTenantAsync);
         group.MapPost("/{tenantId:guid}/principals", CreatePrincipalAsync);
         group.MapPost("/{tenantId:guid}/members", InviteMemberAsync);

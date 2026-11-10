@@ -346,7 +346,8 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -358,7 +359,8 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
     {
         await SeedArchitectureSchemaAsync();
 
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 key,
@@ -377,7 +379,8 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
     {
         await SeedArchitectureSchemaAsync();
 
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);
@@ -429,7 +432,8 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
 
     private async Task<HttpResponseMessage> PostActivityAsync(Guid tenantId, Guid projectId, RecordActivityRequest request)
     {
-        return await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, request.Actor);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/activities",
             request,
             JsonOptions);

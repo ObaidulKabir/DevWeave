@@ -193,7 +193,8 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -205,7 +206,8 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
     {
         await SeedArchitectureSchemaAsync();
 
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 key,
@@ -228,7 +230,8 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         string relationTypeCode,
         Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/relationships",
             new CreateRelationshipRequest(sourceItemId, targetItemId, relationTypeCode, createdBy),
             JsonOptions);
@@ -244,7 +247,8 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         string relationTypeCode,
         Guid createdBy)
     {
-        return await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/relationships",
             new CreateRelationshipRequest(sourceItemId, targetItemId, relationTypeCode, createdBy),
             JsonOptions);

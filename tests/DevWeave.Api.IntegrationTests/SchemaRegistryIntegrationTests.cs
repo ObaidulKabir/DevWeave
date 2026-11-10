@@ -93,7 +93,8 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
         var profile = await CreateLifecycleProfileAsync(tenant.Id, "agile", "Agile", "1.0");
         var project = await CreateProjectAsync(tenant.Id, "shop-api", profile.Id, principal.Id);
 
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenant.Id, principal.Id);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 "architecture",
@@ -137,7 +138,8 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -147,7 +149,8 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
 
     private async Task<KnowledgeItemResponse> CreateKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 key,
@@ -202,7 +205,8 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
 
     private async Task<HttpResponseMessage> TryAddRevisionAsync(Guid tenantId, Guid itemId, Guid actor, int expected, string content)
     {
-        return await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);

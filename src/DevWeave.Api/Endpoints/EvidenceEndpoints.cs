@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Evidence;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Evidence.V1;
 using DevWeave.Domain.Activities;
 using DevWeave.Domain.Artifacts;
@@ -69,6 +70,7 @@ public static class EvidenceEndpoints
         Guid tenantId,
         Guid evidenceId,
         ReviewEvidenceRequest request,
+        HttpContext http,
         ReviewEvidence useCase,
         CancellationToken ct)
     {
@@ -78,7 +80,7 @@ public static class EvidenceEndpoints
                 new TenantId(tenantId),
                 new EvidenceId(evidenceId),
                 request.State,
-                new PrincipalId(request.Reviewer),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(Map(record));

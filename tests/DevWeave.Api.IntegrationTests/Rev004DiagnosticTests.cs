@@ -42,9 +42,11 @@ public sealed class Rev004DiagnosticTests : IClassFixture<IdentityTestFactory>
         var profile = await Post<LifecycleProfileResponse>(
             $"/tenants/{tenant.Id}/lifecycle-profiles",
             new CreateLifecycleProfileRequest("agile", "Agile", "1.0"));
-        var project = await Post<ProjectResponse>(
+        var project = await PostAsHuman<ProjectResponse>(
             $"/tenants/{tenant.Id}/projects",
-            new CreateProjectRequest("Shop API", "shop-api", null, profile.Id, principal.Id));
+            new CreateProjectRequest("Shop API", "shop-api", null, profile.Id, principal.Id),
+            tenant.Id,
+            principal.Id);
 
         // The type must be an active (published) schema before an item can be created against it.
         var schema = await Post<SchemaResponse>(
@@ -59,13 +61,16 @@ public sealed class Rev004DiagnosticTests : IClassFixture<IdentityTestFactory>
             _output.WriteLine($"SCHEMA_AFTER_PUBLISH DOC=[{pub!.Document}] STATUS={pub.Status}");
         }
 
-        var item = await Post<KnowledgeItemResponse>(
+        var item = await PostAsHuman<KnowledgeItemResponse>(
             $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 "architecture", "Architecture Overview", Classification.Public,
-                RepresentationKind.Text, "architecture.mmd", "1.0", principal.Id));
+                RepresentationKind.Text, "architecture.mmd", "1.0", principal.Id),
+            tenant.Id,
+            principal.Id);
 
-        using var rev = await _client.PostAsJsonAsync(
+        using var humanClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, principal.Id);
+        using var rev = await humanClient.PostAsJsonAsync(
             $"/tenants/{tenant.Id}/knowledge-items/{item.Id}/revisions",
             new AddRevisionRequest(0, "1.0", "{\"v\":1}", principal.Id, "Baseline", null, null),
             JsonOptions);
@@ -77,6 +82,19 @@ public sealed class Rev004DiagnosticTests : IClassFixture<IdentityTestFactory>
     private async Task<T> Post<T>(string url, object payload)
     {
         using var response = await _client.PostAsJsonAsync(url, payload, JsonOptions);
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+        {
+            _output.WriteLine($"POST {url} -> {(int)response.StatusCode}: {body}");
+        }
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<T>(JsonOptions))!;
+    }
+
+    private async Task<T> PostAsHuman<T>(string url, object payload, Guid tenantId, Guid principalId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, principalId);
+        using var response = await client.PostAsJsonAsync(url, payload, JsonOptions);
         var body = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
         {

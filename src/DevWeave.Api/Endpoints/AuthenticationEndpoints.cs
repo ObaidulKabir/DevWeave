@@ -18,7 +18,8 @@ public static class AuthenticationEndpoints
 
     public static IEndpointRouteBuilder MapAuthenticationEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/tenants/{tenantId:guid}/agents/{agentId:guid}/authenticate", AuthenticateAgentAsync);
+        endpoints.MapPost("/tenants/{tenantId:guid}/agents/{agentId:guid}/authenticate", AuthenticateAgentAsync)
+            .AllowAnonymous();
 
         endpoints.MapGet("/auth/whoami", WhoAmIAsync).RequireAuthorization();
 

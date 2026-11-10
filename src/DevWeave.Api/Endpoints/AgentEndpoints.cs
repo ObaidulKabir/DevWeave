@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Agents;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Agents.V1;
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
@@ -18,7 +19,8 @@ public static class AgentEndpoints
 {
     public static IEndpointRouteBuilder MapAgentEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/tenants/{tenantId:guid}");
+        var group = endpoints.MapGroup("/tenants/{tenantId:guid}")
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/agents", RegisterAgentAsync);
         group.MapPost("/agents/{agentId:guid}/credentials", IssueCredentialAsync);
@@ -30,9 +32,14 @@ public static class AgentEndpoints
         group.MapPost("/agent-grants", GrantCapabilityAsync);
         group.MapPost("/agent-grants/{grantId:guid}/approve", ApproveGrantAsync);
         group.MapPost("/agent-grants/{grantId:guid}/revoke", RevokeGrantAsync);
-        group.MapGet("/agents/{agentId:guid}/capabilities", DiscoverCapabilitiesAsync);
-        group.MapPost("/projects/{projectId:guid}/agents/{agentId:guid}/context-packages", AssembleContextPackageAsync);
-        group.MapPost("/projects/{projectId:guid}/agent-executions", RecordExecutionAsync);
+
+        var agentGroup = endpoints.MapGroup("/tenants/{tenantId:guid}")
+            .RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        agentGroup.MapGet("/agents/{agentId:guid}/capabilities", DiscoverCapabilitiesAsync);
+        agentGroup.MapPost(
+            "/projects/{projectId:guid}/agents/{agentId:guid}/context-packages",
+            AssembleContextPackageAsync);
+        agentGroup.MapPost("/projects/{projectId:guid}/agent-executions", RecordExecutionAsync);
 
         return endpoints;
     }
@@ -85,6 +92,7 @@ public static class AgentEndpoints
         Guid agentId,
         Guid credentialId,
         RevokeAgentCredentialRequest request,
+        HttpContext http,
         RevokeAgentCredential useCase,
         CancellationToken ct)
     {
@@ -94,7 +102,7 @@ public static class AgentEndpoints
                 new TenantId(tenantId),
                 new PrincipalId(agentId),
                 new AgentCredentialId(credentialId),
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(MapCredentialView(credential));
@@ -118,6 +126,7 @@ public static class AgentEndpoints
         Guid agentId,
         Guid credentialId,
         DisableAgentCredentialRequest request,
+        HttpContext http,
         DisableAgentCredential useCase,
         CancellationToken ct)
     {
@@ -127,7 +136,7 @@ public static class AgentEndpoints
                 new TenantId(tenantId),
                 new PrincipalId(agentId),
                 new AgentCredentialId(credentialId),
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(MapCredentialView(credential));
@@ -151,6 +160,7 @@ public static class AgentEndpoints
         Guid agentId,
         Guid credentialId,
         EnableAgentCredentialRequest request,
+        HttpContext http,
         EnableAgentCredential useCase,
         CancellationToken ct)
     {
@@ -160,7 +170,7 @@ public static class AgentEndpoints
                 new TenantId(tenantId),
                 new PrincipalId(agentId),
                 new AgentCredentialId(credentialId),
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(MapCredentialView(credential));
@@ -184,6 +194,7 @@ public static class AgentEndpoints
         Guid agentId,
         Guid credentialId,
         RotateAgentCredentialRequest request,
+        HttpContext http,
         RotateAgentCredential useCase,
         CancellationToken ct)
     {
@@ -193,7 +204,7 @@ public static class AgentEndpoints
                 new TenantId(tenantId),
                 new PrincipalId(agentId),
                 new AgentCredentialId(credentialId),
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 request.ExpiresAt,
                 ct);
 
@@ -271,6 +282,7 @@ public static class AgentEndpoints
         Guid tenantId,
         Guid grantId,
         ApproveAgentGrantRequest request,
+        HttpContext http,
         ApproveAgentGrant useCase,
         CancellationToken ct)
     {
@@ -279,7 +291,7 @@ public static class AgentEndpoints
             var grant = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new AgentGrantId(grantId),
-                new PrincipalId(request.Approver),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(MapGrant(grant));
@@ -302,6 +314,7 @@ public static class AgentEndpoints
         Guid tenantId,
         Guid grantId,
         RevokeAgentGrantRequest request,
+        HttpContext http,
         RevokeAgentGrant useCase,
         CancellationToken ct)
     {
@@ -310,7 +323,7 @@ public static class AgentEndpoints
             var grant = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new AgentGrantId(grantId),
-                new PrincipalId(request.Revoker),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Ok(MapGrant(grant));
@@ -332,9 +345,13 @@ public static class AgentEndpoints
     private static async Task<IResult> DiscoverCapabilitiesAsync(
         Guid tenantId,
         Guid agentId,
+        HttpContext http,
         DiscoverAgentCapabilities useCase,
         CancellationToken ct)
     {
+        if (!IsAgentSubject(http.User, agentId))
+            return Results.NotFound();
+
         try
         {
             var discovery = await useCase.ExecuteAsync(new TenantId(tenantId), new PrincipalId(agentId), ct);
@@ -360,16 +377,20 @@ public static class AgentEndpoints
         Guid tenantId,
         Guid projectId,
         Guid agentId,
+        HttpContext http,
         AssembleContextPackageRequest request,
         AssembleContextPackage useCase,
         CancellationToken ct)
     {
+        if (!IsAgentSubject(http.User, agentId))
+            return Results.NotFound();
+
         try
         {
             var package = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new ProjectId(projectId),
-                new PrincipalId(agentId),
+                CurrentAgent(http.User),
                 request.TaskKey,
                 request.IdempotencyKey,
                 (request.ItemIds ?? Array.Empty<Guid>()).Select(itemId => new KnowledgeItemId(itemId)).ToList(),
@@ -396,6 +417,7 @@ public static class AgentEndpoints
     private static async Task<IResult> RecordExecutionAsync(
         Guid tenantId,
         Guid projectId,
+        HttpContext http,
         RecordAgentExecutionRequest request,
         RecordAgentExecution useCase,
         CancellationToken ct)
@@ -405,7 +427,7 @@ public static class AgentEndpoints
             var activity = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new ProjectId(projectId),
-                new PrincipalId(request.AgentId),
+                CurrentAgent(http.User),
                 new ContextPackageId(request.ContextPackageId),
                 request.Purpose,
                 request.Status,
@@ -427,6 +449,13 @@ public static class AgentEndpoints
             return Results.NotFound();
         }
     }
+
+    private static bool IsAgentSubject(System.Security.Claims.ClaimsPrincipal user, Guid expectedAgentId) =>
+        Guid.TryParse(user.FindFirst(AuthClaims.PrincipalId)?.Value, out var authenticatedAgentId) &&
+        authenticatedAgentId == expectedAgentId;
+
+    private static PrincipalId CurrentAgent(System.Security.Claims.ClaimsPrincipal user) =>
+        new(Guid.Parse(user.FindFirst(AuthClaims.PrincipalId)!.Value));
 
     private static AgentResponse MapAgent(Principal agent) =>
         new(agent.Id.Value, agent.TenantId.Value, agent.Email, agent.Type, agent.IsActive);

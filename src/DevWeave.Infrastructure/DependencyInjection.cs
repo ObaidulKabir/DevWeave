@@ -42,6 +42,7 @@ public static class DependencyInjection
         services.AddScoped<IWorkPlanningRepository, WorkPlanningRepository>();
         services.AddScoped<IKnowledgeItemRepository, KnowledgeItemRepository>();
         services.AddScoped<IKnowledgeRevisionRepository, KnowledgeRevisionRepository>();
+        services.AddScoped<IKnowledgeSearchRepository, KnowledgeSearchRepository>();
         services.AddScoped<ISchemaDefinitionRepository, SchemaDefinitionRepository>();
         services.AddScoped<IRelationTypeRepository, RelationTypeRepository>();
         services.AddScoped<IRelationshipRepository, RelationshipRepository>();

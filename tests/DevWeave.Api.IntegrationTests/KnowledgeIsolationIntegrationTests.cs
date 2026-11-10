@@ -177,6 +177,114 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         Assert.Equal(0, fetched!.CurrentRevisionNumber);
     }
 
+    [Fact]
+    public async Task SRH_001_002_003_search_is_project_scoped_filtered_and_classification_limited()
+    {
+        var tenant = await CreateTenantAsync("Search Corp");
+        var member = await CreatePrincipalAsync(tenant.Id, "member@search.test", PrincipalType.Human);
+        var owner = await CreatePrincipalAsync(tenant.Id, "owner@search.test", PrincipalType.Human);
+        var outsider = await CreatePrincipalAsync(tenant.Id, "outsider@search.test", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "search", "Search", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "search-project", profile.Id, owner.Id);
+        await SeedPublishedSchemaAsync("architecture.mmd", "1.0", "{\"type\":\"object\"}");
+
+        await ActivateTenantMembershipAsync(tenant.Id, member.Id, MembershipRole.Member);
+        await ActivateTenantMembershipAsync(tenant.Id, owner.Id, MembershipRole.Owner);
+        await ActivateTenantMembershipAsync(tenant.Id, outsider.Id, MembershipRole.Member);
+
+        var publicItem = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "public-architecture", owner.Id, Classification.Public);
+        var internalItem = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "internal-architecture", owner.Id, Classification.Internal);
+        var restrictedItem = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "restricted-architecture", owner.Id, Classification.Restricted);
+        var supersededItem = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "superseded-architecture", owner.Id, Classification.Public);
+        var publicRevision = await AddRevisionAsync(
+            tenant.Id, publicItem.Id, owner.Id, 0, "{\"summary\":\"nebula architecture public\"}");
+        var internalRevision = await AddRevisionAsync(
+            tenant.Id, internalItem.Id, owner.Id, 0, "{\"summary\":\"nebula architecture internal\"}");
+        var restrictedRevision = await AddRevisionAsync(
+            tenant.Id, restrictedItem.Id, owner.Id, 0, "{\"summary\":\"nebula architecture restricted\"}");
+        var supersededRevision = await AddRevisionAsync(
+            tenant.Id, supersededItem.Id, owner.Id, 0, "{\"summary\":\"nebula architecture old\"}");
+        await AddRevisionAsync(
+            tenant.Id, supersededItem.Id, owner.Id, 1, "{\"summary\":\"orbit architecture current\"}");
+
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, member.Id, ProjectRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, owner.Id, ProjectRole.Owner);
+
+        using var memberClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, member.Id);
+        using var firstPageResponse = await memberClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("nebula", Limit: 1),
+            JsonOptions);
+        firstPageResponse.EnsureSuccessStatusCode();
+        var firstPage = (await firstPageResponse.Content.ReadFromJsonAsync<SearchKnowledgeResponse>(JsonOptions))!;
+        Assert.Single(firstPage.Items);
+        Assert.NotNull(firstPage.NextCursor);
+
+        using var secondPageResponse = await memberClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("nebula", Limit: 1, Cursor: firstPage.NextCursor),
+            JsonOptions);
+        secondPageResponse.EnsureSuccessStatusCode();
+        var secondPage = (await secondPageResponse.Content.ReadFromJsonAsync<SearchKnowledgeResponse>(JsonOptions))!;
+
+        var memberHits = firstPage.Items.Concat(secondPage.Items).ToArray();
+        Assert.Equal(2, memberHits.Length);
+        Assert.Contains(memberHits, hit => hit.RevisionId == publicRevision.Id);
+        Assert.Contains(memberHits, hit => hit.RevisionId == internalRevision.Id);
+        Assert.DoesNotContain(memberHits, hit => hit.RevisionId == restrictedRevision.Id);
+        Assert.DoesNotContain(memberHits, hit => hit.RevisionId == supersededRevision.Id);
+
+        using var mismatchedCursor = await memberClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("different query", Limit: 1, Cursor: firstPage.NextCursor),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, mismatchedCursor.StatusCode);
+
+        using var prohibitedQuery = await memberClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("AKIAABCDEFGHIJKLMNOP"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, prohibitedQuery.StatusCode);
+
+        using var outsiderClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, outsider.Id);
+        using var outsiderSearch = await outsiderClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("nebula"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Forbidden, outsiderSearch.StatusCode);
+
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using var ownerSearch = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest(
+                "nebula",
+                TypeId: "architecture.mmd",
+                Lifecycle: "proposed",
+                Review: "Pending",
+                Verification: "Unverified",
+                Currency: "Current",
+                ActorId: owner.Id,
+                Limit: 10),
+            JsonOptions);
+        ownerSearch.EnsureSuccessStatusCode();
+        var ownerResults = (await ownerSearch.Content.ReadFromJsonAsync<SearchKnowledgeResponse>(JsonOptions))!;
+        Assert.Equal(3, ownerResults.Items.Count);
+        Assert.All(ownerResults.Items, hit => Assert.Equal("architecture.mmd", hit.TypeId));
+        Assert.All(ownerResults.Items, hit => Assert.Equal(owner.Id, hit.ActorId));
+
+        using var futureFilter = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("nebula", Since: DateTimeOffset.UtcNow.AddMinutes(1)),
+            JsonOptions);
+        futureFilter.EnsureSuccessStatusCode();
+        var futureResults = (await futureFilter.Content.ReadFromJsonAsync<SearchKnowledgeResponse>(JsonOptions))!;
+        Assert.Empty(futureResults.Items);
+    }
+
     private async Task<TenantResponse> CreateTenantAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync("/tenants", new CreateTenantRequest(name), JsonOptions);
@@ -206,7 +314,8 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -214,14 +323,44 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         return (await response.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
     }
 
-    private async Task<KnowledgeItemResponse> CreateKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, Guid createdBy)
+    private async Task GrantProjectMembershipAsync(Guid tenantId, Guid projectId, Guid principalId, ProjectRole role)
     {
         using var response = await _client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/members",
+            new GrantProjectMembershipRequest(principalId, role),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private async Task ActivateTenantMembershipAsync(Guid tenantId, Guid principalId, MembershipRole role)
+    {
+        using var invitation = await _client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/members",
+            new InviteMemberRequest(principalId, role),
+            JsonOptions);
+        invitation.EnsureSuccessStatusCode();
+        var membership = (await invitation.Content.ReadFromJsonAsync<MembershipResponse>(JsonOptions))!;
+
+        using var activation = await _client.PostAsync(
+            $"/tenants/{tenantId}/members/{membership.Id}/activate",
+            content: null);
+        activation.EnsureSuccessStatusCode();
+    }
+
+    private async Task<KnowledgeItemResponse> CreateKnowledgeItemAsync(
+        Guid tenantId,
+        Guid projectId,
+        string key,
+        Guid createdBy,
+        Classification classification = Classification.Public)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
-                Classification.Public,
+                classification,
                 RepresentationKind.Text,
                 "architecture.mmd",
                 "1.0",
@@ -233,7 +372,8 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
 
     private async Task<HttpResponseMessage> TryCreateKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, Guid createdBy)
     {
-        return await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
             new CreateKnowledgeItemRequest(
                 key,
@@ -274,7 +414,8 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
 
     private async Task<KnowledgeRevisionResponse> AddRevisionAsync(Guid tenantId, Guid itemId, Guid actor, int expected, string content)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);
@@ -290,7 +431,8 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         string content,
         string schemaVersion = "1.0")
     {
-        return await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
             new AddRevisionRequest(expected, schemaVersion, content, actor, "Baseline", null, null),
             JsonOptions);

@@ -19,3 +19,15 @@ public sealed record AddRevisionRequest(
     string Reason,
     string? SourceReference,
     Guid? SupersededRevisionId);
+
+public sealed record SearchKnowledgeRequest(
+    string Text,
+    string? TypeId = null,
+    string? Lifecycle = null,
+    string? Review = null,
+    string? Verification = null,
+    string? Currency = null,
+    Guid? ActorId = null,
+    DateTimeOffset? Since = null,
+    int Limit = 20,
+    string? Cursor = null);

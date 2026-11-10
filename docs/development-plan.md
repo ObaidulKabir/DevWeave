@@ -152,7 +152,15 @@ The twelve labels organize work, not percentage completion. Add sub-slices where
 | 6 Activities | Implemented prototype | Validated revision pins, automatic append-only audit/events, historical reconstruction |
 | 7 Artifacts/evidence | Implemented prototype | Collision-safe immutable objects, real storage tests, shared scanning, evidence-backed verification |
 | 8 Agents/context | Implemented prototype | Enforced credentials/admission/classification, safe replay/execution dedupe, permitted schema/tool discovery |
-| 9-12 | Not implemented | Search, integrations, export/import, Owner Studio/reporting/operations |
+| 9 Search | Project-scoped implementation | Complete SRS traceability/acceptance and hardening exit reviews; tenant-wide Search remains unavailable |
+| 10-12 | Not implemented | Integrations, export/import, Owner Studio/reporting/operations |
+
+Slice 9 currently searches current revisions through PostgreSQL full-text search. Search requires
+active Human tenant and project membership before the adapter runs; Owner/Admin can search through
+`Restricted`, while Member/Viewer are capped at `Internal`. The adapter applies tenant/project/
+classification predicates before ranking or pagination, and binds cursors to the query and scope.
+This scoped implementation is not a claim that the mandatory H0-H3 release gates or all Search
+acceptance evidence are complete.
 
 ### Mandatory hardening before Slice 9
 

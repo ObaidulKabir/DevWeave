@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Artifacts;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Artifacts.V1;
 using DevWeave.Domain.Artifacts;
 using DevWeave.Domain.Identity;
@@ -25,8 +26,8 @@ public static class ArtifactEndpoints
         var group = endpoints.MapGroup("/tenants/{tenantId:guid}");
 
         // Multipart form upload triggers ASP.NET Core's automatic anti-forgery requirement for
-        // IFormCollection-bound endpoints. Authentication is out of scope for this slice (the tenant
-        // identifier travels in the route), so this specific route opts out of anti-forgery validation.
+        // IFormCollection-bound endpoints. This bearer-token API route opts out of browser-cookie
+        // antiforgery validation; tenant access is still subject to the authenticated fallback policy.
         group.MapPost("/projects/{projectId:guid}/artifacts", UploadArtifactAsync)
             .DisableAntiforgery();
         group.MapGet("/projects/{projectId:guid}/artifacts", ListArtifactsForProjectAsync);
@@ -42,6 +43,7 @@ public static class ArtifactEndpoints
         Guid tenantId,
         Guid projectId,
         [FromForm] IFormCollection form,
+        HttpContext http,
         UploadArtifact useCase,
         CancellationToken ct)
     {
@@ -58,9 +60,6 @@ public static class ArtifactEndpoints
         if (!Enum.TryParse<Classification>(form["classification"].ToString(), ignoreCase: true, out var classification))
             return Results.BadRequest(new ArtifactError("invalid-classification", "A valid classification is required."));
 
-        if (!Guid.TryParse(form["creator"].ToString(), out var creatorGuid))
-            return Results.BadRequest(new ArtifactError("invalid-creator", "A valid creator is required."));
-
         using var buffer = new MemoryStream();
         await file.CopyToAsync(buffer, ct);
         var content = buffer.ToArray();
@@ -75,7 +74,7 @@ public static class ArtifactEndpoints
                 mediaType,
                 content,
                 classification,
-                new PrincipalId(creatorGuid),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Created($"/tenants/{tenantId}/artifacts/{artifact.Id}", Map(artifact));

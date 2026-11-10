@@ -38,3 +38,20 @@ public sealed record KnowledgeRevisionResponse(
 /// A conflict-friendly error body, returned with HTTP 409 for optimistic-concurrency and duplicate
 /// resource conflicts (SRS REV-004).</summary>
 public sealed record KnowledgeConflict(string Code, string Message);
+
+public sealed record SearchKnowledgeHit(
+    Guid ItemId,
+    Guid RevisionId,
+    string Title,
+    string TypeId,
+    InfoState Lifecycle,
+    ReviewState Review,
+    VerificationState Verification,
+    CurrencyState Currency,
+    DateTimeOffset RecordedAt,
+    Guid ActorId,
+    string ProvenanceRef);
+
+public sealed record SearchKnowledgeResponse(
+    IReadOnlyList<SearchKnowledgeHit> Items,
+    string? NextCursor);

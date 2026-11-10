@@ -1,6 +1,7 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Projects;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Identity;
@@ -10,9 +11,9 @@ using DevWeave.Domain.Projects;
 namespace DevWeave.Api.Endpoints;
 
 /// <summary>
-/// Project and lifecycle REST surface for Slice 2. As with Slice 1, full OIDC authentication is out of
-/// scope: the tenant identifier is passed explicitly in the route and the server-side use cases enforce
-/// tenant scope (deny-by-default). An authorization layer can attach to these coordinates later.
+/// Project and lifecycle REST surface. Tenant-scoped routes require a bearer identity whose signed
+/// tenant claim matches the route. Project membership and role checks are applied by the lifecycle
+/// application services where implemented; broader resource authorization remains a launch gate.
 /// </summary>
 public static class ProjectEndpoints
 {
@@ -35,7 +36,12 @@ public static class ProjectEndpoints
         return endpoints;
     }
 
-    private static async Task<IResult> CreateProjectAsync(Guid tenantId, CreateProjectRequest request, CreateProject useCase, CancellationToken ct)
+    private static async Task<IResult> CreateProjectAsync(
+        Guid tenantId,
+        CreateProjectRequest request,
+        HttpContext http,
+        CreateProject useCase,
+        CancellationToken ct)
     {
         try
         {
@@ -45,7 +51,7 @@ public static class ProjectEndpoints
                 request.Key,
                 request.Description,
                 new LifecycleProfileId(request.LifecycleProfileId),
-                new PrincipalId(request.CreatedBy),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Created(

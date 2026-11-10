@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using DevWeave.Application.Abstractions;
 using DevWeave.Contracts.Agents.V1;
 using DevWeave.Contracts.Identity.V1;
+using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Activities;
@@ -89,7 +90,11 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
         Assert.Single(listed);
 
         // A non-human principal cannot govern credentials (AGT-013).
-        var denied = await TryDisableCredentialAsync(tenant.Id, agent.Id, issued.Id, otherAgent.Id);
+        using var agentClient = await CreateAuthenticatedAgentClientAsync(tenant.Id, otherAgent.Id);
+        var denied = await agentClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/agents/{agent.Id}/credentials/{issued.Id}/disable",
+            new DisableAgentCredentialRequest(owner.Id),
+            JsonOptions);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
         // Disable is a reversible suspension.
@@ -171,6 +176,11 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
         var capabilities = await DiscoverCapabilitiesAsync(tenant.Id, agent.Id);
         Assert.Empty(capabilities.Grants);
+
+        using var agentClient = await CreateAuthenticatedAgentClientAsync(tenant.Id, agent.Id);
+        using var governanceResponse = await agentClient.GetAsync(
+            $"/tenants/{tenant.Id}/agents/{agent.Id}/credentials");
+        Assert.Equal(HttpStatusCode.Forbidden, governanceResponse.StatusCode);
     }
 
     [Fact]
@@ -193,7 +203,10 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
         Assert.False(string.IsNullOrWhiteSpace(token.AccessToken));
 
         // The verified-identity endpoint requires a bearer token.
-        using var anonymous = await _client.GetAsync("/auth/whoami");
+        using var anonymousRequest = new HttpRequestMessage(HttpMethod.Get, "/auth/whoami");
+        anonymousRequest.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "invalid-token");
+        using var anonymous = await _client.SendAsync(anonymousRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
         using var ok = new HttpRequestMessage(HttpMethod.Get, "/auth/whoami");
@@ -204,6 +217,138 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
         Assert.Equal(tenant.Id.ToString(), body.GetProperty("tenantId").GetString());
         Assert.Equal(agent.Id.ToString(), body.GetProperty("principalId").GetString());
         Assert.Equal(PrincipalType.AiAgent.ToString(), body.GetProperty("principalType").GetString());
+    }
+
+    [Fact]
+    public async Task agent_authorization_works_with_tenant_membership_enforcement_enabled()
+    {
+        using var strictFactory = new IdentityTestFactory(enforceTenantMembership: true);
+        strictFactory.PrepareDatabase();
+
+        using var bootstrapClient = strictFactory.CreateClient();
+        using var tenantResponse = await bootstrapClient.PostAsJsonAsync(
+            "/tenants",
+            new CreateTenantRequest("Strict Membership Corp"),
+            JsonOptions);
+        tenantResponse.EnsureSuccessStatusCode();
+        var tenant = (await tenantResponse.Content.ReadFromJsonAsync<TenantResponse>(JsonOptions))!;
+        var tenantId = new TenantId(tenant.Id);
+
+        var owner = Principal.Create(tenantId, "owner@strict-membership.test", PrincipalType.Human);
+        var ownerMembership = Membership.Invite(tenantId, owner.Id, MembershipRole.Owner);
+        ownerMembership.Activate();
+        using (var scope = strictFactory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ITenantContext>().TenantId = tenant.Id;
+            var principals = scope.ServiceProvider.GetRequiredService<IPrincipalRepository>();
+            var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            await principals.AddAsync(owner);
+            await memberships.AddAsync(ownerMembership);
+            await unitOfWork.SaveChangesAsync();
+        }
+
+        using var ownerClient = strictFactory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id.Value);
+        using var profileResponse = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/lifecycle-profiles",
+            new CreateLifecycleProfileRequest("strict", "Strict", "1.0"),
+            JsonOptions);
+        profileResponse.EnsureSuccessStatusCode();
+        var profile = (await profileResponse.Content.ReadFromJsonAsync<LifecycleProfileResponse>(JsonOptions))!;
+
+        using var projectResponse = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects",
+            new CreateProjectRequest("Strict Project", "strict-project", null, profile.Id, owner.Id.Value),
+            JsonOptions);
+        projectResponse.EnsureSuccessStatusCode();
+        var project = (await projectResponse.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
+
+        var viewer = Principal.Create(tenantId, "viewer@strict-membership.test", PrincipalType.Human);
+        var viewerMembership = Membership.Invite(tenantId, viewer.Id, MembershipRole.Member);
+        viewerMembership.Activate();
+        using (var scope = strictFactory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ITenantContext>().TenantId = tenant.Id;
+            var principals = scope.ServiceProvider.GetRequiredService<IPrincipalRepository>();
+            var memberships = scope.ServiceProvider.GetRequiredService<IMembershipRepository>();
+            var projectMemberships = scope.ServiceProvider.GetRequiredService<IProjectMembershipRepository>();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            await principals.AddAsync(viewer);
+            await memberships.AddAsync(viewerMembership);
+            await projectMemberships.AddAsync(ProjectMembership.Grant(
+                tenantId,
+                new ProjectId(project.Id),
+                viewer.Id,
+                ProjectRole.Viewer));
+            await unitOfWork.SaveChangesAsync();
+        }
+
+        using var agentResponse = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/agents",
+            new RegisterAgentRequest("agent@strict-membership.test"),
+            JsonOptions);
+        agentResponse.EnsureSuccessStatusCode();
+        var agent = (await agentResponse.Content.ReadFromJsonAsync<AgentResponse>(JsonOptions))!;
+
+        using (var scope = strictFactory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<ITenantContext>().TenantId = tenant.Id;
+            var projectMemberships = scope.ServiceProvider.GetRequiredService<IProjectMembershipRepository>();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            await projectMemberships.AddAsync(ProjectMembership.Grant(
+                tenantId,
+                new ProjectId(project.Id),
+                new PrincipalId(agent.Id),
+                ProjectRole.Member));
+            await unitOfWork.SaveChangesAsync();
+        }
+
+        using var credentialResponse = await ownerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/agents/{agent.Id}/credentials",
+            new IssueAgentCredentialRequest("strict-test", null),
+            JsonOptions);
+        credentialResponse.EnsureSuccessStatusCode();
+        var credential = (await credentialResponse.Content.ReadFromJsonAsync<AgentCredentialIssuedResponse>(JsonOptions))!;
+
+        using var anonymousAuthentication = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/tenants/{tenant.Id}/agents/{agent.Id}/authenticate")
+        {
+            Content = JsonContent.Create(
+                new AuthenticateAgentRequest(credential.Id, credential.PlainTextSecret),
+                options: JsonOptions),
+        };
+        anonymousAuthentication.Headers.Add("X-Test-Anonymous", "true");
+        using var tokenResponse = await bootstrapClient.SendAsync(anonymousAuthentication);
+        tokenResponse.EnsureSuccessStatusCode();
+        var token = (await tokenResponse.Content.ReadFromJsonAsync<AccessTokenResponse>(JsonOptions))!;
+
+        using var agentClient = strictFactory.CreateClient();
+        agentClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.AccessToken);
+        using var capabilities = await agentClient.GetAsync(
+            $"/tenants/{tenant.Id}/agents/{agent.Id}/capabilities");
+        capabilities.EnsureSuccessStatusCode();
+
+        using var viewerClient = strictFactory.CreateAuthenticatedHumanClient(tenant.Id, viewer.Id.Value);
+        using var viewerSearch = await viewerClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/search",
+            new SearchKnowledgeRequest("no indexed matches"),
+            JsonOptions);
+        viewerSearch.EnsureSuccessStatusCode();
+
+        // The same authenticated agent still cannot enter a human-only project endpoint.
+        using var humanOnlyRoute = await agentClient.GetAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}");
+        Assert.Equal(HttpStatusCode.Forbidden, humanOnlyRoute.StatusCode);
+
+        // Agent project work reaches the application grant gate rather than failing the human
+        // tenant-membership check; without an approved grant it is forbidden.
+        using var missingGrant = await agentClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/agents/{agent.Id}/context-packages",
+            new AssembleContextPackageRequest("strict-check", "strict-idem", Array.Empty<Guid>()),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Forbidden, missingGrant.StatusCode);
     }
 
     [Fact]
@@ -289,7 +434,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<ProjectResponse> CreateProjectAsync(Guid tenantId, string key, Guid lifecycleProfileId, Guid createdBy)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects",
             new CreateProjectRequest("Shop API", key, null, lifecycleProfileId, createdBy),
             JsonOptions);
@@ -336,7 +482,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentCredentialResponse> DisableCredentialAsync(Guid tenantId, Guid agentId, Guid credentialId, Guid actor)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agents/{agentId}/credentials/{credentialId}/disable",
             new DisableAgentCredentialRequest(actor),
             JsonOptions);
@@ -354,7 +501,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentCredentialResponse> EnableCredentialAsync(Guid tenantId, Guid agentId, Guid credentialId, Guid actor)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agents/{agentId}/credentials/{credentialId}/enable",
             new EnableAgentCredentialRequest(actor),
             JsonOptions);
@@ -364,7 +512,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentCredentialIssuedResponse> RotateCredentialAsync(Guid tenantId, Guid agentId, Guid credentialId, Guid actor, DateTimeOffset? expiresAt)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agents/{agentId}/credentials/{credentialId}/rotate",
             new RotateAgentCredentialRequest(actor, expiresAt),
             JsonOptions);
@@ -374,7 +523,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentCredentialResponse> RevokeCredentialAsync(Guid tenantId, Guid agentId, Guid credentialId, Guid actor)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, actor);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agents/{agentId}/credentials/{credentialId}/revoke",
             new RevokeAgentCredentialRequest(actor),
             JsonOptions);
@@ -404,7 +554,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentGrantResponse> ApproveGrantAsync(Guid tenantId, Guid grantId, Guid approver)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, approver);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agent-grants/{grantId}/approve",
             new ApproveAgentGrantRequest(approver),
             JsonOptions);
@@ -414,7 +565,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentGrantResponse> RevokeGrantAsync(Guid tenantId, Guid grantId, Guid revoker)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = CreateAuthenticatedHumanClient(tenantId, revoker);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/agent-grants/{grantId}/revoke",
             new RevokeAgentGrantRequest(revoker),
             JsonOptions);
@@ -424,14 +576,16 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentDiscoveryResponse> DiscoverCapabilitiesAsync(Guid tenantId, Guid agentId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/agents/{agentId}/capabilities");
+        using var client = await CreateAuthenticatedAgentClientAsync(tenantId, agentId);
+        using var response = await client.GetAsync($"/tenants/{tenantId}/agents/{agentId}/capabilities");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AgentDiscoveryResponse>(JsonOptions))!;
     }
 
     private async Task<ContextPackageResponse> AssembleAsync(Guid tenantId, Guid projectId, Guid agentId, string taskKey, string idempotencyKey, IReadOnlyList<Guid> itemIds)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = await CreateAuthenticatedAgentClientAsync(tenantId, agentId);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/agents/{agentId}/context-packages",
             new AssembleContextPackageRequest(taskKey, idempotencyKey, itemIds),
             JsonOptions);
@@ -441,7 +595,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<HttpResponseMessage> TryAssembleAsync(Guid tenantId, Guid projectId, Guid agentId, string taskKey, string idempotencyKey, IReadOnlyList<Guid> itemIds)
     {
-        return await _client.PostAsJsonAsync(
+        using var client = await CreateAuthenticatedAgentClientAsync(tenantId, agentId);
+        return await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/agents/{agentId}/context-packages",
             new AssembleContextPackageRequest(taskKey, idempotencyKey, itemIds),
             JsonOptions);
@@ -449,7 +604,8 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
 
     private async Task<AgentExecutionResponse> RecordExecutionAsync(Guid tenantId, Guid projectId, Guid agentId, Guid contextPackageId)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = await CreateAuthenticatedAgentClientAsync(tenantId, agentId);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/agent-executions",
             new RecordAgentExecutionRequest(
                 agentId,
@@ -461,6 +617,26 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AgentExecutionResponse>(JsonOptions))!;
+    }
+
+    private async Task<HttpClient> CreateAuthenticatedAgentClientAsync(Guid tenantId, Guid agentId)
+    {
+        var credential = await IssueCredentialAsync(tenantId, agentId, "integration-test");
+        var token = await AuthenticateAsync(tenantId, agentId, credential.Id, credential.PlainTextSecret);
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.AccessToken);
+        return client;
+    }
+
+    private HttpClient CreateAuthenticatedHumanClient(Guid tenantId, Guid principalId)
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer",
+                IdentityTestFactory.IssueTestOidcToken(tenantId, principalId));
+        return client;
     }
 
     private async Task<Guid> SeedKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, RepresentationKind representation, string content)

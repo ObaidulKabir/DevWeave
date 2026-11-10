@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Knowledge;
+using DevWeave.Api.Security;
 using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Contracts.Schema.V1;
 using DevWeave.Domain.Identity;
@@ -10,9 +11,9 @@ namespace DevWeave.Api.Endpoints;
 
 /// <summary>
 /// Knowledge item and revision REST surface for Slice 3 (SRS KNW-001..KNW-013, REV-001..REV-008,
-/// BR-004..BR-009). As with prior slices, OIDC authentication is out of scope: the tenant identifier
-/// is passed explicitly in the route and the server-side use cases enforce tenant scope
-/// (deny-by-default). Optimistic-concurrency conflicts surface as HTTP 409 with a structured body.
+/// BR-004..BR-009). Tenant-scoped routes require a bearer identity matching the route tenant, and
+/// tenant; optimistic-concurrency conflicts surface as HTTP 409 with a structured body. Write attribution
+/// is derived from the authenticated principal, never from request-body identity fields.
 /// </summary>
 public static class KnowledgeEndpoints
 {
@@ -37,6 +38,7 @@ public static class KnowledgeEndpoints
         Guid tenantId,
         Guid projectId,
         CreateKnowledgeItemRequest request,
+        HttpContext http,
         CreateKnowledgeItem useCase,
         CancellationToken ct)
     {
@@ -51,7 +53,7 @@ public static class KnowledgeEndpoints
                 request.RepresentationKind,
                 request.TypeId,
                 request.SchemaVersion,
-                new PrincipalId(request.CreatedBy),
+                AuthenticatedPrincipal.GetId(http),
                 ct);
 
             return Results.Created(
@@ -106,6 +108,7 @@ public static class KnowledgeEndpoints
         Guid tenantId,
         Guid itemId,
         AddRevisionRequest request,
+        HttpContext http,
         AddRevision useCase,
         CancellationToken ct)
     {
@@ -117,7 +120,7 @@ public static class KnowledgeEndpoints
                 request.ExpectedCurrentRevisionNumber,
                 request.SchemaVersion,
                 request.Content,
-                new PrincipalId(request.Actor),
+                AuthenticatedPrincipal.GetId(http),
                 request.Reason,
                 request.SourceReference,
                 request.SupersededRevisionId is { } superseded ? new KnowledgeRevisionId(superseded) : null,

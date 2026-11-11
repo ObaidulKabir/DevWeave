@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -59,13 +60,37 @@ export function PlanOutlinePage() {
         <h3 className="font-display text-lg font-bold">Knowledge hierarchy</h3>
         {!tree.length && !outlineError && <p className="mt-3 text-sm text-[var(--muted)]">No root yet. Create an application idea on the Knowledge page and add its first revision, then attach it here.</p>}
         <ol className="mt-3 space-y-2">
-          {tree.map(({ id, depth }) => (
-            <li key={id} className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm" style={{ marginLeft: `${Math.min(depth, 8) * 20}px` }}>
-              <span className="font-semibold">{byId.get(id)?.key ?? id}</span> · {byId.get(id)?.title ?? 'Knowledge item'}
-              <span className="ml-2 text-xs text-[var(--muted)]">level {depth + 1} · {byId.get(id)?.reviewState ?? 'unknown review'}</span>
-            </li>
-          ))}
+          {tree.map(({ id, depth }) => {
+            const item = byId.get(id);
+            const waiting = item?.state === 'Proposed';
+            return (
+              <li
+                key={id}
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2 text-sm ${waiting ? 'border-amber-300' : 'border-[var(--line)]'}`}
+                style={{ marginLeft: `${Math.min(depth, 8) * 20}px` }}
+              >
+                <span className="min-w-0">
+                  <span className="font-mono text-xs text-[var(--muted)]">{item?.key ?? id}</span>{' '}
+                  <span className="font-semibold">{item?.title ?? 'Knowledge item'}</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  {item ? <StateBadge value={item.state} /> : null}
+                  {item ? (
+                    <Link to={`/knowledge?item=${item.id}`} className="text-xs font-semibold text-[var(--signal)] hover:underline">
+                      {waiting ? 'Review →' : 'Open →'}
+                    </Link>
+                  ) : null}
+                </span>
+              </li>
+            );
+          })}
         </ol>
+        {tree.length > 0 ? (
+          <p className="mt-3 text-xs text-[var(--muted)]">
+            {tree.filter(({ id }) => byId.get(id)?.state === 'Proposed').length} of {tree.length} outline items are waiting for review.
+            All items must be approved before the plan can be locked for agents.
+          </p>
+        ) : null}
         <form className="mt-5 grid gap-3 sm:grid-cols-3" onSubmit={(event) => submit(event, '/outline', {
           itemId, parentItemId: parentId || null, position: outline.nodes.length,
         }, 'Knowledge attached to the outline.')}>

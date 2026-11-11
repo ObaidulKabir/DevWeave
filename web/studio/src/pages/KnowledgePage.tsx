@@ -1,52 +1,103 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { MetaLine } from '../components/MetaLine';
+import { ContentEditor } from '../components/ContentEditor';
+import { ContentView } from '../components/ContentView';
 import { EmptyState, Panel, Row } from '../components/Panel';
+import { RevisionDiff } from '../components/RevisionDiff';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { diffContent } from '../lib/content';
+import { formatWhen, shortId } from '../lib/format';
 import type { KnowledgeItem, KnowledgeRevision, ReviewDecision, SearchHit } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
+type Filter = 'review' | 'approved' | 'rejected' | 'all';
+type Tab = 'read' | 'changes' | 'history';
+
+interface SchemaChoice {
+  namespace: string;
+  version: string;
+}
+
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'review', label: 'Needs review' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'all', label: 'All' },
+];
+
+const EMPTY_CONTENT = '{\n  "statement": "",\n  "acceptance": "",\n  "rationale": "",\n  "source": ""\n}';
+
+function matchesFilter(item: KnowledgeItem, filter: Filter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'review') return item.state === 'Proposed' && Boolean(item.currentRevisionId);
+  if (filter === 'approved') return item.state === 'Approved';
+  return item.state === 'Rejected';
+}
+
 export function KnowledgePage() {
   const { tenantId, project, live, busy, run, knowledge, setKnowledge } = useWorkspace();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [revision, setRevision] = useState<KnowledgeRevision | null>(null);
+  const [params, setParams] = useSearchParams();
+  const [filter, setFilter] = useState<Filter>('review');
+  const [tab, setTab] = useState<Tab>('read');
+  const [viewedId, setViewedId] = useState<string | null>(null);
+  const [compareId, setCompareId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [schemas, setSchemas] = useState<SchemaChoice[]>([]);
   const [form, setForm] = useState({ key: '', title: '', typeId: 'plan.requirement', schemaVersion: '1.0' });
-  const [revisionForm, setRevisionForm] = useState({
-    content: '{"statement":"","acceptance":"","rationale":"","source":""}',
-    reason: 'Capture planning requirement',
-  });
+  const [editorContent, setEditorContent] = useState(EMPTY_CONTENT);
+  const [editorReason, setEditorReason] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmReject, setConfirmReject] = useState(false);
   const [reviewComment, setReviewComment] = useState('');
+  const [touchedReject, setTouchedReject] = useState(false);
   const [revisions, setRevisions] = useState<KnowledgeRevision[]>([]);
   const [reviews, setReviews] = useState<ReviewDecision[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const selected = knowledge.find((item) => item.id === selectedId) ?? knowledge[0] ?? null;
+  const selectedId = params.get('item');
+  const selected = knowledge.find((item) => item.id === selectedId) ?? null;
 
+  const counts = useMemo(
+    () => ({
+      review: knowledge.filter((item) => matchesFilter(item, 'review')).length,
+      approved: knowledge.filter((item) => matchesFilter(item, 'approved')).length,
+      rejected: knowledge.filter((item) => matchesFilter(item, 'rejected')).length,
+      all: knowledge.length,
+    }),
+    [knowledge],
+  );
+  const visible = knowledge.filter((item) => matchesFilter(item, filter));
+
+  function select(id: string | null) {
+    const next = new URLSearchParams(params);
+    if (id) next.set('item', id);
+    else next.delete('item');
+    setParams(next, { replace: true });
+    setViewedId(null);
+    setCompareId(null);
+    setTab('read');
+    setReviewComment('');
+    setTouchedReject(false);
+    setNotice(null);
+  }
+
+  // Open the first item that needs review when nothing is chosen, so a reviewer lands on work rather than an empty pane.
   useEffect(() => {
-    if (knowledge[0] && !selectedId) setSelectedId(knowledge[0].id);
+    if (selectedId || knowledge.length === 0) return;
+    const first = knowledge.find((item) => matchesFilter(item, 'review')) ?? knowledge[0];
+    select(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [knowledge, selectedId]);
 
   useEffect(() => {
-    if (!tenantId || !selected?.currentRevisionId) {
-      setRevision(null);
-      return;
-    }
-    let cancelled = false;
-    apiFetch<KnowledgeRevision>(`/tenants/${tenantId}/revisions/${selected.currentRevisionId}`)
-      .then((next) => {
-        if (!cancelled) setRevision(next);
-      })
-      .catch(() => {
-        if (!cancelled) setRevision(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId, selected?.currentRevisionId]);
+    apiFetch<SchemaChoice[]>('/schemas/discover')
+      .then((list) => setSchemas(Array.isArray(list) ? list : []))
+      .catch(() => setSchemas([]));
+  }, []);
 
   useEffect(() => {
     if (!tenantId || !selected) {
@@ -61,7 +112,7 @@ export function KnowledgePage() {
     ])
       .then(([nextRevisions, nextReviews]) => {
         if (cancelled) return;
-        setRevisions(nextRevisions);
+        setRevisions([...nextRevisions].sort((a, b) => a.revisionNumber - b.revisionNumber));
         setReviews(nextReviews);
       })
       .catch(() => {
@@ -73,6 +124,29 @@ export function KnowledgePage() {
       cancelled = true;
     };
   }, [tenantId, selected?.id, selected?.currentRevisionId, selected?.state]);
+
+  const current = revisions.find((entry) => entry.id === selected?.currentRevisionId) ?? null;
+  const viewed = revisions.find((entry) => entry.id === viewedId) ?? current;
+  const viewingOlder = Boolean(viewed && current && viewed.id !== current.id);
+
+  // Default comparison: the last revision a human approved (what they already agreed to), else the one before.
+  const lastApprovedBefore = useMemo(() => {
+    if (!viewed) return null;
+    const approvedNumbers = reviews
+      .filter((entry) => entry.decision === 'Approved' && entry.revisionNumber < viewed.revisionNumber)
+      .map((entry) => entry.revisionNumber);
+    if (approvedNumbers.length === 0) return null;
+    const best = Math.max(...approvedNumbers);
+    return revisions.find((entry) => entry.revisionNumber === best) ?? null;
+  }, [reviews, revisions, viewed]);
+  const previous = viewed ? revisions.filter((entry) => entry.revisionNumber < viewed.revisionNumber).at(-1) ?? null : null;
+  const baseline = revisions.find((entry) => entry.id === compareId) ?? lastApprovedBefore ?? previous;
+  const changes = viewed && baseline ? diffContent(baseline.content, viewed.content) : null;
+  const olderRevisions = viewed ? revisions.filter((entry) => entry.revisionNumber < viewed.revisionNumber) : [];
+
+  const nextToReview = knowledge.find((item) => matchesFilter(item, 'review') && item.id !== selected?.id) ?? null;
+  const canDecide = live && !busy && selected?.state === 'Proposed' && Boolean(selected.currentRevisionId);
+  const rejectMissingReason = touchedReject && !reviewComment.trim();
 
   async function createItem(event: FormEvent) {
     event.preventDefault();
@@ -92,13 +166,16 @@ export function KnowledgePage() {
       }),
     );
     if (created) {
-      setKnowledge((current) => [created, ...current]);
-      setSelectedId(created.id);
-      setForm((current) => ({ ...current, key: '', title: '' }));
+      setKnowledge((list) => [created, ...list]);
+      setFilter('all');
+      select(created.id);
+      setEditorOpen(true);
+      setForm((value) => ({ ...value, key: '', title: '' }));
+      setNotice('Item created. Add its first revision below.');
     }
   }
 
-  async function addRevision(event: FormEvent) {
+  async function saveRevision(event: FormEvent) {
     event.preventDefault();
     if (!tenantId || !selected) return;
     const created = await run(() =>
@@ -107,24 +184,33 @@ export function KnowledgePage() {
         body: JSON.stringify({
           expectedCurrentRevisionNumber: selected.currentRevisionNumber,
           schemaVersion: selected.schemaVersion,
-          content: revisionForm.content,
+          content: editorContent,
           actor: '00000000-0000-0000-0000-000000000000',
-          reason: revisionForm.reason,
+          reason: editorReason,
           sourceReference: null,
           supersededRevisionId: null,
         }),
       }),
     );
     if (created) {
-      setRevision(created);
-      setKnowledge((current) =>
-        current.map((item) =>
+      setKnowledge((list) =>
+        list.map((item) =>
           item.id === selected.id
-            ? { ...item, currentRevisionId: created.id, currentRevisionNumber: created.revisionNumber }
+            ? { ...item, currentRevisionId: created.id, currentRevisionNumber: created.revisionNumber, state: 'Proposed', reviewState: 'Pending' }
             : item,
         ),
       );
+      setViewedId(null);
+      setEditorOpen(false);
+      setEditorReason('');
+      setTab('changes');
+      setNotice(`Saved revision ${created.revisionNumber}. It now needs review.`);
     }
+  }
+
+  function startEdit() {
+    if (current) setEditorContent(current.content);
+    setEditorOpen(true);
   }
 
   async function runSearch(event: FormEvent) {
@@ -141,6 +227,7 @@ export function KnowledgePage() {
 
   async function decide(decision: 'approve' | 'reject') {
     if (!tenantId || !selected?.currentRevisionId) return;
+    const decidedNumber = selected.currentRevisionNumber;
     const updated = await run(() =>
       apiFetch<KnowledgeItem>(`/tenants/${tenantId}/knowledge/${selected.id}/${decision}`, {
         method: 'POST',
@@ -151,216 +238,340 @@ export function KnowledgePage() {
     setConfirmApprove(false);
     setConfirmReject(false);
     if (updated) {
-      setKnowledge((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setKnowledge((list) => list.map((item) => (item.id === updated.id ? updated : item)));
       setReviewComment('');
+      setTouchedReject(false);
+      setNotice(`Revision ${decidedNumber} ${decision === 'approve' ? 'approved' : 'rejected'}.`);
     }
   }
 
-  const viewingOlderRevision = Boolean(revision && selected && revision.id !== selected.currentRevisionId);
-
   return (
-    <div className="space-y-6">
-      <section className="panel rounded-2xl p-5" aria-labelledby="knowledge-explainer-title">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">01 / Define the plan</p>
-        <h2 id="knowledge-explainer-title" className="font-display mt-2 text-xl font-bold">Knowledge records what the project knows</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">
-          Make a separate typed item for each requirement, constraint, decision or success criterion. Its key stays stable;
-          content changes are added as immutable revisions. Review and verification are different states: approval does
-          not prove the work is done.
-        </p>
-        <p className="mt-3 text-xs leading-relaxed text-[var(--muted)]">
-          Example: "A task must have a non-empty title" is a requirement, not a work item. Use a published schema type
-          and version for its content. This space holds planning information, not source code or credentials.
-        </p>
-      </section>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">Plan · Knowledge &amp; review</p>
+          <h2 className="font-display mt-1 text-2xl font-bold">What the project knows, and what still needs a decision</h2>
+        </div>
+        <form onSubmit={runSearch} className="flex w-full gap-2 sm:w-auto">
+          <label className="sr-only" htmlFor="knowledge-search">Search knowledge</label>
+          <input id="knowledge-search" className="field sm:w-72" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search project knowledge…" />
+          <button className="btn btn-ghost" disabled={!live || busy}>Search</button>
+        </form>
+      </header>
 
-      <form onSubmit={runSearch} className="panel flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center">
-        <label className="sr-only" htmlFor="knowledge-search">Search knowledge</label>
-        <input
-          id="knowledge-search"
-          className="field"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search project knowledge…"
-        />
-        <button className="btn btn-primary" disabled={!live || busy}>Search</button>
-      </form>
+      <details className="panel rounded-2xl px-5 py-3 text-sm">
+        <summary className="cursor-pointer font-semibold">How this works</summary>
+        <p className="mt-2 max-w-3xl leading-relaxed text-[var(--muted)]">
+          Each requirement, constraint, decision or success criterion is its own typed item with a stable key. Edits never overwrite:
+          they add a numbered revision, and that resets review. Approving means a person accepted that exact revision as the plan; it
+          does not prove the work is done. This space holds planning information, not source code or credentials.
+        </p>
+      </details>
 
       {hits.length > 0 ? (
-        <Panel title="Search results" subtitle="Authorization-filtered full-text hits.">
+        <Panel title="Search results" subtitle="Only results you are allowed to see.">
           <div className="divide-y divide-[var(--line)]">
             {hits.map((hit) => (
               <Row
                 key={`${hit.itemId}-${hit.revisionId}`}
                 title={hit.title}
                 subtitle={`${hit.typeId} · ${hit.lifecycle}/${hit.review}/${hit.verification}`}
-                onClick={() => setSelectedId(hit.itemId)}
+                onClick={() => {
+                  setFilter('all');
+                  select(hit.itemId);
+                }}
               />
             ))}
           </div>
         </Panel>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <Panel title="Knowledge browser" subtitle="Choose an item to see its type, latest revision and separate review/verification states.">
-          {knowledge.length === 0 ? (
-            <EmptyState label="No knowledge items loaded." />
-          ) : (
-            <div className="divide-y divide-[var(--line)]">
-              {knowledge.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setSelectedId(item.id)}
-                  className={`block w-full px-5 py-4 text-left hover:bg-white/70 ${selected?.id === item.id ? 'bg-teal-50/60' : ''}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold">{item.title}</p>
-                    <StateBadge value={item.state} />
-                    <StateBadge label="review" value={item.reviewState} />
-                    <StateBadge label="verify" value={item.verificationState} />
-                  </div>
-                  <MetaLine
-                    source={item.createdBy}
-                    revision={item.currentRevisionNumber}
-                    updatedAt={item.createdAt}
-                    verification={item.verificationState}
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-        </Panel>
-
-        <div className="space-y-6">
-          <Panel
-            title="Revision history"
-            subtitle="The current content version; earlier revisions remain in the project history."
-          >
-            {selected && revision ? (
-              <div className="space-y-3 p-5">
-                <p className="text-sm font-semibold">{selected.title}</p>
-                <MetaLine
-                  source={revision.actor ?? revision.sourceReference}
-                  revision={revision.revisionNumber}
-                  updatedAt={revision.recordedAt}
-                  verification={selected.verificationState}
-                />
-                <pre className="overflow-auto rounded-xl bg-[var(--ink)] p-4 text-xs text-teal-50">{revision.content}</pre>
-                <p className="text-xs text-[var(--muted)]">{revision.reason}</p>
-              </div>
-            ) : (
-              <EmptyState label="Select an item with a revision to inspect history." />
-            )}
-          </Panel>
-
-          <Panel title="All revisions" subtitle="Every saved version, oldest first. Select one to read it; only the current revision can be reviewed.">
-            {revisions.length === 0 ? (
-              <EmptyState label="No revisions yet." />
-            ) : (
-              <div className="divide-y divide-[var(--line)]">
-                {revisions.map((entry) => (
-                  <Row
-                    key={entry.id}
-                    title={`Revision ${entry.revisionNumber}${entry.id === selected?.currentRevisionId ? ' (current)' : ''}`}
-                    subtitle={entry.reason}
-                    onClick={() => setRevision(entry)}
-                  />
+      <div className="grid gap-5 lg:grid-cols-[minmax(280px,0.8fr)_1.6fr]">
+        {/* ---- Queue ---- */}
+        <div className="space-y-4">
+          <section className="panel overflow-hidden rounded-2xl" aria-labelledby="queue-title">
+            <header className="border-b border-[var(--line)] px-4 py-3">
+              <h3 id="queue-title" className="font-display text-base font-bold">Review queue</h3>
+              <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter items">
+                {FILTERS.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === id}
+                    onClick={() => setFilter(id)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                      filter === id ? 'border-[var(--signal)] bg-[var(--signal)] text-white' : 'border-[var(--line)] bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    {label} <span className="opacity-70">{counts[id]}</span>
+                  </button>
                 ))}
               </div>
+            </header>
+            {visible.length === 0 ? (
+              <EmptyState label={filter === 'review' ? 'Nothing is waiting for review. 🎉' : 'No items in this view.'} />
+            ) : (
+              <ul className="max-h-[28rem] divide-y divide-[var(--line)] overflow-auto">
+                {visible.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      aria-current={selected?.id === item.id ? 'true' : undefined}
+                      onClick={() => select(item.id)}
+                      className={`block w-full px-4 py-3 text-left hover:bg-white/80 ${selected?.id === item.id ? 'bg-teal-50/70 shadow-[inset_3px_0_0_var(--signal)]' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[11px] text-[var(--muted)]">{item.key} · rev {item.currentRevisionNumber}</span>
+                        <StateBadge value={item.state} />
+                      </div>
+                      <p className="mt-1 text-sm font-semibold leading-snug">{item.title}</p>
+                      <p className="mt-0.5 text-[11px] text-[var(--muted)]">{item.typeId}</p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
-          </Panel>
+          </section>
 
-          <Panel
-            title="Review this revision"
-            subtitle="Your decision applies to the current revision and is recorded with your identity, the time and your comment."
-          >
-            {selected?.currentRevisionId ? (
-              <div className="space-y-3 p-5">
-                <p className="text-xs leading-relaxed text-[var(--muted)]">
-                  Deciding on <strong>revision {selected.currentRevisionNumber}</strong> of “{selected.title}”. If someone saves a
-                  newer revision first, your decision is refused and you must read the new one.
-                </p>
-                {viewingOlderRevision ? (
-                  <p className="text-xs text-amber-800" role="alert">
-                    You are reading an older revision. Your decision will apply to the current revision
-                    {` ${selected.currentRevisionNumber}`}, not the one shown.
+          <details className="panel rounded-2xl" open={knowledge.length === 0}>
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">New knowledge item</summary>
+            <form onSubmit={createItem} className="space-y-3 border-t border-[var(--line)] p-4">
+              <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-key">
+                <span>Key <span className="font-normal text-[var(--muted)]">(unique in this project)</span></span>
+                <input id="knowledge-key" required className="field" placeholder="K-02" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
+              </label>
+              <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-title">
+                <span>Title <span className="font-normal text-[var(--muted)]">(a claim a person can approve)</span></span>
+                <input id="knowledge-title" required className="field" placeholder="A task must have a non-empty title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+              </label>
+              {schemas.length > 0 ? (
+                <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-type">
+                  <span>Type</span>
+                  <select
+                    id="knowledge-type"
+                    className="field"
+                    value={`${form.typeId}@${form.schemaVersion}`}
+                    onChange={(e) => {
+                      const [typeId, schemaVersion] = e.target.value.split('@');
+                      setForm({ ...form, typeId, schemaVersion });
+                    }}
+                  >
+                    {!schemas.some((s) => s.namespace === form.typeId && s.version === form.schemaVersion) ? (
+                      <option value={`${form.typeId}@${form.schemaVersion}`}>{form.typeId} v{form.schemaVersion}</option>
+                    ) : null}
+                    {schemas.map((s) => (
+                      <option key={`${s.namespace}@${s.version}`} value={`${s.namespace}@${s.version}`}>
+                        {s.namespace} · v{s.version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
+                  <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-type">
+                    <span>Published type ID</span>
+                    <input id="knowledge-type" required className="field" value={form.typeId} onChange={(e) => setForm({ ...form, typeId: e.target.value })} />
+                  </label>
+                  <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-schema">
+                    <span>Schema version</span>
+                    <input id="knowledge-schema" required className="field" value={form.schemaVersion} onChange={(e) => setForm({ ...form, schemaVersion: e.target.value })} />
+                  </label>
+                </div>
+              )}
+              <button className="btn btn-primary" disabled={!live || busy}>Create item</button>
+            </form>
+          </details>
+        </div>
+
+        {/* ---- Workbench ---- */}
+        <div className="space-y-4">
+          {notice ? (
+            <p className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-2 text-sm text-teal-900" role="status">{notice}</p>
+          ) : null}
+
+          {!selected ? (
+            <section className="panel rounded-2xl">
+              <EmptyState label="Choose an item from the queue to read and review it." />
+            </section>
+          ) : (
+            <>
+              <section className="panel rounded-2xl p-5" aria-labelledby="item-title">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs text-[var(--muted)]">{selected.key} · {selected.typeId} v{selected.schemaVersion}</p>
+                    <h3 id="item-title" className="font-display mt-1 text-xl font-bold leading-snug">{selected.title}</h3>
+                  </div>
+                  <button type="button" className="btn btn-ghost" onClick={startEdit} disabled={!live || busy}>Edit this item</button>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <StateBadge label="status" value={selected.state} />
+                  <StateBadge label="review" value={selected.reviewState} />
+                  <StateBadge label="verify" value={selected.verificationState} />
+                </div>
+
+                {revisions.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+                    <label className="font-semibold" htmlFor="revision-picker">Viewing</label>
+                    <select
+                      id="revision-picker"
+                      className="field w-auto py-1.5 text-xs"
+                      value={viewed?.id ?? ''}
+                      onChange={(e) => {
+                        setViewedId(e.target.value);
+                        setCompareId(null);
+                      }}
+                    >
+                      {[...revisions].reverse().map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          Revision {entry.revisionNumber}{entry.id === current?.id ? ' (current)' : ''} · {formatWhen(entry.recordedAt)}
+                        </option>
+                      ))}
+                    </select>
+                    {viewed ? <span className="text-[var(--muted)]">by {shortId(viewed.actor ?? viewed.sourceReference)} — “{viewed.reason}”</span> : null}
+                  </div>
+                ) : null}
+                {viewingOlder && current ? (
+                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900" role="alert">
+                    You are reading an older revision. Decisions apply to the current revision ({current.revisionNumber}).{' '}
+                    <button className="font-semibold underline" onClick={() => setViewedId(null)}>Switch to current</button>
                   </p>
                 ) : null}
-                <label className="block space-y-1 text-xs font-semibold" htmlFor="review-comment">
-                  <span>Comment <span className="font-normal text-[var(--muted)]">(optional to approve, required to reject)</span></span>
-                  <textarea id="review-comment" className="field min-h-20" value={reviewComment} onChange={(e) => setReviewComment(e.target.value)} />
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-primary" disabled={!live || busy || selected.state !== 'Proposed'} onClick={() => setConfirmApprove(true)}>
-                    Approve revision {selected.currentRevisionNumber}
-                  </button>
-                  <button className="btn btn-ghost" disabled={!live || busy || selected.state !== 'Proposed' || !reviewComment.trim()} onClick={() => setConfirmReject(true)}>
-                    Reject
-                  </button>
+              </section>
+
+              <section className="panel overflow-hidden rounded-2xl">
+                <div className="flex gap-1 border-b border-[var(--line)] px-3 pt-2" role="tablist" aria-label="Revision views">
+                  {([
+                    ['read', 'Read'],
+                    ['changes', baseline ? 'What changed' : 'What changed'],
+                    ['history', `History (${reviews.length})`],
+                  ] as [Tab, string][]).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={tab === id}
+                      onClick={() => setTab(id)}
+                      className={`-mb-px rounded-t-lg border-x border-t px-4 py-2 text-sm font-semibold ${
+                        tab === id ? 'border-[var(--line)] bg-white' : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                {selected.state !== 'Proposed' ? (
-                  <p className="text-xs text-[var(--muted)]">This revision is already {selected.state.toLowerCase()}. Save a new revision to review again.</p>
-                ) : null}
-              </div>
-            ) : (
-              <EmptyState label="Add a content revision before reviewing." />
-            )}
-            {reviews.length > 0 ? (
-              <div className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
-                {[...reviews].reverse().map((entry) => (
-                  <Row
-                    key={`${entry.revisionId}-${entry.decidedAt}`}
-                    title={`${entry.decision} revision ${entry.revisionNumber}`}
-                    subtitle={`${entry.comment ?? 'No comment'} · by ${entry.reviewerId} · ${new Date(entry.decidedAt).toLocaleString()}`}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </Panel>
+                <div className="p-5">
+                  {!viewed ? (
+                    <p className="text-sm text-[var(--muted)]">This item has no content yet. Use “Edit this item” to add the first revision.</p>
+                  ) : tab === 'read' ? (
+                    <ContentView raw={viewed.content} changed={changes} />
+                  ) : tab === 'changes' ? (
+                    baseline ? (
+                      <div className="space-y-4">
+                        <label className="flex flex-wrap items-center gap-2 text-xs font-semibold" htmlFor="compare-picker">
+                          Compared with
+                          <select id="compare-picker" className="field w-auto py-1.5 text-xs" value={baseline.id} onChange={(e) => setCompareId(e.target.value)}>
+                            {[...olderRevisions].reverse().map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                Revision {entry.revisionNumber}{entry.id === lastApprovedBefore?.id ? ' (last approved)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <RevisionDiff changes={changes} fromLabel={`Revision ${baseline.revisionNumber}`} toLabel={`Revision ${viewed.revisionNumber}`} />
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[var(--muted)]">This is the first revision, so there is nothing earlier to compare with.</p>
+                    )
+                  ) : reviews.length === 0 ? (
+                    <p className="text-sm text-[var(--muted)]">No one has approved or rejected a revision of this item yet.</p>
+                  ) : (
+                    <ol className="space-y-3">
+                      {[...reviews].reverse().map((entry) => (
+                        <li key={`${entry.revisionId}-${entry.decidedAt}`} className="rounded-xl border border-[var(--line)] bg-white px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StateBadge value={entry.decision} />
+                            <span className="text-sm font-semibold">Revision {entry.revisionNumber}</span>
+                            <span className="text-xs text-[var(--muted)]">by {shortId(entry.reviewerId)} · {formatWhen(entry.decidedAt)}</span>
+                          </div>
+                          <p className="mt-2 text-sm">{entry.comment ?? <span className="italic text-[var(--muted)]">No comment</span>}</p>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              </section>
 
-          <form onSubmit={createItem} className="panel space-y-3 rounded-2xl p-5">
-            <h3 className="font-display text-lg font-bold">Create a knowledge item</h3>
-            <p className="text-xs leading-relaxed text-[var(--muted)]">
-              Give one planning idea a stable identity. Creating an item does not add its content; add a revision next.
-            </p>
-            <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-key">
-              <span>Key <span className="font-normal text-[var(--muted)]">(unique within this project)</span></span>
-              <input id="knowledge-key" required className="field" placeholder="K-02" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
-            </label>
-            <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-title">
-              <span>Title <span className="font-normal text-[var(--muted)]">(human-readable claim)</span></span>
-              <input id="knowledge-title" required className="field" placeholder="Create a task with a non-empty title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            </label>
-            <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
-              <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-type">
-                <span>Published type ID</span>
-                <input id="knowledge-type" required className="field" placeholder="plan.requirement | plan.goal | design.decision" value={form.typeId} onChange={(e) => setForm({ ...form, typeId: e.target.value })} />
-              </label>
-              <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-schema">
-                <span>Schema version</span>
-                <input id="knowledge-schema" required className="field" placeholder="1.0" value={form.schemaVersion} onChange={(e) => setForm({ ...form, schemaVersion: e.target.value })} />
-              </label>
-            </div>
-            <p className="text-xs text-[var(--muted)]">Type and version must already be published in the schema registry.</p>
-            <button className="btn btn-primary" disabled={!live || busy}>Create item</button>
-          </form>
+              {current ? (
+                <section className="panel rounded-2xl p-5" aria-labelledby="decision-title">
+                  <h3 id="decision-title" className="font-display text-base font-bold">Your decision on revision {current.revisionNumber}</h3>
+                  {selected.state !== 'Proposed' ? (
+                    <p className="mt-2 text-sm text-[var(--muted)]">
+                      This revision is already {selected.state.toLowerCase()}. Saving a new revision starts a new review.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">
+                      Recorded with your identity, the time and your comment. If someone saves a newer revision first, your decision is refused so you never approve text you have not read.
+                    </p>
+                  )}
+                  <label className="mt-3 block space-y-1 text-xs font-semibold" htmlFor="review-comment">
+                    <span>Comment <span className="font-normal text-[var(--muted)]">(optional to approve, required to reject)</span></span>
+                    <textarea
+                      id="review-comment"
+                      className="field min-h-20 font-normal"
+                      aria-invalid={rejectMissingReason}
+                      aria-describedby={rejectMissingReason ? 'reject-hint' : undefined}
+                      value={reviewComment}
+                      onChange={(e) => setReviewComment(e.target.value)}
+                      disabled={selected.state !== 'Proposed'}
+                    />
+                  </label>
+                  {rejectMissingReason ? <p id="reject-hint" className="mt-1 text-xs text-rose-800" role="alert">Say what needs to change so the author can fix it.</p> : null}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button className="btn btn-primary" disabled={!canDecide} onClick={() => setConfirmApprove(true)}>
+                      Approve revision {current.revisionNumber}
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      disabled={!canDecide}
+                      onClick={() => {
+                        setTouchedReject(true);
+                        if (reviewComment.trim()) setConfirmReject(true);
+                      }}
+                    >
+                      Reject…
+                    </button>
+                    {nextToReview ? (
+                      <button className="ml-auto text-sm font-semibold text-[var(--signal)] hover:underline" onClick={() => select(nextToReview.id)}>
+                        Next to review: {nextToReview.key} →
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+            </>
+          )}
 
-          <form onSubmit={addRevision} className="panel space-y-3 rounded-2xl p-5">
-            <h3 className="font-display text-lg font-bold">Add a content revision</h3>
-            <p className="text-xs leading-relaxed text-[var(--muted)]">
-              A new revision preserves the old one and resets prior review and verification. Use the selected item's schema.
-            </p>
-            <label className="block space-y-1 text-xs font-semibold" htmlFor="revision-content">
-              <span>Content <span className="font-normal text-[var(--muted)]">(schema-valid planning data)</span></span>
-              <textarea id="revision-content" required className="field min-h-28" value={revisionForm.content} onChange={(e) => setRevisionForm({ ...revisionForm, content: e.target.value })} />
-            </label>
-            <label className="block space-y-1 text-xs font-semibold" htmlFor="revision-reason">
-              <span>Reason for this revision</span>
-              <input id="revision-reason" required className="field" value={revisionForm.reason} onChange={(e) => setRevisionForm({ ...revisionForm, reason: e.target.value })} />
-            </label>
-            <button className="btn btn-primary" disabled={!live || busy || !selected}>Save revision</button>
-          </form>
+          {selected && editorOpen ? (
+            <form onSubmit={saveRevision} className="panel space-y-4 rounded-2xl p-5" aria-labelledby="editor-title">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 id="editor-title" className="font-display text-base font-bold">New revision of {selected.key}</h3>
+                  <p className="mt-1 text-xs text-[var(--muted)]">Saving keeps the old revision and sends this one back for review.</p>
+                </div>
+                <button type="button" className="text-xs font-semibold text-[var(--muted)] hover:underline" onClick={() => setEditorOpen(false)}>Cancel</button>
+              </div>
+              <ContentEditor value={editorContent} onChange={setEditorContent} />
+              <label className="block space-y-1 text-xs font-semibold" htmlFor="revision-reason">
+                <span>What changed and why</span>
+                <input id="revision-reason" required className="field font-normal" placeholder="e.g. Clarified the empty-title rule" value={editorReason} onChange={(e) => setEditorReason(e.target.value)} />
+              </label>
+              <button className="btn btn-primary" disabled={!live || busy || !editorReason.trim() || editorContent === current?.content}>
+                Save revision
+              </button>
+              {current && editorContent === current.content ? <p className="text-xs text-[var(--muted)]">No changes yet.</p> : null}
+            </form>
+          ) : null}
         </div>
       </div>
 

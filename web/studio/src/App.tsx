@@ -3,6 +3,7 @@ import { Shell } from './components/Shell';
 import { AccessPage } from './pages/AccessPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { CoordinationPage } from './pages/CoordinationPage';
+import { DocumentsPage } from './pages/DocumentsPage';
 import { EvidencePage } from './pages/EvidencePage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { OverviewPage } from './pages/OverviewPage';
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="plan-map" element={<PlanMapPage />} />
           <Route path="plan-outline" element={<PlanOutlinePage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
+            <Route path="documents" element={<DocumentsPage />} />
             <Route path="relations" element={<RelationsPage />} />
             <Route path="work" element={<WorkPage />} />
             <Route path="activity" element={<ActivityPage />} />

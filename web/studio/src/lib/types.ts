@@ -194,6 +194,33 @@ export interface SearchHit {
   recordedAt: string;
 }
 
+/** One immutable version of a stored document. `classification` and `status` may arrive as names or numbers. */
+export interface ArtifactVersion {
+  id: string;
+  key: string;
+  version: number;
+  mediaType: string;
+  sizeInBytes: number;
+  checksum: string;
+  checksumAlgorithm: string;
+  classification: string | number;
+  creator: string;
+  createdAt: string;
+  status: string | number;
+}
+
+export interface ArtifactVerification {
+  match: boolean;
+  expectedChecksum: string;
+  actualChecksum: string;
+  checksumAlgorithm: string;
+}
+
+export interface ArtifactDownload {
+  downloadUrl: string;
+  expiresAt: string;
+}
+
 export type StudioView =
   | 'overview'
   | 'knowledge'

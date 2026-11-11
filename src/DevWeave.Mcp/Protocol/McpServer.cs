@@ -1,6 +1,8 @@
 using System.Text.Json;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
+using DevWeave.Application.Specifications;
+using DevWeave.Domain.Specifications;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Knowledge;
 using Microsoft.Extensions.Logging;
@@ -19,6 +21,7 @@ public sealed class McpServer
     private readonly IPlanBaselines _baselines;
     private readonly IParticipationScheduler _scheduler;
     private readonly PlanDesignService _planning;
+    private readonly SpecificationService _specs;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
 
@@ -31,6 +34,7 @@ public sealed class McpServer
         IPlanBaselines baselines,
         IParticipationScheduler scheduler,
         PlanDesignService planning,
+        SpecificationService specs,
         ILogger<McpServer> logger)
     {
         _channels = channels;
@@ -39,6 +43,7 @@ public sealed class McpServer
         _baselines = baselines;
         _scheduler = scheduler;
         _planning = planning;
+        _specs = specs;
         _logger = logger;
         _options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
     }
@@ -122,6 +127,15 @@ public sealed class McpServer
             Tool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant",
                 new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
                 new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
+            Tool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts",
+                new { topic = StringProp() }, new[] { "topic" }),
+            Tool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities",
+                new { }, Array.Empty<string>()),
+            Tool("list_spec_topics", "List predefined specification topics with their legal choices and typed parameters",
+                new { }, Array.Empty<string>()),
+            Tool("propose_spec_decision", "Propose a specification decision for a topic that has no binding decision. It is validated against the topic definition and needs human approval before it binds. Requires WriteKnowledge grant",
+                new { topic = StringProp(), level = StringProp(), choice = StringProp(), @params = new { type = "object" }, rationale = StringProp() },
+                new[] { "topic", "level", "choice" }),
         }
     };
 
@@ -155,8 +169,40 @@ public sealed class McpServer
                 scope.ActorId, new KnowledgeItemId(args.GetProperty("parentItemId").GetGuid()),
                 args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
                 args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
+            "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
+            "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "list_spec_topics" => _specs.Topics.Select(SpecProjection.Topic).ToArray(),
+            "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
         };
+    }
+
+    private async Task<object> ProposeSpecFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var topic = args.GetProperty("topic").GetString()!;
+        var levelText = args.GetProperty("level").GetString();
+        if (!Enum.TryParse<SpecScopeLevel>(levelText, ignoreCase: true, out var level))
+            throw new ArgumentException("level must be tenant or project.");
+
+        var decision = new Dictionary<string, object?>
+        {
+            ["topic"] = topic,
+            ["scope"] = new { level = SpecDecisionJson.ToLevelString(level) },
+            ["decision"] = new
+            {
+                choice = args.GetProperty("choice").GetString(),
+                @params = args.TryGetProperty("params", out var p) ? JsonSerializer.Deserialize<JsonElement>(p.GetRawText()) : default(JsonElement?),
+            },
+        };
+        if (args.TryGetProperty("rationale", out var rationale) && rationale.ValueKind == JsonValueKind.String)
+            decision["rationale"] = rationale.GetString();
+
+        var item = await _specs.ProposeAsync(
+            scope.TenantId, scope.ProjectId!, scope.ActorId, topic, level,
+            JsonSerializer.Serialize(decision), "Proposed by agent.", ct);
+        return new { itemId = item.Id.Value, item.Key, state = item.State.ToString() };
     }
 
     private async Task<object> HandleSendMessageAsync(

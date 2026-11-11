@@ -195,6 +195,7 @@ app.MapArchiveEndpoints();
 
 // Permission-scoped PostgreSQL full-text search surface (SRS SRH-001..SRH-003).
 app.MapSearchEndpoints();
+app.MapSpecificationEndpoints();
 
 // Schema registry surface (SRS SCH-001..SCH-003, KNW-008).
 app.MapSchemaEndpoints();

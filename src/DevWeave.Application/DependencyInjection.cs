@@ -15,6 +15,7 @@ using DevWeave.Application.Planning;
 using DevWeave.Application.Projects;
 using DevWeave.Application.Relations;
 using DevWeave.Application.Schema;
+using DevWeave.Application.Specifications;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Application;
@@ -53,6 +54,7 @@ public static class DependencyInjection
 
         services.AddScoped<CreateKnowledgeItem>();
         services.AddScoped<PlanDesignService>();
+        services.AddScoped<SpecificationService>();
         services.AddScoped<PlanLockReview>();
         services.AddScoped<GetKnowledgeItem>();
         services.AddScoped<ListKnowledgeItemsForProject>();

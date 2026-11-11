@@ -38,4 +38,9 @@ internal sealed class ArtifactRepository : IArtifactRepository
             .Where(a => a.TenantId == tenantId && a.ProjectId == projectId && a.Key == key)
             .OrderBy(a => a.Version)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Artifact>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+        await _db.Artifacts
+            .Where(a => a.TenantId == tenantId)
+            .ToListAsync(ct);
 }

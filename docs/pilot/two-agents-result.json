@@ -1,0 +1,22 @@
+{
+  "runtimeAId": "7a05f9d5-b785-45f6-8783-cfb24063b689",
+  "runtimeBId": "c028d203-db49-4d72-8689-a246d376e655",
+  "leaseAId": "2cedad5d-021b-431e-af64-eeea1aeb4e65",
+  "leaseBId": "17741a9f-e407-45d8-b038-4e0fdf83cc3f",
+  "changeSetA": {
+    "commitSha": "d92e1f0dfc02ca85e585675d67ddd52eeefcca7c",
+    "providerRef": "github:pr/1",
+    "id": "6ce59452-52ad-45d2-8387-452168f925da"
+  },
+  "changeSetB": {
+    "commitSha": "17392d0d647819b99510e97b1e898793bc5fec85",
+    "providerRef": "github:pr/2",
+    "id": "f0efd23f-4525-4cec-a131-acea4bc580a7"
+  },
+  "evidenceAId": "985000ea-70b1-43ca-bb95-69a82c10dd88",
+  "evidenceBId": "489896bb-5115-41ed-abb4-389beffb8d85",
+  "mcpReplayOk": true,
+  "leaseConflictOk": true,
+  "reportId": "dfd7081f-58ef-448e-8836-4945c425e97c",
+  "completedAt": "2026-11-11T18:47:48.2330974Z"
+}

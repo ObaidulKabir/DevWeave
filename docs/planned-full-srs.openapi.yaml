@@ -711,6 +711,8 @@ components:
         version: { type: string }
         effectiveFrom: { type: string, format: date-time }
         entitlements: { type: array, items: { $ref: '#/components/schemas/EntitlementRule' } }
+        price: { type: number, default: 0 }
+        currency: { type: string, default: USD }
     EntitlementRule:
       type: object
       required: [key, limit, unit, action]
@@ -719,6 +721,7 @@ components:
         limit: { type: number }
         unit: { type: string }
         action: { type: string }
+        overageRate: { type: number, default: 0 }
     EntitlementCheck:
       type: object
       required: [entitlementKey, requested]

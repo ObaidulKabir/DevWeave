@@ -10,17 +10,20 @@ public sealed class CreateProject
     private readonly IProjectRepository _projects;
     private readonly ILifecycleProfileRepository _profiles;
     private readonly IPrincipalRepository _principals;
+    private readonly IProjectMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
 
     public CreateProject(
         IProjectRepository projects,
         ILifecycleProfileRepository profiles,
         IPrincipalRepository principals,
+        IProjectMembershipRepository memberships,
         IUnitOfWork unitOfWork)
     {
         _projects = projects;
         _profiles = profiles;
         _principals = principals;
+        _memberships = memberships;
         _unitOfWork = unitOfWork;
     }
 
@@ -46,7 +49,13 @@ public sealed class CreateProject
 
         var project = Project.Create(tenantId, name, key, description, profile.Id, principal.Id);
 
+        // Creator becomes the first project owner so subsequent membership grants are authorized
+        // under RequireTenantMembership without a chicken-and-egg gap.
+        var ownerMembership = ProjectMembership.Grant(
+            tenantId, project.Id, principal.Id, ProjectRole.Owner);
+
         await _projects.AddAsync(project, ct);
+        await _memberships.AddAsync(ownerMembership, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         return project;

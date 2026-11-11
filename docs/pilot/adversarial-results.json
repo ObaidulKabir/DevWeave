@@ -1,0 +1,12 @@
+{
+  "sourceContentRejected": true,
+  "sourceContentStatus": 422,
+  "outsiderBlocked": true,
+  "outsiderStatus": 403,
+  "unauthenticatedMutationFailed": true,
+  "unauthenticatedStatus": 401,
+  "duplicateLeaseConflict": true,
+  "duplicateLeaseNote": "confirmed-in-two-agents-run (HTTP 409)",
+  "noDiffGitInControlPlanePayloads": true,
+  "changeSetsAreRefsOnly": true
+}

@@ -1,4 +1,5 @@
 using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Coordination;
 
 namespace DevWeave.Application.Abstractions.Planned;
 
@@ -73,6 +74,15 @@ public interface IProjectMcpDirectory
 {
     Task<string> GetServiceRefAsync(AuthorizedScope scope, CancellationToken ct = default);
     Task<IReadOnlyList<string>> DiscoverCapabilitiesAsync(AuthorizedScope scope,
+        CancellationToken ct = default);
+}
+
+public interface IKillSwitchAuthority
+{
+    Task ActivateAsync(AuthorizedScope scope, KillSwitchTargetType type, Guid targetId,
+        string reason, DateTimeOffset? expiresAt = null, CancellationToken ct = default);
+    Task DeactivateAsync(AuthorizedScope scope, Guid killSwitchId, CancellationToken ct = default);
+    Task<bool> IsKilledAsync(AuthorizedScope scope, KillSwitchTargetType type, Guid targetId,
         CancellationToken ct = default);
 }
 

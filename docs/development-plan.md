@@ -4,7 +4,7 @@ Baseline: `DWV-SRS-001` v1.5 (see [docs/srs/](srs/)), status *business-aligned b
 
 Reconciled 2026-11-10 with `DEVW-ARCH-001` v1.0, the proposed Solution Architecture & Engineering Implementation Specification. The two supplied SRS v1.5 PDFs have identical extracted text; the architecture specification is the new design input. It does not supersede SRS priorities/releases, and its recommended technologies and P0-P5 engineering phases require ADR reconciliation.
 
-Implementation evidence and gaps: [Implementation Baseline Assessment](implementation-baseline-assessment.md). **Eight prototype slices are implemented, not eight fully accepted slices.** Current checks: Release build 0 warnings/errors, 216 backend tests passing, Studio production build passing, and 9 local migrations applied. Search has not started. Hardening below is the next work.
+Implementation evidence and gaps: [Implementation Baseline Assessment](implementation-baseline-assessment.md). **All 12 foundation slices are implemented as prototypes.** Current checks: Release build 0 warnings/errors, 273 backend tests passing, Studio production build passing, and 12 local migrations applied. Search, Integrations, Audit/Export, and Reporting are now vertically implemented and verified through integration tests.
 
 This plan sequences implementation work against that baseline. It is a plan, not evidence that any capability has been built. Requirement priority codes (`M`/`S`/`C`) and release tags (`MVP`, `R1`, `R2`, `R3`) come from the SRS and govern ordering; where this plan and the SRS disagree, the SRS wins.
 
@@ -140,7 +140,7 @@ Ordered slices, each one vertical (domain → tests → endpoint → contract):
 
 The twelve labels organize work, not percentage completion. Add sub-slices where required; no M/MVP requirement is deferred merely because it did not fit an earlier label.
 
-### Current implementation status (2026-11-10)
+### Current implementation status (2026-11-11)
 
 | Historical slice | Status | Remaining acceptance |
 | --- | --- | --- |
@@ -152,8 +152,10 @@ The twelve labels organize work, not percentage completion. Add sub-slices where
 | 6 Activities | Implemented prototype | Validated revision pins, automatic append-only audit/events, historical reconstruction |
 | 7 Artifacts/evidence | Implemented prototype | Collision-safe immutable objects, real storage tests, shared scanning, evidence-backed verification |
 | 8 Agents/context | Implemented prototype | Enforced credentials/admission/classification, safe replay/execution dedupe, permitted schema/tool discovery |
-| 9 Search | Project-scoped implementation | Complete SRS traceability/acceptance and hardening exit reviews; tenant-wide Search remains unavailable |
-| 10-12 | Not implemented | Integrations, export/import, Owner Studio/reporting/operations |
+| 9 Search | Implemented prototype | Complete SRS traceability/acceptance and hardening exit reviews; tenant-wide Search remains unavailable |
+| 10 Integrations | Implemented prototype | Durable outbox publication, provider-specific webhook security spikes |
+| 11 Audit/Export | Implemented prototype | Portable manifest generation, storage integration, import verification |
+| 12 Reporting | Implemented prototype | Metric projection coverage, evidence review UX in Studio |
 
 Slice 9 currently searches current revisions through PostgreSQL full-text search. Search requires
 active Human tenant and project membership before the adapter runs; Owner/Admin can search through

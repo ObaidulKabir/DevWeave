@@ -216,6 +216,9 @@ public sealed class EvidenceUseCaseTests
         public Task<IReadOnlyList<Artifact>> ListVersionsAsync(TenantId tenantId, ProjectId projectId, string key, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Artifact>>(
                 Items.Where(a => a.TenantId == tenantId && a.ProjectId == projectId && a.Key == key).ToList());
+
+        public Task<IReadOnlyList<Artifact>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Artifact>>(Items.Where(a => a.TenantId == tenantId).ToList());
     }
 
     private sealed class InMemoryPrincipalRepository : IPrincipalRepository

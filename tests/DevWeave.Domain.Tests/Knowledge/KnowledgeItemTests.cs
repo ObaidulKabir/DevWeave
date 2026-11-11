@@ -357,6 +357,47 @@ public sealed class KnowledgeItemTests
         Assert.Empty(writable);
     }
 
+    [Fact]
+    public void KNW_012_approval_is_bound_to_the_revision_that_was_reviewed()
+    {
+        var (tenant, project, actor) = Seed();
+        var item = CreateItem(tenant, project, actor);
+        var first = item.AddRevision("1.0", "{\"v\":1}", actor, "first", null, null, 0);
+
+        item.Approve(first.Id);
+
+        Assert.Equal(InfoState.Approved, item.State);
+        Assert.Equal(ReviewState.Reviewed, item.ReviewState);
+    }
+
+    [Fact]
+    public void KNW_012_review_of_a_superseded_revision_is_refused_and_changes_nothing()
+    {
+        var (tenant, project, actor) = Seed();
+        var item = CreateItem(tenant, project, actor);
+        var first = item.AddRevision("1.0", "{\"v\":1}", actor, "first", null, null, 0);
+        var second = item.AddRevision("1.0", "{\"v\":2}", actor, "changed while under review", null, null, 1);
+
+        var approve = Assert.Throws<StaleReviewException>(() => item.Approve(first.Id));
+        Assert.Equal(first.Id, approve.ReviewedRevisionId);
+        Assert.Equal(second.Id, approve.CurrentRevisionId);
+        Assert.Throws<StaleReviewException>(() => item.Reject(first.Id));
+
+        Assert.Equal(InfoState.Proposed, item.State);
+        Assert.Equal(ReviewState.Pending, item.ReviewState);
+    }
+
+    [Fact]
+    public void KNW_012_an_item_without_a_revision_cannot_be_reviewed()
+    {
+        var (tenant, project, actor) = Seed();
+        var item = CreateItem(tenant, project, actor);
+
+        Assert.Throws<InvalidOperationException>(() => item.Approve(KnowledgeRevisionId.New()));
+        Assert.Throws<InvalidOperationException>(() => item.Reject(KnowledgeRevisionId.New()));
+        Assert.Equal(InfoState.Proposed, item.State);
+    }
+
     private static (TenantId Tenant, ProjectId Project, PrincipalId Actor) Seed() =>
         (TenantId.New(), ProjectId.New(), PrincipalId.New());
 

@@ -208,7 +208,7 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
 
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
@@ -288,7 +288,7 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         int maxResults)
     {
         using var response = await _client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/knowledge-items/{itemId}/relationships/traverse",
+            $"/tenants/{tenantId}/knowledge/{itemId}/relationships/traverse",
             new TraverseRelationshipsRequest(direction, maxDepth, maxResults),
             JsonOptions);
         response.EnsureSuccessStatusCode();

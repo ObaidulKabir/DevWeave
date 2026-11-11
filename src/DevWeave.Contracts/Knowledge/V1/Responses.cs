@@ -55,3 +55,11 @@ public sealed record SearchKnowledgeHit(
 public sealed record SearchKnowledgeResponse(
     IReadOnlyList<SearchKnowledgeHit> Items,
     string? NextCursor);
+
+public sealed record ReviewDecisionResponse(
+    Guid ReviewerId,
+    string Decision,
+    Guid RevisionId,
+    int RevisionNumber,
+    string? Comment,
+    DateTimeOffset DecidedAt);

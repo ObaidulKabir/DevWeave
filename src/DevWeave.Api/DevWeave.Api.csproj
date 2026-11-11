@@ -5,6 +5,7 @@
     <ProjectReference Include="..\DevWeave.Contracts\DevWeave.Contracts.csproj" />
     <ProjectReference Include="..\DevWeave.Application\DevWeave.Application.csproj" />
     <ProjectReference Include="..\DevWeave.Infrastructure\DevWeave.Infrastructure.csproj" />
+    <ProjectReference Include="..\DevWeave.Mcp\DevWeave.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

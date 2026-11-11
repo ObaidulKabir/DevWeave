@@ -19,16 +19,19 @@ public static class KnowledgeEndpoints
 {
     public static IEndpointRouteBuilder MapKnowledgeEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/tenants/{tenantId:guid}");
+        var group = endpoints.MapGroup("/tenants/{tenantId:guid}")
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
-        group.MapPost("/projects/{projectId:guid}/knowledge-items", CreateKnowledgeItemAsync);
-        group.MapGet("/projects/{projectId:guid}/knowledge-items", ListKnowledgeItemsForProjectAsync);
-        group.MapGet("/knowledge-items", ListKnowledgeItemsForTenantAsync);
-        group.MapGet("/knowledge-items/{itemId:guid}", GetKnowledgeItemAsync);
-        group.MapPost("/knowledge-items/{itemId:guid}/revisions", AddRevisionAsync);
-        group.MapPost("/knowledge-items/{itemId:guid}/approve", ApproveItemAsync);
-        group.MapPost("/knowledge-items/{itemId:guid}/reject", RejectItemAsync);
-        group.MapPost("/knowledge-items/{itemId:guid}/verify", VerifyItemAsync);
+        group.MapPost("/projects/{projectId:guid}/knowledge", CreateKnowledgeItemAsync);
+        group.MapGet("/projects/{projectId:guid}/knowledge", ListKnowledgeItemsForProjectAsync);
+        group.MapGet("/knowledge", ListKnowledgeItemsForTenantAsync);
+        group.MapGet("/knowledge/{itemId:guid}", GetKnowledgeItemAsync);
+        group.MapPost("/knowledge/{itemId:guid}/revisions", AddRevisionAsync);
+        group.MapGet("/knowledge/{itemId:guid}/revisions", ListRevisionsAsync);
+        group.MapGet("/knowledge/{itemId:guid}/reviews", ListReviewsAsync);
+        group.MapPost("/knowledge/{itemId:guid}/approve", ApproveItemAsync);
+        group.MapPost("/knowledge/{itemId:guid}/reject", RejectItemAsync);
+        group.MapPost("/knowledge/{itemId:guid}/verify", VerifyItemAsync);
         group.MapGet("/revisions/{revisionId:guid}", GetRevisionAsync);
 
         return endpoints;
@@ -159,12 +162,20 @@ public static class KnowledgeEndpoints
     private static async Task<IResult> ApproveItemAsync(
         Guid tenantId,
         Guid itemId,
-        ApproveItem useCase,
+        ReviewRevisionRequest request,
+        HttpContext http,
+        ReviewKnowledge useCase,
         CancellationToken ct)
     {
         try
         {
-            var item = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+            var item = await useCase.ApproveAsync(
+                new TenantId(tenantId),
+                new KnowledgeItemId(itemId),
+                new KnowledgeRevisionId(request.RevisionId),
+                AuthenticatedPrincipal.GetId(http),
+                request.Comment,
+                ct);
 
             return Results.Ok(Map(item));
         }
@@ -172,19 +183,93 @@ public static class KnowledgeEndpoints
         {
             return Results.NotFound();
         }
+        catch (StaleReviewException ex)
+        {
+            return Results.Conflict(new KnowledgeConflict("stale-review", ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new KnowledgeConflict("review-rejected", ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new KnowledgeConflict("invalid-review", ex.Message));
+        }
     }
 
     private static async Task<IResult> RejectItemAsync(
         Guid tenantId,
         Guid itemId,
-        RejectItem useCase,
+        ReviewRevisionRequest request,
+        HttpContext http,
+        ReviewKnowledge useCase,
         CancellationToken ct)
     {
         try
         {
-            var item = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+            var item = await useCase.RejectAsync(
+                new TenantId(tenantId),
+                new KnowledgeItemId(itemId),
+                new KnowledgeRevisionId(request.RevisionId),
+                AuthenticatedPrincipal.GetId(http),
+                request.Comment ?? string.Empty,
+                ct);
 
             return Results.Ok(Map(item));
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+        catch (StaleReviewException ex)
+        {
+            return Results.Conflict(new KnowledgeConflict("stale-review", ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new KnowledgeConflict("review-rejected", ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new KnowledgeConflict("invalid-review", ex.Message));
+        }
+    }
+
+    private static async Task<IResult> ListRevisionsAsync(
+        Guid tenantId,
+        Guid itemId,
+        ListRevisionsForItem useCase,
+        CancellationToken ct)
+    {
+        try
+        {
+            var revisions = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+
+            return Results.Ok(revisions.Select(Map).ToList());
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static async Task<IResult> ListReviewsAsync(
+        Guid tenantId,
+        Guid itemId,
+        ListReviewDecisions useCase,
+        CancellationToken ct)
+    {
+        try
+        {
+            var decisions = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+
+            return Results.Ok(decisions.Select(d => new ReviewDecisionResponse(
+                d.Reviewer.Value,
+                d.Decision,
+                d.RevisionId.Value,
+                d.RevisionNumber,
+                d.Comment,
+                d.DecidedAt)).ToList());
         }
         catch (NotFoundException)
         {
@@ -207,6 +292,10 @@ public static class KnowledgeEndpoints
         catch (NotFoundException)
         {
             return Results.NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new KnowledgeConflict("verification-rejected", ex.Message));
         }
     }
 

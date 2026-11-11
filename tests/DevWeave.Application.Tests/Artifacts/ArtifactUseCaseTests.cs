@@ -302,6 +302,9 @@ public sealed class ArtifactUseCaseTests
                 Items.Where(a => a.TenantId == tenantId && a.ProjectId == projectId && a.Key == key)
                     .OrderBy(a => a.Version)
                     .ToList());
+
+        public Task<IReadOnlyList<Artifact>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Artifact>>(Items.Where(a => a.TenantId == tenantId).ToList());
     }
 
     private sealed class InMemoryProjectRepository : IProjectRepository

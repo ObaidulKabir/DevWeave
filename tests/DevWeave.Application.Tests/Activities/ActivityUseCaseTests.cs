@@ -368,6 +368,9 @@ public sealed class ActivityUseCaseTests
                 Revisions.Where(r => r.TenantId == tenantId && r.KnowledgeItemId == itemId)
                     .OrderBy(r => r.RevisionNumber)
                     .ToList());
+
+        public Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeRevision>>(Revisions.Where(r => r.TenantId == tenantId).ToList());
     }
 
     private sealed class InMemoryUnitOfWork : IUnitOfWork

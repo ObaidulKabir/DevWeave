@@ -110,7 +110,7 @@ public sealed class OidcAuthenticationIntegrationTests(IdentityTestFactory facto
     {
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"/tenants/{Guid.NewGuid()}/knowledge-items");
+            HttpMethod.Get, $"/tenants/{Guid.NewGuid()}/knowledge");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-token");
 
         using var response = await client.SendAsync(request);
@@ -126,7 +126,7 @@ public sealed class OidcAuthenticationIntegrationTests(IdentityTestFactory facto
             factory,
             IdentityTestFactory.IssueTestOidcToken(tokenTenant, Guid.NewGuid()));
 
-        using var response = await client.GetAsync($"/tenants/{Guid.NewGuid()}/knowledge-items");
+        using var response = await client.GetAsync($"/tenants/{Guid.NewGuid()}/knowledge");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -249,7 +249,7 @@ public sealed class OidcAuthenticationIntegrationTests(IdentityTestFactory facto
         projectResponse.EnsureSuccessStatusCode();
         var project = (await projectResponse.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
 
-        using var noProjectMembership = await client.GetAsync(
+        using var noProjectMembership = await ordinaryClient.GetAsync(
             $"/tenants/{tenant.Id}/projects/{project.Id}");
         Assert.Equal(HttpStatusCode.NotFound, noProjectMembership.StatusCode);
 
@@ -261,14 +261,14 @@ public sealed class OidcAuthenticationIntegrationTests(IdentityTestFactory facto
             await projectMemberships.AddAsync(ProjectMembership.Grant(
                 new TenantId(tenant.Id),
                 new ProjectId(project.Id),
-                principal.Id,
+                ordinaryPrincipal.Id,
                 ProjectRole.Viewer));
             await unitOfWork.SaveChangesAsync();
         }
 
-        using var projectRead = await client.GetAsync($"/tenants/{tenant.Id}/projects/{project.Id}");
+        using var projectRead = await ordinaryClient.GetAsync($"/tenants/{tenant.Id}/projects/{project.Id}");
         Assert.Equal(HttpStatusCode.OK, projectRead.StatusCode);
-        using var viewerWrite = await client.PostAsJsonAsync(
+        using var viewerWrite = await ordinaryClient.PostAsJsonAsync(
             $"/tenants/{tenant.Id}/projects/{project.Id}/references",
             new AddProjectReferenceRequest(
                 ProjectReferenceType.Repository,

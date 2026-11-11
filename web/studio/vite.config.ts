@@ -7,10 +7,15 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 5173,
+    host: '127.0.0.1',
+    port: 5174,
+    strictPort: true,
     proxy: {
       '/api': { target: 'http://localhost:5080', changeOrigin: true },
       '/health': { target: 'http://localhost:5080', changeOrigin: true },
+      '/tenants': { target: 'http://localhost:5080', changeOrigin: true },
+      '/schemas': { target: 'http://localhost:5080', changeOrigin: true },
+      '/relation-types': { target: 'http://localhost:5080', changeOrigin: true },
     },
   },
 });

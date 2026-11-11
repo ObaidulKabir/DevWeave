@@ -29,6 +29,17 @@ The OIDC provider must map these DevWeave identity claims into its access token:
 Issuer, signature, lifetime, and audience are validated by the OIDC bearer handler. Tokens missing
 valid DevWeave identity claims are rejected.
 
+## Development pilot auth
+
+When `ASPNETCORE_ENVIRONMENT=Development` and `Auth:Oidc:Authority` is empty, the API accepts
+symmetrically signed human JWTs minted by the pilot endpoints (same claim shape as production OIDC):
+
+- `POST /auth/pilot/bootstrap` — create tenant + human owner membership and return a bearer token
+- `POST /auth/pilot/token` — mint a bearer token for an existing active human principal
+
+These routes return 404 outside Development or when an OIDC authority is configured. Agents still use
+`POST /tenants/{tenantId}/agents/{agentId}/authenticate`.
+
 ## Current Boundary
 
 All endpoints require an authenticated bearer token by default. Root and health probes, tenant

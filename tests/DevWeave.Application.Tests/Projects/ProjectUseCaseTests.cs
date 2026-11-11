@@ -22,7 +22,7 @@ public sealed class ProjectUseCaseTests
             .ExecuteAsync(tenant.Id, "agile", "Agile", "1.0");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
 
-        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork)
+        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "Shop API", "shop-api", "Ecommerce", profile.Id, actor.Id);
 
         Assert.Equal(tenant.Id, project.TenantId);
@@ -42,7 +42,7 @@ public sealed class ProjectUseCaseTests
             .ExecuteAsync(tenantB.Id, "agile", "Agile", "1.0");
         var actor = await SeedPrincipalAsync(fakes, tenantA.Id, "a@alphacorp.com");
 
-        var useCase = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork);
+        var useCase = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             useCase.ExecuteAsync(tenantA.Id, "Shop API", "shop-api", null, profileB.Id, actor.Id));
@@ -58,7 +58,7 @@ public sealed class ProjectUseCaseTests
             .ExecuteAsync(tenantA.Id, "agile", "Agile", "1.0");
         var actorB = await SeedPrincipalAsync(fakes, tenantB.Id, "b@betacorp.com");
 
-        var useCase = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork);
+        var useCase = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             useCase.ExecuteAsync(tenantA.Id, "Shop API", "shop-api", null, profileA.Id, actorB.Id));
@@ -77,7 +77,7 @@ public sealed class ProjectUseCaseTests
         var actorA = await SeedPrincipalAsync(fakes, tenantA.Id, "a@alphacorp.com");
         var actorB = await SeedPrincipalAsync(fakes, tenantB.Id, "b@betacorp.com");
 
-        var createA = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork);
+        var createA = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
         await createA.ExecuteAsync(tenantA.Id, "Shop API", "shared-key", null, profileA.Id, actorA.Id);
 
         // Same tenant -> conflict.
@@ -85,7 +85,7 @@ public sealed class ProjectUseCaseTests
             createA.ExecuteAsync(tenantA.Id, "Other API", "shared-key", null, profileA.Id, actorA.Id));
 
         // Different tenant -> allowed (key uniqueness is scoped to the tenant).
-        var createB = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork);
+        var createB = new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
         var projectB = await createB.ExecuteAsync(tenantB.Id, "Other API", "shared-key", null, profileB.Id, actorB.Id);
         Assert.Equal("shared-key", projectB.Key);
     }
@@ -98,7 +98,7 @@ public sealed class ProjectUseCaseTests
         var profile = await new CreateLifecycleProfile(fakes.Profiles, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "agile", "Agile", "1.0");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork)
+        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "Shop API", "shop-api", null, profile.Id, actor.Id);
 
         await new ArchiveProject(fakes.Projects, fakes.UnitOfWork).ExecuteAsync(tenant.Id, project.Id);
@@ -125,7 +125,7 @@ public sealed class ProjectUseCaseTests
         var profile = await new CreateLifecycleProfile(fakes.Profiles, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "agile", "Agile", "1.0");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork)
+        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "Shop API", "shop-api", null, profile.Id, actor.Id);
 
         var reference = await new AddProjectReference(fakes.Projects, fakes.References, fakes.UnitOfWork)
@@ -150,7 +150,7 @@ public sealed class ProjectUseCaseTests
         var profile = await new CreateLifecycleProfile(fakes.Profiles, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "agile", "Agile", "1.0");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.UnitOfWork)
+        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, "Shop API", "shop-api", null, profile.Id, actor.Id);
 
         var foreignPrincipal = await SeedPrincipalAsync(fakes, otherTenant.Id, "b@betacorp.com");

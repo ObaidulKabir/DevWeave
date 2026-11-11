@@ -1,5 +1,9 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Infrastructure.Git;
+using DevWeave.Infrastructure.Integrations;
 using DevWeave.Infrastructure.Persistence;
+using DevWeave.Infrastructure.Persistence.Outbox;
 using DevWeave.Infrastructure.Repositories;
 using DevWeave.Infrastructure.Schema;
 using DevWeave.Infrastructure.Security;
@@ -40,6 +44,7 @@ public static class DependencyInjection
         services.AddScoped<IProjectMembershipRepository, ProjectMembershipRepository>();
         services.AddScoped<ILifecycleProfileRepository, LifecycleProfileRepository>();
         services.AddScoped<IWorkPlanningRepository, WorkPlanningRepository>();
+        services.AddScoped<IPlanDesignRepository, PlanDesignRepository>();
         services.AddScoped<IKnowledgeItemRepository, KnowledgeItemRepository>();
         services.AddScoped<IKnowledgeRevisionRepository, KnowledgeRevisionRepository>();
         services.AddScoped<IKnowledgeSearchRepository, KnowledgeSearchRepository>();
@@ -47,13 +52,19 @@ public static class DependencyInjection
         services.AddScoped<IRelationTypeRepository, RelationTypeRepository>();
         services.AddScoped<IRelationshipRepository, RelationshipRepository>();
         services.AddScoped<IActivityRepository, ActivityRepository>();
+        services.AddScoped<IAuditRepository, AuditRepository>();
         services.AddScoped<IArtifactRepository, ArtifactRepository>();
+        services.AddScoped<ICoordinationRepository, CoordinationRepository>();
+        services.AddScoped<ICommercialRepository, CommercialRepository>();
         services.AddScoped<IEvidenceRepository, EvidenceRepository>();
         services.AddScoped<IPayloadValidator, JsonSchemaPayloadValidator>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IAgentGrantRepository, AgentGrantRepository>();
         services.AddScoped<IAgentCredentialRepository, AgentCredentialRepository>();
         services.AddScoped<IContextPackageRepository, ContextPackageRepository>();
+        services.AddScoped<IIntegrationRepository, IntegrationRepository>();
+        services.AddScoped<IInboundEventRepository, InboundEventRepository>();
+        services.AddScoped<ITransactionalOutbox, TransactionalOutbox>();
         services.AddScoped<ISecretHasher, Pbkdf2SecretHasher>();
 
         // Access tokens are stateless and validated on every authenticated request, so the service is a
@@ -71,6 +82,8 @@ public static class DependencyInjection
         services.AddSingleton<IObjectStorage, S3ObjectStorage>();
         services.AddSingleton<IQuarantineStore, S3QuarantineStore>();
         services.AddSingleton<IContentInspector, ContentInspector>();
+        services.AddSingleton<IRepositoryReferenceAdapter, GitHubReferenceAdapter>();
+        services.AddScoped<IExternalWorkspaceProvider, ExternalWorkspaceProvider>();
 
         return services;
     }

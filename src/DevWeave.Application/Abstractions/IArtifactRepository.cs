@@ -17,4 +17,6 @@ public interface IArtifactRepository
     Task<IReadOnlyList<Artifact>> ListForProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
 
     Task<IReadOnlyList<Artifact>> ListVersionsAsync(TenantId tenantId, ProjectId projectId, string key, CancellationToken ct = default);
+
+    Task<IReadOnlyList<Artifact>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default);
 }

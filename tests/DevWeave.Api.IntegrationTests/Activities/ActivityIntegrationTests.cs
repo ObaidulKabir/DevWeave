@@ -361,7 +361,7 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
 
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
@@ -381,7 +381,7 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
 
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
+            $"/tenants/{tenantId}/knowledge/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);
         response.EnsureSuccessStatusCode();
@@ -493,7 +493,7 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
 
     private async Task<List<ActivityResponse>> ListActivitiesForItemAsync(Guid tenantId, Guid itemId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge-items/{itemId}/activities");
+        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge/{itemId}/activities");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<ActivityResponse>>(JsonOptions))!;
     }

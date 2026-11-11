@@ -26,7 +26,7 @@ public static class ActivityEndpoints
         group.MapGet("/projects/{projectId:guid}/state", ReconstructProjectStateAsync);
         group.MapGet("/projects/{projectId:guid}/provenance", ExportProvenanceAsync);
         group.MapGet("/activities/{activityId:guid}", GetActivityAsync);
-        group.MapGet("/knowledge-items/{itemId:guid}/activities", ListActivitiesForItemAsync);
+        group.MapGet("/knowledge/{itemId:guid}/activities", ListActivitiesForItemAsync);
         group.MapGet("/principals/{actorId:guid}/activities", ListActivitiesByActorAsync);
 
         return endpoints;

@@ -95,7 +95,7 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
 
         using var client = _factory.CreateAuthenticatedHumanClient(tenant.Id, principal.Id);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge-items",
+            $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge",
             new CreateKnowledgeItemRequest(
                 "architecture",
                 "Architecture Overview",
@@ -151,7 +151,7 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
@@ -207,7 +207,7 @@ public sealed class SchemaRegistryIntegrationTests : IClassFixture<IdentityTestF
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
         return await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
+            $"/tenants/{tenantId}/knowledge/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);
     }

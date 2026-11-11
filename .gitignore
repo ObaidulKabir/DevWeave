@@ -54,6 +54,7 @@ pnpm-debug.log*
 *.pfx
 *.p12
 secrets/
+docs/pilot/session.json
 
 # ---------- Local infrastructure ----------
 .docker/

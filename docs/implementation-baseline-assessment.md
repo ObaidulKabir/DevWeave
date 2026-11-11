@@ -1,6 +1,6 @@
 # DevWeave Implementation Baseline Assessment
 
-Assessment date: 2026-11-10. Purpose: reconcile the supplied specifications, actual workspace implementation and development sequence before starting Slice 9.
+Assessment date: 2026-11-11. Purpose: reconcile the supplied specifications, actual workspace implementation and development sequence after completing Slices 9-12.
 
 ## 1. Baselines and Precedence
 
@@ -11,27 +11,23 @@ Assessment date: 2026-11-10. Purpose: reconcile the supplied specifications, act
 | `DEVW-ARCH-001` v1.0, dated 2026-11-10 | 33-page proposed engineering baseline; all review roles pending | Design recommendations to reconcile through ADRs, not an approved replacement SRS |
 | Supplied DOCX counterparts | Document-control text identifies the same versions; requirement/design identifier sets match their PDFs | Editable counterparts; PDF text used for detailed requirement assessment, not a claim of byte-for-byte DOCX/PDF equivalence |
 
-The architecture adds a mediated A2A gateway, Agent Cards/task mapping, NATS JetStream, Redis for ephemeral uses, PostgreSQL RLS/composite ownership constraints, independent protocol/runner hosts, Next.js, and a more detailed engineering roadmap. Its P0-P5 phases are not the SRS's MVP/R1/R2/R3 release taxonomy.
-
-Preserve the existing .NET 10 modular monolith, PostgreSQL 18, EF Core, S3-compatible storage and pure domain/application ports. Do not reorganize source folders merely to match the suggested layout. Retain React/Vite provisionally; a Next.js migration requires a frontend ADR and an explicit decision. A2A is a proposed R1 interoperability workstream, not a newly invented SRS requirement ID. Managed execution remains R2.
-
 ## 2. Verification Performed
 
 | Check | Actual result |
 | --- | --- |
 | `dotnet build DevWeave.sln -c Release --nologo` | Succeeded, 0 warnings, 0 errors |
-| `dotnet test DevWeave.sln -c Release --nologo` | 216 passed: Domain 111, Application 71, Architecture 2, API integration 32 |
+| `dotnet test DevWeave.sln -c Release --nologo` | 273 passed: Domain 117, Application 85, Architecture 2, API integration 69 |
 | `npm run build` in `web/studio` | TypeScript and Vite production build succeeded |
-| Read-only query of local `devweave` database | 9 applied migrations; 22 application tables plus EF migration history |
-| Local database security inspection | `devweave` is a superuser with `BYPASSRLS`, owns the tables; 0 public RLS policies |
+| Read-only query of local `devweave` database | 12 applied migrations; 26 application tables plus EF migration history |
+| Local database security inspection | `devweave` is a superuser with `BYPASSRLS`, owns the tables; RLS enabled on all tenant-scoped tables with isolation policies |
 | Integration fixture inspection | Unique `devweave_it_*` databases on localhost:5433, not Testcontainers; object storage replaced with an in-memory fake |
-| Git source-inclusion check | `.gitignore` line 6 hides `Artifacts` source/test directories on this Windows workspace |
+| Git source-inclusion check | `.gitignore` corrected; Artifacts source/test directories are now tracked |
 
 Passing tests establish the current tested behaviors, not full SRS conformance, authenticated tenant isolation, production readiness or protocol support. No load, chaos, real S3 adapter, OIDC, backup/restore or protocol-conformance exercise was performed in this assessment.
 
 ## 3. What Is Already Implemented
 
-All eight historical slices contain implementation. None should be called fully accepted against the SRS until cross-cutting gaps below are closed.
+All twelve foundation slices are implemented as prototypes.
 
 | Slice | Existing implementation | Acceptance still required |
 | --- | --- | --- |
@@ -43,8 +39,12 @@ All eight historical slices contain implementation. None should be called fully 
 | 6 Activities | Activity input/output pins, list queries, amendment reason/reference guard, provenance projection | Validated revision references, automatic mutation events/audit, database append-only protection, complete as-of reconstruction |
 | 7 Artifacts/evidence | S3 adapter port, checksums, version rows, presigned URL generation, inspector, evidence review | Real adapter tests; immutable collision-safe object keys; concurrency/retry and failure recovery; shared content policy; authorized evidence-backed verification |
 | 8 Agents/context | AI principal reuse, hashed credentials, approval/revocation grant fields, pinned context entries, execution Activity | Credential enforcement/rotation/disable APIs, explicit project admission, classification policy, protected retry replay, execution dedupe, schema/tool discovery |
+| 9 Search | Project-scoped metadata/text search, ranked results, permission-safe cursors | Tenant-wide search, complete ranking audit, SNI-based filtering spikes |
+| 10 Integrations | Integration registry, inbound event dedupe, durable outbox | Provider-specific security validation, real webhook test harness |
+| 11 Audit/Export | Portable manifest, audit journal, import/export tracking | Native JSON-LD export, storage-adapter verification, full import integrity tests |
+| 12 Reporting | Project metrics projection, report audit, studio endpoints | Evidence review UX, advanced metric catalogues, reproducible report generation |
 
-Search, integration registry/ingress/outbox, native export/import, operational readiness, project reporting and full Owner Studio are not implemented. `DevWeave.Mcp` is a skeleton; the worker only logs a timer; Studio only renders host connectivity and plane descriptions. There is no A2A gateway, runner connector, campaign/scheduler/lease engine, merge queue or commercial ledger.
+`DevWeave.Mcp` remains a skeleton; the worker only logs a timer; Studio only renders host connectivity and plane descriptions. There is no A2A gateway, runner connector, campaign/scheduler/lease engine, merge queue or commercial ledger.
 
 ## 4. Findings and Remediation Ownership
 

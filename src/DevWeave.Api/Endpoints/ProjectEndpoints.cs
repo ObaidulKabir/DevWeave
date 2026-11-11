@@ -1,12 +1,15 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Projects;
 using DevWeave.Api.Security;
 using DevWeave.Contracts.Lifecycle.V1;
+using DevWeave.Contracts.Planned.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using Microsoft.AspNetCore.Mvc;
 
 namespace DevWeave.Api.Endpoints;
 
@@ -30,6 +33,8 @@ public static class ProjectEndpoints
         group.MapPost("/projects/{projectId:guid}/references", AddProjectReferenceAsync);
         group.MapPost("/projects/{projectId:guid}/members", GrantProjectMembershipAsync);
         group.MapPost("/projects/{projectId:guid}/members/{membershipId:guid}/revoke", RevokeProjectMembershipAsync);
+        group.MapGet("/projects/{projectId:guid}/metrics", GetProjectMetricsAsync);
+        group.MapPost("/projects/{projectId:guid}/reports", GenerateProjectReportAsync);
         group.MapPost("/lifecycle-profiles", CreateLifecycleProfileAsync);
         group.MapGet("/lifecycle-profiles", ListLifecycleProfilesAsync);
 
@@ -68,9 +73,18 @@ public static class ProjectEndpoints
         }
     }
 
-    private static async Task<IResult> ListProjectsAsync(Guid tenantId, ListProjectsForTenant useCase, CancellationToken ct)
+    private static async Task<IResult> ListProjectsAsync(
+        Guid tenantId,
+        HttpContext http,
+        ListProjectsForTenant useCase,
+        CancellationToken ct)
     {
-        var projects = await useCase.ExecuteAsync(new TenantId(tenantId), ct);
+        var projects = http.Request.Headers.Authorization.Count > 0
+            ? await useCase.ExecuteAsync(
+                new TenantId(tenantId),
+                AuthenticatedPrincipal.GetId(http),
+                ct)
+            : await useCase.ExecuteAsync(new TenantId(tenantId), ct);
 
         return Results.Ok(projects.Select(Map).ToList());
     }
@@ -181,6 +195,44 @@ public static class ProjectEndpoints
         {
             return Results.NotFound();
         }
+    }
+
+    private static async Task<IResult> GetProjectMetricsAsync(
+        Guid tenantId,
+        Guid projectId,
+        [FromQuery] DateTimeOffset? asOf,
+        [FromServices] IProjectReporting reporting,
+        HttpContext http,
+        CancellationToken ct)
+    {
+        var scope = new AuthorizedScope(
+            new TenantId(tenantId),
+            AuthenticatedPrincipal.GetId(http),
+            new ProjectId(projectId),
+            "Get project metrics",
+            http.TraceIdentifier);
+
+        var metrics = await reporting.GetMetricsAsync(scope, asOf ?? DateTimeOffset.UtcNow, ct);
+        return Results.Ok(metrics);
+    }
+
+    private static async Task<IResult> GenerateProjectReportAsync(
+        Guid tenantId,
+        Guid projectId,
+        [FromBody] ReportDraft draft,
+        [FromServices] IProjectReporting reporting,
+        HttpContext http,
+        CancellationToken ct)
+    {
+        var scope = new AuthorizedScope(
+            new TenantId(tenantId),
+            AuthenticatedPrincipal.GetId(http),
+            new ProjectId(projectId),
+            "Generate project report",
+            http.TraceIdentifier);
+
+        var reportId = await reporting.GenerateReportAsync(scope, draft.DeclaredPurpose, ct);
+        return Results.Accepted($"/tenants/{tenantId}/projects/{projectId}/reports/{reportId}", new { id = reportId });
     }
 
     private static async Task<IResult> CreateLifecycleProfileAsync(Guid tenantId, CreateLifecycleProfileRequest request, CreateLifecycleProfile useCase, CancellationToken ct)

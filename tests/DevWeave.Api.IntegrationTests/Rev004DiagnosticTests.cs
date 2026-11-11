@@ -62,7 +62,7 @@ public sealed class Rev004DiagnosticTests : IClassFixture<IdentityTestFactory>
         }
 
         var item = await PostAsHuman<KnowledgeItemResponse>(
-            $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge-items",
+            $"/tenants/{tenant.Id}/projects/{project.Id}/knowledge",
             new CreateKnowledgeItemRequest(
                 "architecture", "Architecture Overview", Classification.Public,
                 RepresentationKind.Text, "architecture.mmd", "1.0", principal.Id),
@@ -71,7 +71,7 @@ public sealed class Rev004DiagnosticTests : IClassFixture<IdentityTestFactory>
 
         using var humanClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, principal.Id);
         using var rev = await humanClient.PostAsJsonAsync(
-            $"/tenants/{tenant.Id}/knowledge-items/{item.Id}/revisions",
+            $"/tenants/{tenant.Id}/knowledge/{item.Id}/revisions",
             new AddRevisionRequest(0, "1.0", "{\"v\":1}", principal.Id, "Baseline", null, null),
             JsonOptions);
         var body = await rev.Content.ReadAsStringAsync();

@@ -20,6 +20,13 @@ public sealed record AddRevisionRequest(
     string? SourceReference,
     Guid? SupersededRevisionId);
 
+/// <summary>
+/// A review decision on one specific revision. <see cref="RevisionId"/> is mandatory so a decision
+/// can never apply to content the reviewer did not read. <see cref="Comment"/> is optional for an
+/// approval and is the required reason for a rejection.
+/// </summary>
+public sealed record ReviewRevisionRequest(Guid RevisionId, string? Comment);
+
 public sealed record SearchKnowledgeRequest(
     string Text,
     string? TypeId = null,

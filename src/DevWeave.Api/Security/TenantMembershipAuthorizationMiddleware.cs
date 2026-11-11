@@ -127,6 +127,8 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
                path.EndsWith("/archive", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/restore", StringComparison.OrdinalIgnoreCase) ||
                (method == HttpMethods.Delete && path.Contains("/projects/", StringComparison.OrdinalIgnoreCase)) ||
+               (method == HttpMethods.Post &&
+                path.EndsWith("/coordination/baselines", StringComparison.OrdinalIgnoreCase)) ||
                path.EndsWith("/approve", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/reject", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/verify", StringComparison.OrdinalIgnoreCase) ||
@@ -150,7 +152,8 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
             return new ProjectId(projectGuid);
 
         if (Guid.TryParse(route["itemId"]?.ToString(), out var itemGuid) &&
-            path.Contains("/knowledge-items/", StringComparison.OrdinalIgnoreCase))
+            (path.Contains("/knowledge-items/", StringComparison.OrdinalIgnoreCase) || 
+             path.Contains("/knowledge/", StringComparison.OrdinalIgnoreCase)))
         {
             return (await knowledgeItems.GetByIdAsync(
                 tenantId,

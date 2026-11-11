@@ -175,6 +175,34 @@ public sealed class KnowledgeItem
     public void Reject() => TransitionTo(InfoState.Rejected);
 
     /// <summary>
+    /// Approves the item on the strength of a review of one specific revision. The decision is
+    /// refused with <see cref="StaleReviewException"/> unless <paramref name="reviewedRevisionId"/> is
+    /// still the current revision, so a reviewer can never approve content that changed after they
+    /// read it (KNW-012, PRO-005).
+    /// </summary>
+    public void Approve(KnowledgeRevisionId reviewedRevisionId)
+    {
+        RequireReviewedRevisionIsCurrent(reviewedRevisionId);
+        Approve();
+    }
+
+    /// <summary>Rejects the item on the strength of a review of one specific, current revision.</summary>
+    public void Reject(KnowledgeRevisionId reviewedRevisionId)
+    {
+        RequireReviewedRevisionIsCurrent(reviewedRevisionId);
+        Reject();
+    }
+
+    private void RequireReviewedRevisionIsCurrent(KnowledgeRevisionId reviewedRevisionId)
+    {
+        if (CurrentRevisionId is not { } current)
+            throw new InvalidOperationException("Knowledge item has no revision to review.");
+
+        if (current != reviewedRevisionId)
+            throw new StaleReviewException(reviewedRevisionId, current);
+    }
+
+    /// <summary>
     /// Marks the item verified (BR-009). Verification is a claim about evidence, so it is refused
     /// unless the caller supplies that qualifying, policy-reviewed evidence exists — an
     /// agent-reported completion alone never counts as verified delivery (PRO-005, AC-08).

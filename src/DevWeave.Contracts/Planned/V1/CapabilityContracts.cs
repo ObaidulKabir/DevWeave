@@ -78,13 +78,14 @@ public sealed record HandoffDraft(Guid WorkPackageId, Guid SourceRuntimeId, Guid
     string Reason);
 
 public sealed record PlanDraft(string Key, string Version, DateTimeOffset EffectiveFrom,
-    IReadOnlyList<EntitlementRule> Entitlements);
-public sealed record EntitlementRule(string Key, decimal Limit, string Unit, string Action);
+    IReadOnlyList<EntitlementRule> Entitlements, decimal Price = 0, string Currency = "USD");
+public sealed record EntitlementRule(string Key, decimal Limit, string Unit, string Action,
+    decimal OverageRate = 0);
 public sealed record EntitlementCheck(string EntitlementKey, decimal Requested);
 public sealed record UsageObservation(Guid? ProjectId, Guid? CampaignId, Guid? RuntimeId,
     string ExecutionMode, string ResourceClass, string Meter, decimal Quantity,
     DateTimeOffset StartedAt, DateTimeOffset EndedAt, string IdempotencyKey);
-public sealed record UsageView(string Meter, decimal Consumed, decimal? Limit, string Unit,
+public sealed record UsageView(string Meter, decimal Consumed, string ResourceClass,
     DateTimeOffset WindowStart, DateTimeOffset WindowEnd);
 public sealed record ManagedRunnerRequest(Guid CampaignId, Guid WorkPackageId,
     string ComputeClass, string CredentialRef, DateTimeOffset ExpiresAt);

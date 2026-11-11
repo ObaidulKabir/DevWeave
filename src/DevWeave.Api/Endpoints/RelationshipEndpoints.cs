@@ -27,8 +27,8 @@ public static class RelationshipEndpoints
         group.MapGet("/projects/{projectId:guid}/relationships", ListRelationshipsForProjectAsync);
         group.MapGet("/relationships/{relationshipId:guid}", GetRelationshipAsync);
         group.MapPost("/relationships/{relationshipId:guid}/revoke", RevokeRelationshipAsync);
-        group.MapGet("/knowledge-items/{itemId:guid}/relationships", ListRelationshipsForItemAsync);
-        group.MapPost("/knowledge-items/{itemId:guid}/relationships/traverse", TraverseRelationshipsAsync);
+        group.MapGet("/knowledge/{itemId:guid}/relationships", ListRelationshipsForItemAsync);
+        group.MapPost("/knowledge/{itemId:guid}/relationships/traverse", TraverseRelationshipsAsync);
 
         return endpoints;
     }

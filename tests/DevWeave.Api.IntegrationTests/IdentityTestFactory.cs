@@ -13,7 +13,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using DevWeave.Infrastructure.Security;
+using DevWeave.Domain.Identity;
+using DevWeave.Contracts.Identity.V1;
+using DevWeave.Contracts.Projects.V1;
+using DevWeave.Contracts.Lifecycle.V1;
 using System.Text;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace DevWeave.Api.IntegrationTests;
 
@@ -24,9 +32,16 @@ namespace DevWeave.Api.IntegrationTests;
 /// </summary>
 public sealed class IdentityTestFactory : WebApplicationFactory<Program>
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+        PropertyNameCaseInsensitive = true,
+    };
+
     public const string TestOidcIssuer = "https://identity.devweave.test";
     public const string TestOidcAudience = "devweave-integration-tests";
     private const string TestOidcSigningKey = "devweave-oidc-integration-test-key-32bytes";
+    private const string TestAgentSigningKey = "devweave-agent-integration-test-key-32bytes";
 
     private readonly string _databaseName;
     private readonly string _adminConnectionString;
@@ -95,6 +110,7 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
                 ["ConnectionStrings:DevWeave"] = ConnectionString,
                 ["Auth:Oidc:Authority"] = "",
                 ["Auth:Oidc:Audience"] = TestOidcAudience,
+                ["Auth:SigningKey"] = TestAgentSigningKey,
                 ["Authorization:RequireTenantMembership"] = _enforceTenantMembership.ToString(),
             });
         });
@@ -146,7 +162,8 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
         Guid principalId,
         string principalType = "Human",
         string audience = TestOidcAudience,
-        bool includeIdentityClaims = true)
+        bool includeIdentityClaims = true,
+        bool isPlatformAdmin = false)
     {
         var claims = new List<System.Security.Claims.Claim>
         {
@@ -158,6 +175,11 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
             claims.Add(new System.Security.Claims.Claim(AuthClaims.TenantId, tenantId.ToString("D")));
             claims.Add(new System.Security.Claims.Claim(AuthClaims.PrincipalId, principalId.ToString("D")));
             claims.Add(new System.Security.Claims.Claim(AuthClaims.PrincipalType, principalType));
+            
+            if (isPlatformAdmin)
+            {
+                claims.Add(new System.Security.Claims.Claim("platform_admin", "true"));
+            }
         }
 
         var credentials = new SigningCredentials(
@@ -182,6 +204,85 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
                 "Bearer",
                 IssueTestOidcToken(tenantId, principalId));
         return client;
+    }
+
+    public HttpClient CreateAuthenticatedAgentClient(Guid tenantId, Guid principalId)
+    {
+        var client = CreateClient();
+        var service = new HmacAccessTokenService(TestAgentSigningKey);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer",
+                service.Issue(new TenantId(tenantId), new PrincipalId(principalId), PrincipalType.AiAgent, TimeSpan.FromHours(1)));
+        return client;
+    }
+
+    public HttpClient CreatePlatformAdminClient(Guid tenantId, Guid principalId)
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer",
+                IssueTestOidcToken(tenantId, principalId, isPlatformAdmin: true));
+        return client;
+    }
+
+    public async Task<(HttpClient Client, TenantResponse Tenant, PrincipalResponse User)> CreateAuthenticatedHumanClientAsync()
+    {
+        PrepareDatabase();
+        var client = CreateClient();
+        
+        // 1. Create Tenant
+        var tenantResponse = await client.PostAsJsonAsync("/tenants", new CreateTenantRequest("Test Tenant"), JsonOptions);
+        tenantResponse.EnsureSuccessStatusCode();
+        var tenant = (await tenantResponse.Content.ReadFromJsonAsync<TenantResponse>(JsonOptions))!;
+
+        // 2. Create Human Principal
+        var userResponse = await client.PostAsJsonAsync($"/tenants/{tenant.Id}/principals", new CreatePrincipalRequest("user@test.com", PrincipalType.Human), JsonOptions);
+        userResponse.EnsureSuccessStatusCode();
+        var user = (await userResponse.Content.ReadFromJsonAsync<PrincipalResponse>(JsonOptions))!;
+
+        // 3. Issue Token
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IssueTestOidcToken(tenant.Id, user.Id));
+
+        return (client, tenant, user);
+    }
+
+    public async Task<ProjectResponse> CreateProjectAsync(Guid tenantId)
+    {
+        using var client = CreateClient();
+        // 1. Create a human principal to be the creator
+        var adminResponse = await client.PostAsJsonAsync($"/tenants/{tenantId}/principals", new CreatePrincipalRequest("admin@test.com", PrincipalType.Human), JsonOptions);
+        adminResponse.EnsureSuccessStatusCode();
+        var admin = (await adminResponse.Content.ReadFromJsonAsync<PrincipalResponse>(JsonOptions))!;
+        
+        // Use an admin token for setup
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IssueTestOidcToken(tenantId, admin.Id));
+
+        // 2. Create a lifecycle profile
+        var profileResponse = await client.PostAsJsonAsync($"/tenants/{tenantId}/lifecycle-profiles", new CreateLifecycleProfileRequest("default", "Default Profile", "1.0"), JsonOptions);
+        profileResponse.EnsureSuccessStatusCode();
+        var profile = (await profileResponse.Content.ReadFromJsonAsync<LifecycleProfileResponse>(JsonOptions))!;
+        
+        // 3. Create Project
+        var response = await client.PostAsJsonAsync($"/tenants/{tenantId}/projects", new CreateProjectRequest("Test Project", "TP", "Description", profile.Id, admin.Id), JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
+    }
+
+    public async Task<PrincipalResponse> CreateAgentAsync(Guid tenantId, Guid projectId)
+    {
+        using var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", IssueTestOidcToken(tenantId, Guid.NewGuid()));
+
+        var response = await client.PostAsJsonAsync($"/tenants/{tenantId}/principals", new CreatePrincipalRequest("agent@test.com", PrincipalType.AiAgent), JsonOptions);
+        response.EnsureSuccessStatusCode();
+        var agent = (await response.Content.ReadFromJsonAsync<PrincipalResponse>(JsonOptions))!;
+
+        // Grant access to project
+        await client.PostAsJsonAsync($"/tenants/{tenantId}/members", new InviteMemberRequest(agent.Id, MembershipRole.Member), JsonOptions);
+
+        return agent;
     }
 
     protected override void Dispose(bool disposing)

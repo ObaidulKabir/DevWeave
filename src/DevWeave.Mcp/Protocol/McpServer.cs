@@ -1,0 +1,290 @@
+using System.Text.Json;
+using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Application.Planning;
+using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Knowledge;
+using Microsoft.Extensions.Logging;
+
+namespace DevWeave.Mcp.Protocol;
+
+/// <summary>
+/// Project-scoped MCP protocol adapter. Tools map to canonical coordination ports;
+/// durable channel state remains authoritative (SRS §17, ARCH §10.2).
+/// </summary>
+public sealed class McpServer
+{
+    private readonly ICoordinationChannels _channels;
+    private readonly IRuntimeRegistry _runtimeRegistry;
+    private readonly ILeaseAuthority _leases;
+    private readonly IPlanBaselines _baselines;
+    private readonly IParticipationScheduler _scheduler;
+    private readonly PlanDesignService _planning;
+    private readonly ILogger<McpServer> _logger;
+    private readonly JsonSerializerOptions _options;
+
+    public const string ProtocolVersion = "2026-07-28";
+
+    public McpServer(
+        ICoordinationChannels channels,
+        IRuntimeRegistry runtimeRegistry,
+        ILeaseAuthority leases,
+        IPlanBaselines baselines,
+        IParticipationScheduler scheduler,
+        PlanDesignService planning,
+        ILogger<McpServer> logger)
+    {
+        _channels = channels;
+        _runtimeRegistry = runtimeRegistry;
+        _leases = leases;
+        _baselines = baselines;
+        _scheduler = scheduler;
+        _planning = planning;
+        _logger = logger;
+        _options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    }
+
+    public async Task<JsonRpcResponse> HandleRequestAsync(
+        AuthorizedScope scope,
+        Guid runtimeId,
+        JsonRpcRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            object? result = request.Method switch
+            {
+                McpMethods.Initialize => HandleInitialize(),
+                McpMethods.ListTools => HandleListTools(),
+                McpMethods.CallTool => await HandleCallToolAsync(scope, runtimeId, request, ct),
+                McpMethods.SendMessage => await HandleSendMessageAsync(scope, runtimeId, request, ct),
+                McpMethods.ReplayMessages => await HandleReplayAsync(scope, request, ct),
+                _ => throw new InvalidOperationException($"Method not found: {request.Method}")
+            };
+
+            return new JsonRpcResponse("2.0", request.Id, result, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling MCP request {Method}", request.Method);
+            return new JsonRpcResponse("2.0", request.Id, null, new JsonRpcError(-32603, ex.Message, null));
+        }
+    }
+
+    private static object HandleInitialize() => new
+    {
+        protocolVersion = ProtocolVersion,
+        capabilities = new
+        {
+            tools = new { },
+            resources = new { },
+            prompts = new { }
+        },
+        serverInfo = new
+        {
+            name = "DevWeave-Coordination-Plane",
+            version = "1.0.0"
+        }
+    };
+
+    private static object HandleListTools() => new
+    {
+        tools = new object[]
+        {
+            Tool("send_project_message", "Send a durable coordination message to a channel",
+                new { channelId = UuidProp(), messageType = StringProp(), payload = new { type = "object" }, idempotencyKey = StringProp() },
+                new[] { "channelId", "messageType", "payload", "idempotencyKey" }),
+            Tool("read_messages_after_cursor", "Replay durable channel messages after a sequence cursor",
+                new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
+                new[] { "channelId" }),
+            Tool("acknowledge_messages", "Acknowledge processed channel sequence for reconnect recovery",
+                new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
+                new[] { "channelId", "processedThroughSequence" }),
+            Tool("open_channel", "Open a project coordination channel",
+                new { channelType = StringProp(), campaignId = UuidProp(), workPackageId = UuidProp() },
+                new[] { "channelType" }),
+            Tool("register_runtime", "Register this agent runtime instance for the project",
+                new { runtimeClass = StringProp(), protocolVersion = StringProp(), capabilities = new { type = "array", items = new { type = "string" } }, attestationRef = StringProp() },
+                new[] { "runtimeClass", "protocolVersion", "attestationRef" }),
+            Tool("heartbeat_lease", "Renew an exclusive work-package lease fencing token",
+                new { leaseId = UuidProp(), expectedFence = new { type = "integer" }, expiresAt = StringProp() },
+                new[] { "leaseId", "expectedFence", "expiresAt" }),
+            Tool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
+                new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
+                new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
+            Tool("list_ready_work", "Create a work package under a campaign baseline (scheduler input)",
+                new { campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp() },
+                new[] { "campaignId", "baselineId", "objective" }),
+            Tool("get_plan_baseline", "Describe a locked plan baseline export manifest",
+                new { baselineId = UuidProp() },
+                new[] { "baselineId" }),
+            Tool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling",
+                new { }, Array.Empty<string>()),
+            Tool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant",
+                new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
+                new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
+        }
+    };
+
+    private async Task<object> HandleCallToolAsync(
+        AuthorizedScope scope,
+        Guid runtimeId,
+        JsonRpcRequest request,
+        CancellationToken ct)
+    {
+        using var doc = JsonDocument.Parse(request.Params?.ToString() ?? "{}");
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("name", out var nameEl) || nameEl.GetString() is not { Length: > 0 } name)
+            throw new ArgumentException("tools/call requires name.");
+        var args = root.TryGetProperty("arguments", out var argsEl) ? argsEl : default;
+
+        return name switch
+        {
+            "send_project_message" or "send_message" => await SendFromArgsAsync(scope, runtimeId, args, ct),
+            "read_messages_after_cursor" => await ReplayFromArgsAsync(scope, args, ct),
+            "acknowledge_messages" => await AckFromArgsAsync(scope, args, ct),
+            "open_channel" => await OpenChannelFromArgsAsync(scope, args, ct),
+            "register_runtime" => await RegisterRuntimeFromArgsAsync(scope, args, ct),
+            "heartbeat_lease" => await RenewLeaseFromArgsAsync(scope, args, ct),
+            "request_assignment" => await AcquireLeaseFromArgsAsync(scope, runtimeId, args, ct),
+            "list_ready_work" => await CreatePackageFromArgsAsync(scope, args, ct),
+            "get_plan_baseline" => await DescribeBaselineFromArgsAsync(scope, args, ct),
+            "read_plan_outline" => PlanDesignProjection.Outline(
+                await _planning.ReadAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "propose_plan_expansion" => PlanDesignProjection.Proposal(
+                await _planning.ProposeAsync(scope.TenantId, scope.ProjectId!,
+                scope.ActorId, new KnowledgeItemId(args.GetProperty("parentItemId").GetGuid()),
+                args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
+                args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
+            _ => throw new InvalidOperationException($"Unknown tool: {name}")
+        };
+    }
+
+    private async Task<object> HandleSendMessageAsync(
+        AuthorizedScope scope, Guid runtimeId, JsonRpcRequest request, CancellationToken ct)
+    {
+        var draft = JsonSerializer.Deserialize<MessageDraft>(request.Params?.ToString() ?? "{}", _options)
+            ?? throw new ArgumentException("Invalid message draft.");
+        return await _channels.SendAsync(scope, runtimeId, draft, ct);
+    }
+
+    private async Task<object> HandleReplayAsync(AuthorizedScope scope, JsonRpcRequest request, CancellationToken ct)
+    {
+        using var doc = JsonDocument.Parse(request.Params?.ToString() ?? "{}");
+        var channelId = doc.RootElement.GetProperty("channelId").GetGuid();
+        var after = doc.RootElement.TryGetProperty("afterSequence", out var afterEl) ? afterEl.GetInt64() : 0L;
+        var limit = doc.RootElement.TryGetProperty("limit", out var limitEl) ? limitEl.GetInt32() : 50;
+        return await _channels.ReplayAsync(scope, channelId, after, limit, ct);
+    }
+
+    private async Task<object> SendFromArgsAsync(AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)
+    {
+        var draft = new MessageDraft(
+            args.GetProperty("channelId").GetGuid(),
+            args.GetProperty("messageType").GetString()!,
+            "1.0",
+            args.TryGetProperty("payload", out var payload) ? payload.GetRawText() : "{}",
+            Array.Empty<ResourceRef>(),
+            null,
+            args.GetProperty("idempotencyKey").GetString()!);
+        return await _channels.SendAsync(scope, runtimeId, draft, ct);
+    }
+
+    private async Task<object> ReplayFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var channelId = args.GetProperty("channelId").GetGuid();
+        var after = args.TryGetProperty("afterSequence", out var afterEl) ? afterEl.GetInt64() : 0L;
+        var limit = args.TryGetProperty("limit", out var limitEl) ? limitEl.GetInt32() : 50;
+        return await _channels.ReplayAsync(scope, channelId, after, Math.Clamp(limit, 1, 200), ct);
+    }
+
+    private async Task<object> AckFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        await _channels.AcknowledgeAsync(
+            scope,
+            args.GetProperty("channelId").GetGuid(),
+            args.GetProperty("processedThroughSequence").GetInt64(),
+            ct);
+        return new { acknowledged = true };
+    }
+
+    private async Task<object> OpenChannelFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var channelType = args.GetProperty("channelType").GetString()!;
+        Guid? campaignId = args.TryGetProperty("campaignId", out var c) && c.ValueKind != JsonValueKind.Null ? c.GetGuid() : null;
+        Guid? workPackageId = args.TryGetProperty("workPackageId", out var w) && w.ValueKind != JsonValueKind.Null ? w.GetGuid() : null;
+        var id = await _channels.OpenAsync(scope, channelType, campaignId, workPackageId, ct);
+        return new { id };
+    }
+
+    private async Task<object> RegisterRuntimeFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var capabilities = new List<string>();
+        if (args.TryGetProperty("capabilities", out var caps) && caps.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in caps.EnumerateArray())
+                capabilities.Add(item.GetString() ?? string.Empty);
+        }
+
+        var registration = new RuntimeRegistration(
+            scope.ActorId.Value,
+            args.GetProperty("runtimeClass").GetString()!,
+            args.GetProperty("protocolVersion").GetString()!,
+            capabilities,
+            args.GetProperty("attestationRef").GetString()!);
+        var id = await _runtimeRegistry.RegisterAsync(scope, registration, ct);
+        return new { id };
+    }
+
+    private async Task<object> RenewLeaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var leaseId = args.GetProperty("leaseId").GetGuid();
+        var fence = args.GetProperty("expectedFence").GetInt64();
+        var expiresAt = DateTimeOffset.Parse(args.GetProperty("expiresAt").GetString()!);
+        return await _leases.RenewAsync(scope, leaseId, fence, expiresAt, ct);
+    }
+
+    private async Task<object> AcquireLeaseFromArgsAsync(AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)
+    {
+        var request = new LeaseRequest(
+            args.GetProperty("workPackageId").GetGuid(),
+            runtimeId,
+            args.GetProperty("resourceScope").GetString()!,
+            DateTimeOffset.Parse(args.GetProperty("expiresAt").GetString()!),
+            0,
+            args.GetProperty("idempotencyKey").GetString()!);
+        return await _leases.AcquireAsync(scope, request, ct);
+    }
+
+    private async Task<object> CreatePackageFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var draft = new PackageDraft(
+            args.GetProperty("campaignId").GetGuid(),
+            args.GetProperty("baselineId").GetGuid(),
+            args.GetProperty("objective").GetString()!,
+            Array.Empty<Guid>(),
+            Array.Empty<string>(),
+            Array.Empty<string>());
+        var id = await _scheduler.CreatePackageAsync(scope, draft, ct);
+        return new { id };
+    }
+
+    private async Task<object> DescribeBaselineFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        return await _baselines.DescribeAsync(scope, args.GetProperty("baselineId").GetGuid(), ct);
+    }
+
+    private static object Tool(string name, string description, object properties, string[] required) => new
+    {
+        name,
+        description,
+        inputSchema = new
+        {
+            type = "object",
+            properties,
+            required
+        }
+    };
+
+    private static object UuidProp() => new { type = "string", format = "uuid" };
+    private static object StringProp() => new { type = "string" };
+}

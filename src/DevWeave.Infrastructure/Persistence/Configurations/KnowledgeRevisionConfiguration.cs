@@ -68,6 +68,7 @@ internal sealed class KnowledgeRevisionConfiguration : IEntityTypeConfiguration<
 
         builder.HasIndex(r => new { r.TenantId, r.KnowledgeItemId, r.RevisionNumber })
             .IsUnique();
+        builder.HasAlternateKey(r => new { r.Id, r.TenantId, r.KnowledgeItemId });
 
         builder.HasOne<Tenant>()
             .WithMany()

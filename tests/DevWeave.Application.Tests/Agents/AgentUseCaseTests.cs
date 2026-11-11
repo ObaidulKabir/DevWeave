@@ -942,6 +942,9 @@ public sealed class AgentUseCaseTests
         public Task<IReadOnlyList<KnowledgeRevision>> ListByItemAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<KnowledgeRevision>>(
                 Revisions.Where(r => r.TenantId == tenantId && r.KnowledgeItemId == itemId).ToList());
+
+        public Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeRevision>>(Revisions.Where(r => r.TenantId == tenantId).ToList());
     }
 
     private sealed class InMemoryActivityRepository : IActivityRepository

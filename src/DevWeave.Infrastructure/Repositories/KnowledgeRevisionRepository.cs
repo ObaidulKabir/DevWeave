@@ -30,4 +30,9 @@ internal sealed class KnowledgeRevisionRepository : IKnowledgeRevisionRepository
             .Where(r => r.TenantId == tenantId && r.KnowledgeItemId == itemId)
             .OrderBy(r => r.RevisionNumber)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+        await _db.KnowledgeRevisions
+            .Where(r => r.TenantId == tenantId)
+            .ToListAsync(ct);
 }

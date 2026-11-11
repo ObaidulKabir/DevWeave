@@ -212,7 +212,6 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
             tenant.Id, supersededItem.Id, owner.Id, 1, "{\"summary\":\"orbit architecture current\"}");
 
         await GrantProjectMembershipAsync(tenant.Id, project.Id, member.Id, ProjectRole.Member);
-        await GrantProjectMembershipAsync(tenant.Id, project.Id, owner.Id, ProjectRole.Owner);
 
         using var memberClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, member.Id);
         using var firstPageResponse = await memberClient.PostAsJsonAsync(
@@ -356,7 +355,7 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
@@ -374,7 +373,7 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         return await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/projects/{projectId}/knowledge-items",
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
@@ -388,21 +387,21 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
 
     private async Task<List<KnowledgeItemResponse>> ListKnowledgeItemsForTenantAsync(Guid tenantId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge-items");
+        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<KnowledgeItemResponse>>(JsonOptions))!;
     }
 
     private async Task<List<KnowledgeItemResponse>> ListKnowledgeItemsForProjectAsync(Guid tenantId, Guid projectId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/knowledge-items");
+        using var response = await _client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/knowledge");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<KnowledgeItemResponse>>(JsonOptions))!;
     }
 
     private async Task<KnowledgeItemResponse?> GetKnowledgeItemAsync(Guid tenantId, Guid itemId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge-items/{itemId}");
+        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge/{itemId}");
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -416,7 +415,7 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
         using var response = await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
+            $"/tenants/{tenantId}/knowledge/{itemId}/revisions",
             new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
             JsonOptions);
         response.EnsureSuccessStatusCode();
@@ -433,7 +432,7 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
         return await client.PostAsJsonAsync(
-            $"/tenants/{tenantId}/knowledge-items/{itemId}/revisions",
+            $"/tenants/{tenantId}/knowledge/{itemId}/revisions",
             new AddRevisionRequest(expected, schemaVersion, content, actor, "Baseline", null, null),
             JsonOptions);
     }

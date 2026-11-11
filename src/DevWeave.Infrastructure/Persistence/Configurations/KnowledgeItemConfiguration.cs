@@ -94,6 +94,7 @@ internal sealed class KnowledgeItemConfiguration : IEntityTypeConfiguration<Know
         // Key is unique within its project (SRS KNW-001 / invariant #2).
         builder.HasIndex(i => new { i.TenantId, i.ProjectId, i.Key })
             .IsUnique();
+        builder.HasAlternateKey(i => new { i.Id, i.TenantId, i.ProjectId });
 
         builder.HasOne<Tenant>()
             .WithMany()

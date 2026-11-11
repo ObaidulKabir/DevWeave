@@ -54,8 +54,11 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
         var referenceA = await AddReferenceAsync(alpha.Id, projectA.Id, ProjectReferenceType.Repository, "devweave/a", null);
         var referenceB = await AddReferenceAsync(beta.Id, projectB.Id, ProjectReferenceType.Repository, "devweave/b", null);
 
-        var membershipA = await GrantMembershipAsync(alpha.Id, projectA.Id, principalA.Id, ProjectRole.Owner);
-        var membershipB = await GrantMembershipAsync(beta.Id, projectB.Id, principalB.Id, ProjectRole.Owner);
+        // Creating a project already grants its creator the first Owner membership.
+        using var membershipScope = _factory.Services.CreateScope();
+        var membershipRepository = membershipScope.ServiceProvider.GetRequiredService<IProjectMembershipRepository>();
+        var membershipA = (await membershipRepository.ListByProjectAsync(new TenantId(alpha.Id), new ProjectId(projectA.Id))).Single();
+        var membershipB = (await membershipRepository.ListByProjectAsync(new TenantId(beta.Id), new ProjectId(projectB.Id))).Single();
 
         // HTTP project read path
         var alphaProjects = await ListProjectsAsync(alpha.Id);
@@ -86,10 +89,10 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
 
         var scopedMemberships = await memberships.ListByProjectAsync(new TenantId(alpha.Id), new ProjectId(projectA.Id));
         Assert.Single(scopedMemberships);
-        Assert.Equal(membershipA.Id, scopedMemberships[0].Id.Value);
-        Assert.DoesNotContain(scopedMemberships, m => m.Id.Value == membershipB.Id);
+        Assert.Equal(membershipA.Id, scopedMemberships[0].Id);
+        Assert.DoesNotContain(scopedMemberships, m => m.Id == membershipB.Id);
         Assert.Empty(await memberships.ListByProjectAsync(new TenantId(alpha.Id), new ProjectId(projectB.Id)));
-        Assert.Null(await memberships.GetByIdAsync(new TenantId(alpha.Id), new ProjectMembershipId(membershipB.Id)));
+        Assert.Null(await memberships.GetByIdAsync(new TenantId(alpha.Id), membershipB.Id));
     }
 
     [Fact]

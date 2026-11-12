@@ -232,3 +232,51 @@ export type StudioView =
   | 'settings'
   | 'coordination'
   | 'reports';
+
+export interface SpecParameter {
+  name: string;
+  kind: 'string' | 'integer' | 'boolean';
+  required: boolean;
+  allowedValues: string[];
+}
+
+export interface SpecChoice {
+  id: string;
+  parameters: SpecParameter[];
+}
+
+export interface SpecTopic {
+  id: string;
+  title: string;
+  description: string;
+  choices: SpecChoice[];
+  constraintRules: string[];
+  rules: { whenChoice: string; otherTopic: string; allowedOtherChoices: string[] }[];
+}
+
+export interface SpecDecisionView {
+  topic: string;
+  scope: 'platform' | 'tenant' | 'project';
+  choice: string;
+  params: Record<string, string>;
+  constraints: { rule: string; value: string }[];
+  locked: boolean;
+  itemId?: string | null;
+  revisionId?: string | null;
+  revisionNumber?: number | null;
+  definedAt: string;
+}
+
+export interface SpecResolutionView {
+  topic: string;
+  decided: boolean;
+  origin?: 'predefined' | 'firstapproved' | 'override' | null;
+  binding?: SpecDecisionView | null;
+  conflicts: { reason: string; binding: SpecDecisionView; other: SpecDecisionView }[];
+}
+
+export interface SpecEffective {
+  decisions: SpecResolutionView[];
+  incompatibilities: { path: string; message: string }[];
+  undecidedTopics: string[];
+}

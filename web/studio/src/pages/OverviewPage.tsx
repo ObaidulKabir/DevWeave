@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { EmptyState, Panel, Row } from '../components/Panel';
+import { SpecStatusCard } from '../components/SpecStatusCard';
 import { StateBadge } from '../components/StateBadge';
 import { formatWhen } from '../lib/format';
 import { useWorkspace } from '../workspace/WorkspaceContext';
@@ -97,6 +98,8 @@ export function OverviewPage() {
           reference supporting knowledge revisions explicitly when describing the work.
         </p>
       </section>
+
+      <SpecStatusCard />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((metric) => (

@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
+using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Agents;
+using DevWeave.Domain.Knowledge;
+using DevWeave.Mcp.Protocol;
 using DevWeave.Application.Specifications;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
@@ -122,6 +126,64 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
                 reason = "Hosting plan",
             });
         Assert.Equal(HttpStatusCode.Created, good.StatusCode);
+    }
+
+    [Fact]
+    public async Task Agent_resolves_and_proposes_specifications_over_mcp_but_cannot_bind_them()
+    {
+        var seed = await SeedAsync();
+        Principal agent;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            agent = Principal.Create(seed.Tenant.Id, $"spec-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+            db.Add(agent);
+            db.Add(ProjectMembership.Grant(seed.Tenant.Id, seed.Project.Id, agent.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(seed.Tenant.Id, agent.Id, "test", "hashed-test-secret", null));
+            foreach (var capability in new[] { AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge })
+            {
+                var grant = AgentGrant.Propose(seed.Tenant.Id, seed.Project.Id, agent.Id, capability, null, Classification.Internal);
+                grant.Approve(seed.Owner.Id);
+                db.Add(grant);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, agent.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        async Task<JsonDocument> CallAsync(int id, string tool, object arguments)
+        {
+            using var response = await client.PostAsJsonAsync(
+                url, new JsonRpcRequest("2.0", id, McpMethods.CallTool, new { name = tool, arguments }));
+            return (await response.Content.ReadFromJsonAsync<JsonDocument>())!;
+        }
+
+        using var tools = await client.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.ListTools, new { }));
+        var listed = await tools.Content.ReadAsStringAsync();
+        Assert.Contains("resolve_spec", listed);
+        Assert.Contains("propose_spec_decision", listed);
+
+        using var resolved = await CallAsync(2, "resolve_spec", new { topic = "backend.language" });
+        Assert.Equal(JsonValueKind.Null, resolved.RootElement.GetProperty("error").ValueKind);
+        var binding = resolved.RootElement.GetProperty("result").GetProperty("binding");
+        Assert.Equal("csharp", binding.GetProperty("choice").GetString());
+
+        using var effective = await CallAsync(3, "get_effective_spec", new { });
+        Assert.Equal(0, effective.RootElement.GetProperty("result").GetProperty("undecidedTopics").GetArrayLength());
+
+        using var bad = await CallAsync(4, "propose_spec_decision",
+            new { topic = "db.engine", level = "project", choice = "oracle" });
+        Assert.NotEqual(JsonValueKind.Null, bad.RootElement.GetProperty("error").ValueKind);
+
+        using var good = await CallAsync(5, "propose_spec_decision",
+            new { topic = "db.engine", level = "project", choice = "postgresql", @params = new { majorVersion = 17 } });
+        Assert.Equal(JsonValueKind.Null, good.RootElement.GetProperty("error").ValueKind);
+
+        // A proposal from an agent never binds until a human approves it.
+        using var after = await CallAsync(6, "resolve_spec", new { topic = "db.engine" });
+        Assert.Equal("predefined", after.RootElement.GetProperty("result").GetProperty("origin").GetString());
     }
 
     private async Task<Seed> SeedAsync()

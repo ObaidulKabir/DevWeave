@@ -12,6 +12,7 @@ import { PlanOutlinePage } from './pages/PlanOutlinePage';
 import { RelationsPage } from './pages/RelationsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SpecificationsPage } from './pages/SpecificationsPage';
 import { WorkPage } from './pages/WorkPage';
 import { WorkspaceProvider } from './workspace/WorkspaceContext';
 
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="plan-outline" element={<PlanOutlinePage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="documents" element={<DocumentsPage />} />
+            <Route path="specifications" element={<SpecificationsPage />} />
             <Route path="relations" element={<RelationsPage />} />
             <Route path="work" element={<WorkPage />} />
             <Route path="activity" element={<ActivityPage />} />

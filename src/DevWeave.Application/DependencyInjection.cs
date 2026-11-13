@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<TransitionMilestone>();
         services.AddScoped<ListMilestoneTransitions>();
         services.AddScoped<CreateWorkItem>();
+        services.AddScoped<ReplanWork>();
         services.AddScoped<ListWorkItems>();
         services.AddScoped<TransitionWorkItem>();
         services.AddScoped<ListWorkItemTransitions>();

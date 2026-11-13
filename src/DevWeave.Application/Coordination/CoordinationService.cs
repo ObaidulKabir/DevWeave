@@ -3,6 +3,8 @@ using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Application.Planning;
+using DevWeave.Application.Specifications;
+using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
@@ -32,6 +34,8 @@ public sealed class CoordinationService :
     private readonly IKnowledgeItemRepository _knowledge;
     private readonly IProjectMembershipRepository _memberships;
     private readonly IKnowledgeRevisionRepository _revisions;
+    private readonly IWorkPlanningRepository _work;
+    private readonly SpecCatalogService _specCatalog;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -42,7 +46,9 @@ public sealed class CoordinationService :
         IPlanDesignRepository plans,
         IKnowledgeItemRepository knowledge,
         IProjectMembershipRepository memberships,
-        IKnowledgeRevisionRepository revisions)
+        IKnowledgeRevisionRepository revisions,
+        IWorkPlanningRepository work,
+        SpecCatalogService specCatalog)
     {
         _repository = repository;
         _uow = uow;
@@ -53,6 +59,8 @@ public sealed class CoordinationService :
         _knowledge = knowledge;
         _memberships = memberships;
         _revisions = revisions;
+        _work = work;
+        _specCatalog = specCatalog;
     }
 
     // --- IRuntimeRegistry ---
@@ -197,6 +205,11 @@ public sealed class CoordinationService :
 
     public async Task<LeaseView> AcquireAsync(AuthorizedScope scope, LeaseRequest request, CancellationToken ct = default)
     {
+        await RequireOpenPackageAsync(scope, request.WorkPackageId, "leased", ct);
+        if (await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.Runtime, request.RuntimeId, ct) ||
+            await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.AgentPrincipal, scope.ActorId.Value, ct))
+            throw new ConflictException("This runtime or agent has been stopped by a kill switch and cannot take new work.");
+
         var existing = await _repository.GetActiveLeaseAsync(scope.TenantId, new WorkPackageId(request.WorkPackageId), request.ResourceScope, ct);
         if (existing != null)
         {
@@ -227,6 +240,9 @@ public sealed class CoordinationService :
 
         if (lease.ProjectId != scope.ProjectId)
             throw new NotFoundException("Lease not found.");
+
+        // A lease cannot be kept alive on work the plan has moved away from; it is left to expire.
+        await RequireOpenPackageAsync(scope, lease.WorkPackageId.Value, "continued", ct);
 
         try
         {
@@ -425,7 +441,7 @@ public sealed class CoordinationService :
         var activeOnPrior = last is null
             ? Array.Empty<Guid>()
             : campaigns
-                .Where(c => c.Status == CampaignStatus.Active && c.BaselineId != last.Id.Value)
+                .Where(c => c.Status is CampaignStatus.Active or CampaignStatus.Proposed && c.BaselineId != last.Id.Value)
                 .Select(c => c.Id.Value)
                 .ToArray();
 
@@ -522,7 +538,8 @@ public sealed class CoordinationService :
         var count = 0;
         foreach (var campaign in campaigns)
         {
-            if (campaign.Status != CampaignStatus.Active || campaign.BaselineId == keepBaselineId)
+            // Campaigns not yet started are frozen too; otherwise work could still begin on an old plan version.
+            if (campaign.Status is not (CampaignStatus.Active or CampaignStatus.Proposed) || campaign.BaselineId == keepBaselineId)
                 continue;
             campaign.Suspend();
             count++;
@@ -571,6 +588,8 @@ public sealed class CoordinationService :
 
     public async Task<Guid> RecordChangeSetAsync(AuthorizedScope scope, ChangeSetDraft draft, CancellationToken ct = default)
     {
+        await RequireOpenPackageAsync(scope, draft.WorkPackageId, "submitted", ct);
+
         var changeSet = ChangeSet.Record(
             scope.TenantId,
             scope.ProjectId!,
@@ -650,13 +669,38 @@ public sealed class CoordinationService :
             throw new ConflictException(
                 "Work package baseline must match the campaign baseline. Create the package under the campaign's locked plan version.");
 
+        var revisions = draft.ImplementsRevisionIds ?? Array.Empty<Guid>();
+        var workItems = draft.WorkItemIds ?? Array.Empty<Guid>();
+        var topics = draft.SpecTopics ?? Array.Empty<string>();
+
+        // A package may only implement content that is part of the plan version it runs under.
+        var outsidePlan = revisions.Where(r => !baseline.ApprovedRevisionIds.Contains(r)).ToArray();
+        if (outsidePlan.Length > 0)
+            throw new ConflictException(
+                $"These revisions are not part of the locked plan version this package runs under: {string.Join(", ", outsidePlan)}.");
+        foreach (var workItemId in workItems)
+        {
+            if (await _work.GetWorkItemAsync(scope.TenantId, scope.ProjectId!, new WorkItemId(workItemId), ct) is null)
+                throw new NotFoundException($"Work item '{workItemId}' was not found within this project.");
+        }
+        if (topics.Count > 0)
+        {
+            var catalog = await _specCatalog.BuildAsync(scope.TenantId, scope.ProjectId!, ct);
+            var unknown = topics.Where(t => catalog.Find(t.Trim()) is null).ToArray();
+            if (unknown.Length > 0)
+                throw new NotFoundException($"Unknown specification topics: {string.Join(", ", unknown)}.");
+        }
+
         var package = WorkPackage.Create(
             scope.TenantId,
             scope.ProjectId!,
             campaign.Id,
             baseline.Id.Value,
             Guid.NewGuid().ToString("N")[..8], // Auto-generated key
-            draft.Objective);
+            draft.Objective,
+            revisions,
+            workItems,
+            topics);
 
         await _repository.AddWorkPackageAsync(package, ct);
         await _uow.SaveChangesAsync(ct);
@@ -669,6 +713,11 @@ public sealed class CoordinationService :
     {
         var existing = await _repository.GetQueueItemByIdempotencyKeyAsync(scope.TenantId, idempotencyKey, ct);
         if (existing != null) return existing.Id.Value;
+
+        var changeSet = await _repository.GetChangeSetByIdAsync(scope.TenantId, new ChangeSetId(changeSetId), ct);
+        if (changeSet is null || changeSet.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Change set was not found within this project.");
+        await RequireOpenPackageAsync(scope, changeSet.WorkPackageId.Value, "integrated", ct);
 
         var item = IntegrationQueueItem.Enqueue(
             scope.TenantId,
@@ -686,8 +735,15 @@ public sealed class CoordinationService :
         var item = await _repository.GetQueueItemByIdAsync(scope.TenantId, new IntegrationQueueItemId(queueItemId), ct)
             ?? throw new NotFoundException("Queue item not found.");
 
-        // In a real scenario, this would trigger a merge policy check
-        item.Decide(true, "Auto-accepted for MVP", expectedFence);
+        if (item.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Queue item not found.");
+
+        // The plan may have changed since this was queued: integrate only work that is still valid now.
+        var refusal = await DescribeIntegrationRefusalAsync(scope, item, ct);
+        if (refusal is null)
+            item.Decide(true, "Accepted: the work package is still part of the current plan.", expectedFence);
+        else
+            item.Decide(false, refusal, expectedFence);
         await _uow.SaveChangesAsync(ct);
 
         return new Decision(
@@ -722,6 +778,55 @@ public sealed class CoordinationService :
     public async Task<bool> IsKilledAsync(AuthorizedScope scope, KillSwitchTargetType type, Guid targetId, CancellationToken ct = default)
     {
         return await _repository.IsTargetKilledAsync(scope.TenantId, type, targetId, ct);
+    }
+
+    // --- Plan-change enforcement ---
+
+    /// <summary>
+    /// The single gate every execution step passes through. Work can progress only while its package is
+    /// open, its campaign has not been suspended, completed or failed (for example because a newer plan
+    /// version was locked), and no kill switch stops the campaign.
+    /// </summary>
+    private async Task<WorkPackage> RequireOpenPackageAsync(
+        AuthorizedScope scope, Guid workPackageId, string action, CancellationToken ct)
+    {
+        var package = await _repository.GetWorkPackageByIdAsync(scope.TenantId, new WorkPackageId(workPackageId), ct);
+        if (package is null || package.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Work package was not found within this project.");
+
+        var problem = await DescribeBlockedPackageAsync(scope, package, ct);
+        if (problem is not null)
+            throw new ConflictException($"This work cannot be {action}: {problem}");
+        return package;
+    }
+
+    private async Task<string?> DescribeBlockedPackageAsync(AuthorizedScope scope, WorkPackage package, CancellationToken ct)
+    {
+        if (!package.IsOpen)
+            return $"the work package is {package.Status}.";
+
+        var campaign = await _repository.GetCampaignByIdAsync(scope.TenantId, package.CampaignId, ct);
+        if (campaign is null)
+            return "its campaign no longer exists.";
+        if (campaign.Status == CampaignStatus.Suspended)
+            return "its campaign is suspended, usually because a newer plan version was locked. Check the plan change before continuing.";
+        if (campaign.Status is CampaignStatus.Completed or CampaignStatus.Failed)
+            return $"its campaign is {campaign.Status}.";
+        if (await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.Campaign, campaign.Id.Value, ct))
+            return "its campaign has been stopped by a kill switch.";
+        return null;
+    }
+
+    private async Task<string?> DescribeIntegrationRefusalAsync(AuthorizedScope scope, IntegrationQueueItem item, CancellationToken ct)
+    {
+        var changeSet = await _repository.GetChangeSetByIdAsync(scope.TenantId, item.ChangeSetId, ct);
+        if (changeSet is null)
+            return "Rejected: the change set no longer exists.";
+        var package = await _repository.GetWorkPackageByIdAsync(scope.TenantId, changeSet.WorkPackageId, ct);
+        if (package is null)
+            return "Rejected: the work package no longer exists.";
+        var problem = await DescribeBlockedPackageAsync(scope, package, ct);
+        return problem is null ? null : $"Rejected: {problem}";
     }
 
     // --- Mappings ---

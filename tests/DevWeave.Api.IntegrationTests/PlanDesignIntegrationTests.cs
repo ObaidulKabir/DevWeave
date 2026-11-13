@@ -6,6 +6,7 @@ using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Application.Planning;
 using DevWeave.Domain.Agents;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
@@ -409,6 +410,97 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
         Assert.DoesNotContain(root.Key, preview.Drift.AddedKeys);
         Assert.DoesNotContain(extra.Key, preview.Drift.ChangedKeys);
         Assert.DoesNotContain(child.Key, preview.Drift.ChangedKeys);
+    }
+
+    [Fact]
+    public async Task Work_package_scope_comes_from_its_plan_version_and_nothing_progresses_after_a_newer_version_locks()
+    {
+        var seed = await SeedAsync();
+        var owner = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "test", "corr");
+        var runtimeId = Guid.NewGuid();
+
+        // Plan version 1: the approved root.
+        using (var setup = _factory.Services.CreateScope())
+        {
+            await setup.ServiceProvider.GetRequiredService<PlanDesignService>()
+                .AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, null, 0);
+            var db = setup.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            (await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Root.Id)).Approve(seed.Root.CurrentRevisionId!);
+            await db.SaveChangesAsync();
+        }
+
+        Guid campaignId, packageId, leaseId, targetId, queueItemId;
+        long fence;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var services = scope.ServiceProvider;
+            var baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", "camp-v1"));
+            var scheduler = services.GetRequiredService<IParticipationScheduler>();
+
+            // Scope must be content of this plan version, real work items and known specification topics.
+            await Assert.ThrowsAsync<ConflictException>(() => scheduler.CreatePackageAsync(owner,
+                new PackageDraft(campaignId, baselineId, "Outside the plan", [], [], [], [Guid.NewGuid()])));
+            await Assert.ThrowsAsync<NotFoundException>(() => scheduler.CreatePackageAsync(owner,
+                new PackageDraft(campaignId, baselineId, "Unknown topic", [], [], [], SpecTopics: ["no.such.topic"])));
+
+            packageId = await scheduler.CreatePackageAsync(owner, new PackageDraft(
+                campaignId, baselineId, "Implement the idea", [], [], [],
+                [seed.Root.CurrentRevisionId!.Value], [seed.Work.Id.Value], ["backend.language"]));
+            var package = await services.GetRequiredService<ICoordinationRepository>()
+                .GetWorkPackageByIdAsync(seed.Tenant.Id, new WorkPackageId(packageId));
+            Assert.Equal([seed.Root.CurrentRevisionId!.Value], package!.ScopeRevisionIds);
+            Assert.False(package.IsUnscoped);
+
+            var leases = services.GetRequiredService<ILeaseAuthority>();
+            var lease = await leases.AcquireAsync(owner, new LeaseRequest(
+                packageId, runtimeId, "src/app", DateTimeOffset.UtcNow.AddMinutes(10), 0, "lease-1"));
+            leaseId = lease.Id;
+            fence = lease.Fence;
+
+            var registry = services.GetRequiredService<ICodebaseRegistry>();
+            targetId = await registry.RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
+            var changeSetId = await registry.RecordChangeSetAsync(owner,
+                new ChangeSetDraft(packageId, targetId, "github:pr/1", "def5678", ["src/app/Program.cs"]));
+            queueItemId = await services.GetRequiredService<IIntegrationQueue>()
+                .EnqueueAsync(owner, changeSetId, $"queue-{Guid.NewGuid():N}");
+        }
+
+        // The Owner changes the plan and locks version 2, which suspends the version-1 campaign.
+        using (var change = _factory.Services.CreateScope())
+        {
+            var db = change.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var root = await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Root.Id);
+            var next = root.AddRevision("1.0", "{\"summary\":\"Changed idea\"}", seed.Owner.Id, "changed", null, null, root.CurrentRevisionNumber);
+            db.Add(next);
+            await db.SaveChangesAsync();
+            root.Approve(next.Id);
+            await db.SaveChangesAsync();
+            await change.ServiceProvider.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 2", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 2));
+        }
+
+        // Nothing on the old version can progress any more, and work already queued is refused, not merged.
+        using (var after = _factory.Services.CreateScope())
+        {
+            var services = after.ServiceProvider;
+            var leases = services.GetRequiredService<ILeaseAuthority>();
+            await Assert.ThrowsAsync<ConflictException>(() => leases.AcquireAsync(owner, new LeaseRequest(
+                packageId, runtimeId, "src/other", DateTimeOffset.UtcNow.AddMinutes(10), 0, "lease-2")));
+            await Assert.ThrowsAsync<ConflictException>(() =>
+                leases.RenewAsync(owner, leaseId, fence, DateTimeOffset.UtcNow.AddMinutes(20)));
+            await Assert.ThrowsAsync<ConflictException>(() => services.GetRequiredService<ICodebaseRegistry>()
+                .RecordChangeSetAsync(owner, new ChangeSetDraft(packageId, targetId, "github:pr/2", "aaa1111", ["src/app/x.cs"])));
+
+            var decision = await services.GetRequiredService<IIntegrationQueue>().DecideAsync(owner, queueItemId, fence);
+            Assert.Equal("Rejected", decision.Outcome);
+            Assert.Contains("suspended", decision.Reason);
+
+            // Releasing a lease is always allowed, so agents can let go cleanly.
+            await leases.ReleaseAsync(owner, leaseId, fence);
+        }
     }
 
     private async Task<Seed> SeedAsync()

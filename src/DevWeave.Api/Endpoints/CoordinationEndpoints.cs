@@ -178,6 +178,7 @@ public static class CoordinationEndpoints
             return Results.Created($"/tenants/{tenantId}/projects/{projectId}/coordination/change-sets/{id}", new { id });
         }
         catch (NotFoundException) { return Results.NotFound(); }
+        catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
@@ -226,6 +227,10 @@ public static class CoordinationEndpoints
             key = p.Key,
             objective = p.Objective,
             status = p.Status.ToString(),
+            implementsRevisionIds = p.ScopeRevisionIds,
+            workItemIds = p.ScopeWorkItemIds,
+            specTopics = p.ScopeSpecTopics,
+            unscoped = p.IsUnscoped,
             createdAt = p.CreatedAt,
         }));
     }

@@ -134,6 +134,23 @@ Baseline: <not requested / pending human review / approved revision IDs and
 
 **Ready-to-execute check:** every deliverable has an accountable owner, explicit acceptance evidence, and a reviewed knowledge basis; all references resolve within the project; dependencies are coherent; authorization is confirmed; and the current approved revisions match the intended baseline. Otherwise the output is a draft for review, not an instruction to launch a campaign.
 
+## When the plan changes during implementation
+
+Every execution step checks that the work is still part of the current plan:
+
+- A **work package declares what it implements**: approved knowledge revisions from its own plan version
+  (`implementsRevisionIds`), planning work items (`workItemIds`) and specification topics (`specTopics`).
+  Revisions from any other plan version are refused. Packages without a declared scope are allowed but
+  reported as `unscoped`, because a plan change cannot be traced to them.
+- **Locking a new plan version suspends** every campaign that was started, or only proposed, on an older version.
+- While a campaign is suspended, completed, failed or stopped by a kill switch, or its package is closed,
+  DevWeave **refuses** new leases, lease renewals and change sets. Work already in the integration queue is
+  **rejected at decision time** with the reason recorded, never merged. Releasing a lease is always allowed.
+- Kill switches on a runtime or an agent stop that runtime or agent from taking new leases.
+
+Next steps, not built yet: an impact report at lock time that lets unaffected work continue on the new
+version, agent notification, and re-verification of finished work whose plan items changed.
+
 ## Implementation references
 
 - Knowledge identity and revisions: `src/DevWeave.Domain/Knowledge/KnowledgeItem.cs`, `KnowledgeRevision.cs`

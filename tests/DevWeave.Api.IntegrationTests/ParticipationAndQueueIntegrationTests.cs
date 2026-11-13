@@ -86,15 +86,29 @@ public sealed class ParticipationAndQueueIntegrationTests : IClassFixture<Identi
             Assert.Equal("Accepted", decision.Outcome);
         }
 
-        // 6. Integration Queue
-        Guid changeSetId = Guid.NewGuid();
+        // 6. Integration Queue: only a real change set on an open work package can be queued.
+        Guid changeSetId;
         Guid queueItemId;
         using (var scope = _factory.Services.CreateScope())
         {
+            var agentScope = new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(agent.Id), new ProjectId(project.Id), "Enqueue", "trace");
+            var humanScope = new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(user.Id), new ProjectId(project.Id), "Package", "trace");
             var queue = scope.ServiceProvider.GetRequiredService<IIntegrationQueue>();
-            queueItemId = await queue.EnqueueAsync(
-                new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(agent.Id), new ProjectId(project.Id), "Enqueue", "trace"),
-                changeSetId, "idempotency-queue-1");
+            var scheduler = scope.ServiceProvider.GetRequiredService<IParticipationScheduler>();
+            var registry = scope.ServiceProvider.GetRequiredService<ICodebaseRegistry>();
+            var repo = scope.ServiceProvider.GetRequiredService<ICoordinationRepository>();
+
+            await Assert.ThrowsAsync<NotFoundException>(() =>
+                queue.EnqueueAsync(agentScope, Guid.NewGuid(), "idempotency-queue-missing"));
+
+            var campaign = (await repo.GetCampaignByIdAsync(new TenantId(tenant.Id), new CampaignId(campaignId)))!;
+            var packageId = await scheduler.CreatePackageAsync(humanScope,
+                new PackageDraft(campaignId, campaign.BaselineId, "Fix the checkout bug",
+                    Array.Empty<Guid>(), Array.Empty<string>(), Array.Empty<string>()));
+            var targetId = await registry.RegisterAsync(humanScope, "github", "acme/checkout", "main", "abc1234");
+            changeSetId = await registry.RecordChangeSetAsync(agentScope,
+                new ChangeSetDraft(packageId, targetId, "github:pr/7", "def5678", new[] { "src/Checkout.cs" }));
+            queueItemId = await queue.EnqueueAsync(agentScope, changeSetId, "idempotency-queue-1");
         }
 
         // 7. Decide Integration

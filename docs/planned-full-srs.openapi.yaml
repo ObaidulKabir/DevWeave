@@ -640,6 +640,18 @@ components:
         dependsOn: { type: array, items: { type: string, format: uuid } }
         allowedScopes: { type: array, items: { type: string } }
         acceptanceCriteria: { type: array, items: { type: string } }
+        implementsRevisionIds:
+          type: array
+          description: Approved knowledge revisions from the package's baseline that this work implements.
+          items: { type: string, format: uuid }
+        workItemIds:
+          type: array
+          description: Planning work items this package delivers.
+          items: { type: string, format: uuid }
+        specTopics:
+          type: array
+          description: Specification topics whose binding decisions this work follows.
+          items: { type: string }
     LeaseRequest:
       type: object
       required: [workPackageId, runtimeId, resourceScope, expiresAt, expectedFence, idempotencyKey]

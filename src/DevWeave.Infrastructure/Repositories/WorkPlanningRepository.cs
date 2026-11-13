@@ -76,6 +76,12 @@ internal sealed class WorkPlanningRepository(DevWeaveDbContext db) : IWorkPlanni
         return Task.CompletedTask;
     }
 
+    public async Task RemoveDependencyAsync(WorkItemDependency dependency, CancellationToken ct = default)
+    {
+        var tracked = await db.WorkItemDependencies.FindAsync([dependency.Id], ct) ?? dependency;
+        db.WorkItemDependencies.Remove(tracked);
+    }
+
     public async Task<IReadOnlyList<WorkItemDependency>> ListDependenciesAsync(TenantId tenantId,
         ProjectId projectId, CancellationToken ct = default) =>
         await db.WorkItemDependencies.AsNoTracking()

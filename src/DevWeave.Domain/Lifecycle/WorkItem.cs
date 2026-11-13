@@ -82,6 +82,38 @@ public sealed class WorkItem
             milestoneId, ownerId, dueAt, priority, createdBy, DateTimeOffset.UtcNow);
     }
 
+    /// <summary>
+    /// Re-plans the item's details. Execution, verification and approval are untouched: changing what is
+    /// planned does not by itself invalidate reported work. Returns null when nothing changed.
+    /// </summary>
+    public WorkItemTransition? Replan(string title, string description, MilestoneId? milestoneId,
+        PrincipalId? ownerId, DateTimeOffset? dueAt, WorkPriority priority, PrincipalId actor,
+        string reason, int expectedVersion)
+    {
+        EnsureVersion(expectedVersion);
+        EnsureReason(reason);
+        RequireText(title, nameof(title), 200);
+        ArgumentNullException.ThrowIfNull(description);
+        if (description.Length > 4000)
+            throw new ArgumentException("Description cannot exceed 4000 characters.", nameof(description));
+        if (!Enum.IsDefined(priority))
+            throw new ArgumentOutOfRangeException(nameof(priority));
+
+        if (Title == title && Description == description && MilestoneId == milestoneId &&
+            OwnerId == ownerId && DueAt == dueAt && Priority == priority)
+            return null;
+
+        Title = title;
+        Description = description;
+        MilestoneId = milestoneId;
+        OwnerId = ownerId;
+        DueAt = dueAt;
+        Priority = priority;
+        Version++;
+        UpdatedAt = DateTimeOffset.UtcNow;
+        return WorkItemTransition.Create(this, WorkItemTransitionDimension.Details, "details", "replanned", actor, reason);
+    }
+
     public WorkItemTransition ChangePlannedState(PlannedWorkState target, PrincipalId actor,
         string reason, int expectedVersion)
     {
@@ -204,7 +236,9 @@ public sealed class WorkItem
         (from, to) switch
         {
             (PlannedWorkState.Planned, PlannedWorkState.Ready or PlannedWorkState.Cancelled) => true,
-            (PlannedWorkState.Ready, PlannedWorkState.InProgress or PlannedWorkState.Cancelled) => true,
+            (PlannedWorkState.Ready, PlannedWorkState.Planned or PlannedWorkState.InProgress or PlannedWorkState.Cancelled) => true,
+            // Re-planning: cancelled work can be brought back into the plan.
+            (PlannedWorkState.Cancelled, PlannedWorkState.Planned) => true,
             (PlannedWorkState.InProgress, PlannedWorkState.Blocked or PlannedWorkState.Cancelled) => true,
             (PlannedWorkState.Blocked, PlannedWorkState.InProgress or PlannedWorkState.Cancelled) => true,
             _ => false,

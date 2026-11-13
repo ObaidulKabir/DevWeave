@@ -55,7 +55,10 @@ public sealed record OfferDraft(Guid CampaignId, Guid RuntimeId, IReadOnlyList<s
     DateTimeOffset AvailableUntil);
 public sealed record PackageDraft(Guid CampaignId, Guid BaselineId, string Objective,
     IReadOnlyList<Guid> DependsOn, IReadOnlyList<string> AllowedScopes,
-    IReadOnlyList<string> AcceptanceCriteria);
+    IReadOnlyList<string> AcceptanceCriteria,
+    IReadOnlyList<Guid>? ImplementsRevisionIds = null,
+    IReadOnlyList<Guid>? WorkItemIds = null,
+    IReadOnlyList<string>? SpecTopics = null);
 public sealed record LeaseRequest(Guid WorkPackageId, Guid RuntimeId, string ResourceScope,
     DateTimeOffset ExpiresAt, long ExpectedFence, string IdempotencyKey);
 public sealed record LeaseView(Guid Id, Guid WorkPackageId, Guid RuntimeId, string ResourceScope,

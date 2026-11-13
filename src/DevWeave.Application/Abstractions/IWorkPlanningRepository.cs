@@ -26,6 +26,7 @@ public interface IWorkPlanningRepository
         ProjectId projectId, MilestoneId milestoneId, CancellationToken ct = default);
 
     Task AddDependencyAsync(WorkItemDependency dependency, CancellationToken ct = default);
+    Task RemoveDependencyAsync(WorkItemDependency dependency, CancellationToken ct = default);
     Task<IReadOnlyList<WorkItemDependency>> ListDependenciesAsync(TenantId tenantId,
         ProjectId projectId, CancellationToken ct = default);
     Task AddTransitionsAsync(IReadOnlyList<WorkItemTransition> transitions,

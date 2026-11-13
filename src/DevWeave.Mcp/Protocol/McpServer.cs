@@ -116,8 +116,14 @@ public sealed class McpServer
             Tool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
                 new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
                 new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
-            Tool("list_ready_work", "Create a work package under a campaign baseline (scheduler input)",
-                new { campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp() },
+            Tool("list_ready_work", "Create a work package under a campaign baseline (scheduler input). Declare what it implements (approved knowledge revisions from that baseline, work items, specification topics) so plan changes can be traced to it",
+                new
+                {
+                    campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
+                    implementsRevisionIds = new { type = "array", items = UuidProp() },
+                    workItemIds = new { type = "array", items = UuidProp() },
+                    specTopics = new { type = "array", items = StringProp() },
+                },
                 new[] { "campaignId", "baselineId", "objective" }),
             Tool("get_plan_baseline", "Describe a locked plan baseline export manifest",
                 new { baselineId = UuidProp() },
@@ -356,10 +362,20 @@ public sealed class McpServer
             args.GetProperty("objective").GetString()!,
             Array.Empty<Guid>(),
             Array.Empty<string>(),
-            Array.Empty<string>());
+            Array.Empty<string>(),
+            GuidArray(args, "implementsRevisionIds"),
+            GuidArray(args, "workItemIds"),
+            args.TryGetProperty("specTopics", out var topics) && topics.ValueKind == JsonValueKind.Array
+                ? topics.EnumerateArray().Select(t => t.GetString() ?? string.Empty).ToArray()
+                : Array.Empty<string>());
         var id = await _scheduler.CreatePackageAsync(scope, draft, ct);
         return new { id };
     }
+
+    private static Guid[] GuidArray(JsonElement args, string name) =>
+        args.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray().Select(v => v.GetGuid()).ToArray()
+            : Array.Empty<Guid>();
 
     private async Task<object> DescribeBaselineFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
     {

@@ -12,6 +12,10 @@ public sealed class WorkPackageConfiguration : IEntityTypeConfiguration<WorkPack
     {
         builder.ToTable("work_packages");
 
+        builder.Property(w => w.ScopeRevisionIds).HasColumnType("uuid[]").IsRequired();
+        builder.Property(w => w.ScopeWorkItemIds).HasColumnType("uuid[]").IsRequired();
+        builder.Property(w => w.ScopeSpecTopics).HasColumnType("text[]").IsRequired();
+
         builder.HasKey(w => w.Id);
 
         builder.Property(w => w.Id)

@@ -137,6 +137,8 @@ public sealed class WorkItemTests
         Assert.Equal(2, first.Version);
         Assert.Throws<WorkItemConcurrencyException>(() =>
             item.ChangePlannedState(PlannedWorkState.InProgress, actor, "stale", 1));
+        // Ready can be re-planned back to Planned, but work in progress cannot jump back to Planned.
+        item.ChangePlannedState(PlannedWorkState.InProgress, actor, "started", item.Version);
         Assert.Throws<InvalidOperationException>(() =>
             item.ChangePlannedState(PlannedWorkState.Planned, actor, "reopen plan", item.Version));
     }

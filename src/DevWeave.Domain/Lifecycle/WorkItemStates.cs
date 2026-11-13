@@ -53,4 +53,6 @@ public enum WorkItemTransitionDimension
     Reported = 2,
     Verification = 3,
     Approval = 4,
+    /// <summary>Planning details (title, description, owner, due date, priority, milestone) were changed.</summary>
+    Details = 5,
 }

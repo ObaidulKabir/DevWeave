@@ -1112,6 +1112,18 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.PrimitiveCollection<Guid[]>("ScopeRevisionIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
+                    b.PrimitiveCollection<string[]>("ScopeSpecTopics")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.PrimitiveCollection<Guid[]>("ScopeWorkItemIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(40)

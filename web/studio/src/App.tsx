@@ -10,6 +10,7 @@ import { KnowledgePage } from './pages/KnowledgePage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlanMapPage } from './pages/PlanMapPage';
 import { PlanOutlinePage } from './pages/PlanOutlinePage';
+import { PlanVersionsPage } from './pages/PlanVersionsPage';
 import { RelationsPage } from './pages/RelationsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -26,6 +27,7 @@ export default function App() {
             <Route index element={<OverviewPage />} />
             <Route path="plan-map" element={<PlanMapPage />} />
           <Route path="plan-outline" element={<PlanOutlinePage />} />
+            <Route path="plan-versions" element={<PlanVersionsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="specifications" element={<SpecificationsPage />} />

@@ -39,6 +39,10 @@ public static class CoordinationEndpoints
         group.MapPost("/campaigns/{campaignId:guid}/transition", TransitionCampaignAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/campaigns/{campaignId:guid}/packages", ListPackagesAsync);
+        group.MapGet("/plan-status", GetPlanStatusAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/packages/{workPackageId:guid}/status", GetWorkStatusAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/runtimes", RegisterRuntimeAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
@@ -215,25 +219,72 @@ public static class CoordinationEndpoints
     }
 
     private static async Task<IResult> ListPackagesAsync(
-        Guid tenantId, Guid projectId, Guid campaignId, ICoordinationRepository repository, CancellationToken ct)
+        Guid tenantId, Guid projectId, Guid campaignId, IWorkStatusReader status, HttpContext http, CancellationToken ct)
     {
-        var packages = await repository.ListWorkPackagesByCampaignAsync(
-            new TenantId(tenantId), new Domain.Coordination.CampaignId(campaignId), ct);
-        return Results.Ok(packages.Select(p => new
+        try
         {
-            id = p.Id.Value,
-            campaignId = p.CampaignId.Value,
-            baselineId = p.BaselineId,
-            key = p.Key,
-            objective = p.Objective,
-            status = p.Status.ToString(),
-            implementsRevisionIds = p.ScopeRevisionIds,
-            workItemIds = p.ScopeWorkItemIds,
-            specTopics = p.ScopeSpecTopics,
-            unscoped = p.IsUnscoped,
-            createdAt = p.CreatedAt,
-        }));
+            var packages = await status.ListWorkPackagesAsync(
+                Scope(tenantId, projectId, http, "List work packages"), campaignId, ct);
+            return Results.Ok(packages.Select(MapWorkStatus));
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
     }
+
+    private static async Task<IResult> GetPlanStatusAsync(
+        Guid tenantId, Guid projectId, IWorkStatusReader status, HttpContext http, CancellationToken ct)
+    {
+        var plan = await status.GetPlanStatusAsync(Scope(tenantId, projectId, http, "Get plan status"), ct);
+        return Results.Ok(new
+        {
+            currentPlanVersion = plan.CurrentPlanVersion,
+            currentBaselineId = plan.CurrentBaselineId,
+            lockedAt = plan.LockedAt,
+            campaigns = plan.Campaigns.Select(c => new
+            {
+                id = c.Id,
+                baselineId = c.BaselineId,
+                planVersion = c.PlanVersion,
+                onCurrentPlan = c.OnCurrentPlan,
+                status = c.Status,
+                objective = c.Objective,
+            }),
+        });
+    }
+
+    private static async Task<IResult> GetWorkStatusAsync(
+        Guid tenantId, Guid projectId, Guid workPackageId, IWorkStatusReader status, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var view = await status.GetWorkStatusAsync(Scope(tenantId, projectId, http, "Get work status"), workPackageId, ct);
+            return Results.Ok(MapWorkStatus(view));
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static object MapWorkStatus(WorkPackageStatusView p) => new
+    {
+        id = p.Id,
+        campaignId = p.CampaignId,
+        baselineId = p.BaselineId,
+        planVersion = p.PlanVersion,
+        onCurrentPlan = p.OnCurrentPlan,
+        key = p.Key,
+        objective = p.Objective,
+        status = p.Status,
+        canProgress = p.CanProgress,
+        blockedReason = p.BlockedReason,
+        implementsRevisionIds = p.ImplementsRevisionIds,
+        workItemIds = p.WorkItemIds,
+        specTopics = p.SpecTopics,
+        unscoped = p.Unscoped,
+    };
 
     private static async Task<IResult> ListRuntimesAsync(
         Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)

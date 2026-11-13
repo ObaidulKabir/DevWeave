@@ -501,6 +501,34 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             // Releasing a lease is always allowed, so agents can let go cleanly.
             await leases.ReleaseAsync(owner, leaseId, fence);
         }
+
+        // The REST surface Studio reads from reports the same status.
+        using var client = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var base_ = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination";
+
+        using var planStatus = await client.GetAsync($"{base_}/plan-status");
+        Assert.Equal(HttpStatusCode.OK, planStatus.StatusCode);
+        using var planDoc = await planStatus.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(2, planDoc!.RootElement.GetProperty("currentPlanVersion").GetInt32());
+        var campaignStatus = Assert.Single(planDoc.RootElement.GetProperty("campaigns").EnumerateArray());
+        Assert.False(campaignStatus.GetProperty("onCurrentPlan").GetBoolean());
+        Assert.Equal("Suspended", campaignStatus.GetProperty("status").GetString());
+
+        using var workStatus = await client.GetAsync($"{base_}/packages/{packageId}/status");
+        Assert.Equal(HttpStatusCode.OK, workStatus.StatusCode);
+        using var workDoc = await workStatus.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.False(workDoc!.RootElement.GetProperty("canProgress").GetBoolean());
+        Assert.Contains("suspended", workDoc.RootElement.GetProperty("blockedReason").GetString());
+        Assert.False(workDoc.RootElement.GetProperty("unscoped").GetBoolean());
+
+        using var missing = await client.GetAsync($"{base_}/packages/{Guid.NewGuid()}/status");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        using var listed = await client.GetAsync($"{base_}/campaigns/{campaignId}/packages");
+        Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        var listedPackage = Assert.Single(listedDoc!.RootElement.EnumerateArray());
+        Assert.False(listedPackage.GetProperty("canProgress").GetBoolean());
     }
 
     private async Task<Seed> SeedAsync()

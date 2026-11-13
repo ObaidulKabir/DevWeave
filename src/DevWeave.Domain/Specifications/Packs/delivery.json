@@ -1,0 +1,65 @@
+{
+  "id": "delivery",
+  "version": "1.0.0",
+  "description": "Optional delivery and release conventions: branching, commits, pull requests and releases.",
+  "enabledByDefault": false,
+  "topics": [
+    {
+      "id": "branching.model", "title": "Branching model", "domain": "delivery", "default": "trunk-based",
+      "description": "How branches are used.",
+      "choices": [
+        { "id": "trunk-based", "label": "Trunk-based development", "support": "recommended", "parameters": [{ "name": "maxBranchAgeDays", "kind": "integer", "required": false }] },
+        { "id": "gitflow", "label": "Git Flow", "support": "discouraged" },
+        { "id": "github-flow", "label": "GitHub Flow", "support": "supported" }
+      ]
+    },
+    {
+      "id": "commit.convention", "title": "Commit messages", "domain": "delivery", "default": "conventional",
+      "description": "Commit message format.",
+      "choices": [
+        { "id": "conventional", "label": "Conventional Commits", "support": "recommended" },
+        { "id": "free-form", "label": "Free form", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "pr.size-limit", "title": "Pull request size", "domain": "delivery",
+      "description": "Largest change a single pull request may contain.",
+      "choices": [
+        { "id": "small", "label": "Up to 400 changed lines", "support": "recommended" },
+        { "id": "medium", "label": "Up to 1000 changed lines", "support": "supported" },
+        { "id": "unlimited", "label": "No limit", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "ci.provider", "title": "Continuous integration", "domain": "delivery",
+      "description": "Where builds and tests run.",
+      "choices": [
+        { "id": "github-actions", "label": "GitHub Actions", "support": "recommended" },
+        { "id": "gitlab-ci", "label": "GitLab CI", "support": "supported" },
+        { "id": "azure-pipelines", "label": "Azure Pipelines", "support": "supported" }
+      ]
+    },
+    {
+      "id": "release.strategy", "title": "Release strategy", "domain": "delivery",
+      "description": "How changes reach production.",
+      "choices": [
+        { "id": "continuous", "label": "Continuous delivery", "support": "recommended" },
+        { "id": "scheduled", "label": "Scheduled releases", "support": "supported", "parameters": [{ "name": "cadenceDays", "kind": "integer" }] }
+      ]
+    }
+  ],
+  "decisions": [],
+  "profiles": [
+    {
+      "id": "delivery-trunk-ci", "label": "Trunk-based with CI", "projectType": "general",
+      "description": "Short-lived branches, conventional commits and small pull requests.",
+      "decisions": [
+        { "topic": "branching.model", "choice": "trunk-based", "params": { "maxBranchAgeDays": 2 } },
+        { "topic": "commit.convention", "choice": "conventional" },
+        { "topic": "pr.size-limit", "choice": "small" },
+        { "topic": "ci.provider", "choice": "github-actions" },
+        { "topic": "release.strategy", "choice": "continuous" }
+      ]
+    }
+  ]
+}

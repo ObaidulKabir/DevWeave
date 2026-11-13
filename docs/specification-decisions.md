@@ -40,9 +40,30 @@ definition; prose (`rationale`) is only a note.
 | `POST /tenants/{t}/projects/{p}/spec/decisions` | Propose a decision (422 with `issues` if it breaks the topic definition) |
 | MCP `resolve_spec`, `get_effective_spec`, `list_spec_topics`, `propose_spec_decision` | Same, for agents |
 
+## Layered catalog: built-in packs plus extensions
+
+Topics, options and profiles come from **packs**: versioned JSON data files embedded in
+`DevWeave.Domain/Specifications/Packs/`. `core` is always on; `delivery` (branching, commits, PR size, CI,
+release) is optional and switched on by an overlay.
+
+Each tenant or project can extend the catalog with an **overlay**: a `spec.overlay` knowledge item that a
+person approves. An overlay can enable packs, add namespaced topics, options and profiles, hide or
+deprecate options, and set defaults. Rules enforced by `SpecCatalogBuilder`:
+
+- New topics and profiles must start with the overlay's namespace (`acme.`); built-in roots are reserved.
+- A topic whose platform decision is `locked` cannot be changed by any overlay.
+- The platform's current choice for a topic cannot be hidden; deprecated choices cannot be chosen for new decisions.
+- An overlay that fails validation is skipped whole and reported under `problems`; it never half-applies.
+- Narrower layers win: project overlays apply after tenant overlays.
+
+Extra surfaces: `GET .../spec/catalog`, `.../spec/topics`, `.../spec/topics/{topic}/options` (ranked, with
+compatibility reasons), `.../spec/open-topics`, `POST .../spec/overlays`. MCP: `get_spec_catalog`,
+`list_spec_options`, `next_open_topics`, `propose_spec_overlay`.
+
 ## Known limits
 
 - "Defined at" ordering uses the item's creation time, not the approval time.
 - A tenant-level decision is stored in the project that proposed it and binds every project in the tenant.
 - Changing a related decision does not yet mark linked decisions for re-review.
-- Studio has no topic view yet.
+- Studio does not yet have screens to create overlays, enable packs or review package upgrades.
+- Package version pinning and upgrade diffs, and approving a profile as one bundle, are not built yet.

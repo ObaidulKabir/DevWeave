@@ -186,6 +186,168 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
         Assert.Equal("predefined", after.RootElement.GetProperty("result").GetProperty("origin").GetString());
     }
 
+    private const string Overlay = """
+        {"scope":{"level":"project"},"namespace":"acme",
+         "addTopics":[{"id":"acme.release-window","title":"Release window","domain":"delivery",
+           "choices":[{"id":"weekday","support":"recommended"},{"id":"weekend"}]}],
+         "enablePacks":["delivery"]}
+        """;
+
+    [Fact]
+    public async Task Approved_overlay_extends_the_catalog_and_unapproved_one_does_not()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var specs = scope.ServiceProvider.GetRequiredService<SpecificationService>();
+
+        var before = await specs.CatalogAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        Assert.Null(before.Find("acme.release-window"));
+        Assert.Null(before.Find("branching.model"));
+
+        var item = await specs.ProposeOverlayAsync(seed.Tenant.Id, seed.Project.Id, seed.Member.Id, Overlay, "Our release rules");
+
+        // Proposed only: the catalog is unchanged.
+        var pending = await specs.CatalogAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        Assert.Null(pending.Find("acme.release-window"));
+
+        using (var approval = _factory.Services.CreateScope())
+        {
+            var db = approval.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            (await db.KnowledgeItems.SingleAsync(i => i.Id == item.Id)).Approve();
+            await db.SaveChangesAsync();
+        }
+
+        using var fresh = _factory.Services.CreateScope();
+        var service = fresh.ServiceProvider.GetRequiredService<SpecificationService>();
+        var after = await service.CatalogAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        Assert.Equal("project", after.Find("acme.release-window")!.Source);
+        Assert.NotNull(after.Find("branching.model"));
+        Assert.Empty(after.Problems);
+
+        // The new topic is open until someone decides it, and shows first-class in the open-topics queue.
+        var open = await service.OpenTopicsAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        Assert.Contains(open, o => o.Topic.Id == "acme.release-window");
+
+        // And decisions on it validate against the custom definition.
+        var decision = """{"topic":"acme.release-window","scope":{"level":"project"},"decision":{"choice":"weekday"}}""";
+        var proposed = await service.ProposeAsync(
+            seed.Tenant.Id, seed.Project.Id, seed.Member.Id, "acme.release-window", SpecScopeLevel.Project, decision, "");
+        Assert.NotNull(proposed);
+
+        // Another project is not affected by a project-level overlay.
+        var other = await SeedAsync();
+        var otherCatalog = await service.CatalogAsync(other.Tenant.Id, other.Project.Id, other.Owner.Id);
+        Assert.Null(otherCatalog.Find("acme.release-window"));
+    }
+
+    [Fact]
+    public async Task Invalid_overlays_are_rejected_before_storage()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var specs = scope.ServiceProvider.GetRequiredService<SpecificationService>();
+
+        var reserved = Overlay.Replace("acme", "backend");
+        var rejected = await Assert.ThrowsAsync<SpecDecisionRejectedException>(() =>
+            specs.ProposeOverlayAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, reserved, ""));
+        Assert.Contains(rejected.Issues, i => i.Message.Contains("reserved"));
+
+        var locked = """{"scope":{"level":"project"},"deprecateChoices":[{"topic":"source.code-policy","choice":"references-only"}]}""";
+        var lockedRejected = await Assert.ThrowsAsync<SpecDecisionRejectedException>(() =>
+            specs.ProposeOverlayAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, locked, ""));
+        Assert.Contains(lockedRejected.Issues, i => i.Message.Contains("locked"));
+
+        await Assert.ThrowsAsync<SpecDecisionRejectedException>(() =>
+            specs.ProposeOverlayAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, "{}", ""));
+    }
+
+    [Fact]
+    public async Task Options_are_ranked_and_filtered_by_decisions_that_already_bind()
+    {
+        var seed = await SeedAsync();
+        using var client = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var root = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/spec";
+
+        using var response = await client.GetAsync($"{root}/topics/test.framework.backend/options");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        var options = doc!.RootElement.GetProperty("options").EnumerateArray().ToList();
+
+        // Platform language is C#, so xunit and nunit are compatible and junit is not.
+        Assert.True(options[0].GetProperty("compatible").GetBoolean());
+        Assert.Equal("xunit", options[0].GetProperty("choice").GetProperty("id").GetString());
+        var junit = options.Single(o => o.GetProperty("choice").GetProperty("id").GetString() == "junit");
+        Assert.False(junit.GetProperty("compatible").GetBoolean());
+        Assert.NotEmpty(junit.GetProperty("reasons").EnumerateArray());
+
+        using var catalog = await client.GetAsync($"{root}/catalog");
+        using var catalogDoc = await catalog.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Contains(catalogDoc!.RootElement.GetProperty("packs").EnumerateArray(),
+            p => p.GetProperty("id").GetString() == "delivery" && !p.GetProperty("enabled").GetBoolean());
+        Assert.True(catalogDoc.RootElement.GetProperty("profiles").GetArrayLength() >= 3);
+
+        using var open = await client.GetAsync($"{root}/open-topics");
+        Assert.Equal(HttpStatusCode.OK, open.StatusCode);
+    }
+
+    [Fact]
+    public async Task Agent_discovers_options_open_topics_and_catalog_over_mcp()
+    {
+        var seed = await SeedAsync();
+        Principal agent;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            agent = Principal.Create(seed.Tenant.Id, $"opt-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+            db.Add(agent);
+            db.Add(ProjectMembership.Grant(seed.Tenant.Id, seed.Project.Id, agent.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(seed.Tenant.Id, agent.Id, "test", "hashed-test-secret", null));
+            foreach (var capability in new[] { AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge })
+            {
+                var grant = AgentGrant.Propose(seed.Tenant.Id, seed.Project.Id, agent.Id, capability, null, Classification.Internal);
+                grant.Approve(seed.Owner.Id);
+                db.Add(grant);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, agent.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        async Task<JsonDocument> CallAsync(int id, string tool, object arguments)
+        {
+            using var response = await client.PostAsJsonAsync(
+                url, new JsonRpcRequest("2.0", id, McpMethods.CallTool, new { name = tool, arguments }));
+            return (await response.Content.ReadFromJsonAsync<JsonDocument>())!;
+        }
+
+        using var catalog = await CallAsync(1, "get_spec_catalog", new { });
+        Assert.Equal(JsonValueKind.Null, catalog.RootElement.GetProperty("error").ValueKind);
+        Assert.True(catalog.RootElement.GetProperty("result").GetProperty("topics").GetArrayLength() >= 10);
+
+        using var options = await CallAsync(2, "list_spec_options", new { topic = "backend.framework" });
+        var first = options.RootElement.GetProperty("result").GetProperty("options")[0];
+        Assert.Equal("aspnet-core", first.GetProperty("choice").GetProperty("id").GetString());
+        Assert.True(first.GetProperty("recommended").GetBoolean());
+
+        using var open = await CallAsync(3, "next_open_topics", new { });
+        Assert.Equal(JsonValueKind.Null, open.RootElement.GetProperty("error").ValueKind);
+
+        using var overlay = await CallAsync(4, "propose_spec_overlay",
+            new { overlay = JsonDocument.Parse(Overlay).RootElement, rationale = "Release rules" });
+        Assert.Equal(JsonValueKind.Null, overlay.RootElement.GetProperty("error").ValueKind);
+
+        // The agent's proposal does not extend the catalog until a person approves it.
+        using var after = await CallAsync(5, "list_spec_topics", new { });
+        Assert.DoesNotContain(after.RootElement.GetProperty("result").EnumerateArray(),
+            t => t.GetProperty("id").GetString() == "acme.release-window");
+
+        using var bad = await CallAsync(6, "propose_spec_overlay",
+            new { overlay = JsonDocument.Parse(Overlay.Replace("acme", "backend")).RootElement });
+        Assert.NotEqual(JsonValueKind.Null, bad.RootElement.GetProperty("error").ValueKind);
+    }
+
     private async Task<Seed> SeedAsync()
     {
         using var scope = _factory.Services.CreateScope();

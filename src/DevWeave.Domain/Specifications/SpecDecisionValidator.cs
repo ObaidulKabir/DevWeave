@@ -20,6 +20,9 @@ public static class SpecDecisionValidator
             return issues;
         }
 
+        if (choice.Support == SpecSupport.Deprecated)
+            issues.Add(new SpecIssue("/decision/choice", $"'{choice.Id}' is deprecated and cannot be chosen for new decisions."));
+
         foreach (var parameter in choice.ParameterList)
         {
             if (!decision.Params.TryGetValue(parameter.Name, out var value))

@@ -1,0 +1,187 @@
+{
+  "id": "core",
+  "version": "1.0.0",
+  "description": "Universal platform topics, predefined decisions and starter profiles.",
+  "enabledByDefault": true,
+  "topics": [
+    {
+      "id": "backend.language", "title": "Backend language", "domain": "platform", "default": "csharp",
+      "description": "Implementation language for the control plane.",
+      "constraintRules": ["nullable-reference-types", "warnings-as-errors"],
+      "choices": [
+        { "id": "csharp", "label": "C#", "support": "recommended", "parameters": [{ "name": "version", "kind": "string", "allowedValues": ["13", "14"] }] },
+        { "id": "java", "label": "Java", "support": "supported", "parameters": [{ "name": "version", "kind": "string", "allowedValues": ["21", "25"] }] },
+        { "id": "typescript", "label": "TypeScript (Node)", "support": "supported", "parameters": [{ "name": "version", "kind": "string" }] }
+      ]
+    },
+    {
+      "id": "backend.framework", "title": "Backend framework", "domain": "platform", "default": "aspnet-core",
+      "description": "Runtime and web framework.",
+      "choices": [
+        { "id": "aspnet-core", "label": "ASP.NET Core", "support": "recommended", "parameters": [{ "name": "targetFramework", "kind": "string", "allowedValues": ["net9.0", "net10.0"] }] },
+        { "id": "spring-boot", "label": "Spring Boot", "support": "supported", "parameters": [{ "name": "version", "kind": "string" }] },
+        { "id": "express", "label": "Express", "support": "supported", "parameters": [{ "name": "version", "kind": "string" }] }
+      ],
+      "rules": [
+        { "whenChoice": "aspnet-core", "otherTopic": "backend.language", "allowedOtherChoices": ["csharp"] },
+        { "whenChoice": "spring-boot", "otherTopic": "backend.language", "allowedOtherChoices": ["java"] },
+        { "whenChoice": "express", "otherTopic": "backend.language", "allowedOtherChoices": ["typescript"] }
+      ]
+    },
+    {
+      "id": "arch.style", "title": "Architecture style", "domain": "architecture", "default": "clean",
+      "description": "How code is layered.",
+      "choices": [
+        { "id": "clean", "label": "Clean architecture", "support": "recommended" },
+        { "id": "hexagonal", "label": "Hexagonal (ports and adapters)", "support": "supported" },
+        { "id": "layered", "label": "Classic layered", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "api.style", "title": "API style", "domain": "api", "default": "rest",
+      "description": "How services expose their interface.",
+      "choices": [
+        { "id": "rest", "label": "REST over HTTP", "support": "recommended" },
+        { "id": "grpc", "label": "gRPC", "support": "supported" },
+        { "id": "graphql", "label": "GraphQL", "support": "supported" }
+      ]
+    },
+    {
+      "id": "api.versioning", "title": "API versioning", "domain": "api", "default": "path",
+      "description": "How API versions are addressed.",
+      "choices": [
+        { "id": "path", "label": "Version in the URL path", "support": "recommended" },
+        { "id": "header", "label": "Version in a header", "support": "supported" },
+        { "id": "none", "label": "Unversioned", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "db.engine", "title": "Database engine", "domain": "data", "default": "postgresql",
+      "description": "System-of-record relational database.",
+      "choices": [
+        { "id": "postgresql", "label": "PostgreSQL", "support": "recommended", "parameters": [{ "name": "majorVersion", "kind": "integer", "allowedValues": ["16", "17", "18"] }] },
+        { "id": "mysql", "label": "MySQL", "support": "supported", "parameters": [{ "name": "majorVersion", "kind": "integer" }] }
+      ]
+    },
+    {
+      "id": "db.access", "title": "Data access", "domain": "data", "default": "ef-core",
+      "description": "How the application reaches the database.",
+      "choices": [
+        { "id": "ef-core", "label": "Entity Framework Core", "support": "recommended", "parameters": [{ "name": "migrations", "kind": "boolean" }] },
+        { "id": "dapper", "label": "Dapper", "support": "supported" },
+        { "id": "jdbc", "label": "JDBC / JPA", "support": "supported" }
+      ],
+      "rules": [
+        { "whenChoice": "ef-core", "otherTopic": "backend.language", "allowedOtherChoices": ["csharp"] },
+        { "whenChoice": "dapper", "otherTopic": "backend.language", "allowedOtherChoices": ["csharp"] },
+        { "whenChoice": "jdbc", "otherTopic": "backend.language", "allowedOtherChoices": ["java"] }
+      ]
+    },
+    {
+      "id": "auth.protocol", "title": "Authentication", "domain": "security", "default": "jwt-bearer",
+      "description": "How callers authenticate.",
+      "choices": [
+        { "id": "jwt-bearer", "label": "JWT bearer tokens", "support": "recommended" },
+        { "id": "oidc-code-pkce", "label": "OIDC authorization code with PKCE (humans)", "support": "recommended" },
+        { "id": "api-key", "label": "API keys", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "storage.object", "title": "Object storage", "domain": "data", "default": "s3-compatible",
+      "description": "Where artifact binaries are stored.",
+      "choices": [
+        { "id": "s3-compatible", "label": "S3-compatible storage", "support": "recommended", "parameters": [{ "name": "pathStyle", "kind": "boolean", "required": false }] },
+        { "id": "local-disk", "label": "Local disk (development only)", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "frontend.framework", "title": "Studio frontend", "domain": "frontend", "default": "react-vite",
+      "description": "Owner Studio UI framework.",
+      "choices": [
+        { "id": "react-vite", "label": "React + Vite", "support": "recommended", "parameters": [{ "name": "reactVersion", "kind": "integer", "allowedValues": ["18", "19"] }] },
+        { "id": "nextjs", "label": "Next.js", "support": "supported", "parameters": [{ "name": "version", "kind": "integer" }] }
+      ]
+    },
+    {
+      "id": "test.framework.backend", "title": "Backend test framework", "domain": "quality", "default": "xunit",
+      "description": "Unit and integration test runner.",
+      "choices": [
+        { "id": "xunit", "label": "xUnit", "support": "recommended" },
+        { "id": "nunit", "label": "NUnit", "support": "supported" },
+        { "id": "junit", "label": "JUnit", "support": "supported" }
+      ],
+      "rules": [
+        { "whenChoice": "xunit", "otherTopic": "backend.language", "allowedOtherChoices": ["csharp"] },
+        { "whenChoice": "nunit", "otherTopic": "backend.language", "allowedOtherChoices": ["csharp"] },
+        { "whenChoice": "junit", "otherTopic": "backend.language", "allowedOtherChoices": ["java"] }
+      ]
+    },
+    {
+      "id": "source.code-policy", "title": "Source code in the platform", "domain": "agent-process",
+      "description": "Whether DevWeave stores source code.",
+      "choices": [
+        { "id": "references-only", "label": "References only", "support": "recommended" },
+        { "id": "store-source", "label": "Store source code", "support": "discouraged" }
+      ]
+    },
+    {
+      "id": "agent.human-approval", "title": "Human approval of decisions", "domain": "agent-process",
+      "description": "Whether a person must approve a decision before agents rely on it.",
+      "choices": [
+        { "id": "required", "label": "Required", "support": "recommended" },
+        { "id": "optional", "label": "Optional", "support": "discouraged" }
+      ]
+    }
+  ],
+  "decisions": [
+    { "topic": "backend.language", "choice": "csharp", "params": { "version": "14" } },
+    { "topic": "backend.framework", "choice": "aspnet-core", "params": { "targetFramework": "net10.0" } },
+    { "topic": "arch.style", "choice": "clean" },
+    { "topic": "api.style", "choice": "rest" },
+    { "topic": "api.versioning", "choice": "path" },
+    { "topic": "db.engine", "choice": "postgresql", "params": { "majorVersion": 18 } },
+    { "topic": "db.access", "choice": "ef-core", "params": { "migrations": true } },
+    { "topic": "auth.protocol", "choice": "jwt-bearer" },
+    { "topic": "storage.object", "choice": "s3-compatible" },
+    { "topic": "frontend.framework", "choice": "react-vite", "params": { "reactVersion": 19 } },
+    { "topic": "test.framework.backend", "choice": "xunit" },
+    { "topic": "source.code-policy", "choice": "references-only", "locked": true, "rationale": "DevWeave never stores source code." },
+    { "topic": "agent.human-approval", "choice": "required", "locked": true, "rationale": "A person approves every decision before it binds." }
+  ],
+  "profiles": [
+    {
+      "id": "dotnet-postgres-react", "label": ".NET, PostgreSQL and React", "projectType": "web-api",
+      "description": "The stack DevWeave itself uses.",
+      "decisions": [
+        { "topic": "backend.language", "choice": "csharp", "params": { "version": "14" } },
+        { "topic": "backend.framework", "choice": "aspnet-core", "params": { "targetFramework": "net10.0" } },
+        { "topic": "db.engine", "choice": "postgresql", "params": { "majorVersion": 18 } },
+        { "topic": "db.access", "choice": "ef-core", "params": { "migrations": true } },
+        { "topic": "frontend.framework", "choice": "react-vite", "params": { "reactVersion": 19 } },
+        { "topic": "test.framework.backend", "choice": "xunit" }
+      ]
+    },
+    {
+      "id": "java-spring-postgres-react", "label": "Java, Spring Boot, PostgreSQL and React", "projectType": "web-api",
+      "description": "A JVM stack with the same data and frontend choices.",
+      "decisions": [
+        { "topic": "backend.language", "choice": "java", "params": { "version": "21" } },
+        { "topic": "backend.framework", "choice": "spring-boot", "params": { "version": "3" } },
+        { "topic": "db.engine", "choice": "postgresql", "params": { "majorVersion": 18 } },
+        { "topic": "db.access", "choice": "jdbc" },
+        { "topic": "frontend.framework", "choice": "react-vite", "params": { "reactVersion": 19 } },
+        { "topic": "test.framework.backend", "choice": "junit" }
+      ]
+    },
+    {
+      "id": "node-ts-postgres-next", "label": "TypeScript, Express, PostgreSQL and Next.js", "projectType": "web-api",
+      "description": "A single-language TypeScript stack.",
+      "decisions": [
+        { "topic": "backend.language", "choice": "typescript", "params": { "version": "5" } },
+        { "topic": "backend.framework", "choice": "express", "params": { "version": "5" } },
+        { "topic": "db.engine", "choice": "postgresql", "params": { "majorVersion": 17 } },
+        { "topic": "frontend.framework", "choice": "nextjs", "params": { "version": 15 } }
+      ]
+    }
+  ]
+}

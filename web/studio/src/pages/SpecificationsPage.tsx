@@ -31,6 +31,13 @@ function topicState(resolution: SpecResolutionView | undefined, hasIssue: boolea
   return { label: 'Decided', tone: 'bg-emerald-50 text-emerald-800' };
 }
 
+const SUPPORT_TONE: Record<string, string> = {
+  recommended: 'bg-emerald-50 text-emerald-800',
+  supported: 'bg-slate-100 text-slate-700',
+  discouraged: 'bg-amber-50 text-amber-900',
+  deprecated: 'bg-rose-50 text-rose-800',
+};
+
 function Chip({ tone, children }: { tone: string; children: React.ReactNode }) {
   return <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${tone}`}>{children}</span>;
 }
@@ -132,7 +139,7 @@ export function SpecificationsPage() {
     setLoading(true);
     try {
       const [t, e] = await Promise.all([
-        apiFetch<SpecTopic[]>(`/tenants/${tenantId}/spec/topics`),
+        apiFetch<SpecTopic[]>(`${base}/spec/topics`),
         apiFetch<SpecEffective>(`${base}/spec/effective`),
       ]);
       setTopics(t);
@@ -243,6 +250,10 @@ export function SpecificationsPage() {
                       <span className="block truncate text-sm font-semibold">{topic.title}</span>
                       <span className="block truncate font-mono text-xs text-[var(--muted)]">
                         {resolution?.binding ? resolution.binding.choice : topic.id}
+                      </span>
+                      <span className="block truncate text-[11px] text-[var(--muted)]">
+                        {topic.domain}
+                        {topic.source !== 'core@1.0.0' && !topic.source.startsWith('core@') ? ` · ${topic.source}` : ''}
                       </span>
                     </span>
                     <Chip tone={state.tone}>{state.label}</Chip>
@@ -405,8 +416,13 @@ function TopicDetail({
         <ul className="divide-y divide-[var(--line)]">
           {topic.choices.map((c) => (
             <li key={c.id} className="px-5 py-3 text-sm">
-              <span className={`font-mono font-semibold ${binding?.choice === c.id ? 'text-[var(--signal)]' : ''}`}>{c.id}</span>
+              <span className={`font-semibold ${binding?.choice === c.id ? 'text-[var(--signal)]' : ''}`}>{c.label}</span>
+              <span className="ml-2 font-mono text-xs text-[var(--muted)]">{c.id}</span>
               {binding?.choice === c.id ? <span className="ml-2 text-xs text-[var(--muted)]">current</span> : null}
+              <span className="ml-2 inline-flex gap-1 align-middle">
+                <Chip tone={SUPPORT_TONE[c.support]}>{c.support}</Chip>
+                {c.custom ? <Chip tone="bg-sky-50 text-sky-800">Custom · {c.source}</Chip> : null}
+              </span>
               {c.parameters.length > 0 ? (
                 <p className="mt-1 text-xs text-[var(--muted)]">
                   {c.parameters
@@ -435,7 +451,15 @@ function TopicDetail({
                 Choice
                 <select id="spec-choice" className="field mt-1" value={choiceId} onChange={(e) => { setChoiceId(e.target.value); setValues({}); setProblem(undefined); }}>
                   <option value="">Choose…</option>
-                  {topic.choices.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                  {topic.choices.map((c) => (
+                    <option key={c.id} value={c.id} disabled={c.support === 'deprecated'}>
+                      {c.label}
+                      {c.support === 'recommended' ? ' (recommended)' : ''}
+                      {c.support === 'discouraged' ? ' (discouraged)' : ''}
+                      {c.support === 'deprecated' ? ' (deprecated)' : ''}
+                      {c.custom ? ' (custom)' : ''}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="block text-sm font-semibold" htmlFor="spec-level">

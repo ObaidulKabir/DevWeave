@@ -23,8 +23,22 @@ public sealed record SpecParameter(
     bool Required = true,
     IReadOnlyList<string>? AllowedValues = null);
 
-/// <summary>One legal answer for a topic, with the parameters it accepts.</summary>
-public sealed record SpecChoice(string Id, IReadOnlyList<SpecParameter>? Parameters = null)
+/// <summary>How strongly a choice is recommended. Deprecated choices cannot be chosen for new decisions.</summary>
+public enum SpecSupport
+{
+    Recommended = 1,
+    Supported = 2,
+    Discouraged = 3,
+    Deprecated = 4,
+}
+
+/// <summary>One legal answer for a topic, with the parameters it accepts and where it came from.</summary>
+public sealed record SpecChoice(
+    string Id,
+    IReadOnlyList<SpecParameter>? Parameters = null,
+    string? Label = null,
+    SpecSupport Support = SpecSupport.Supported,
+    string Source = "core")
 {
     public IReadOnlyList<SpecParameter> ParameterList => Parameters ?? Array.Empty<SpecParameter>();
 }
@@ -45,7 +59,11 @@ public sealed record SpecTopic(
     string Description,
     IReadOnlyList<SpecChoice> Choices,
     IReadOnlyList<string>? ConstraintRules = null,
-    IReadOnlyList<SpecTopicRule>? Rules = null)
+    IReadOnlyList<SpecTopicRule>? Rules = null,
+    string Domain = "general",
+    bool AllowCustom = false,
+    string? Default = null,
+    string Source = "core")
 {
     public IReadOnlyList<string> ConstraintRuleList => ConstraintRules ?? Array.Empty<string>();
     public IReadOnlyList<SpecTopicRule> RuleList => Rules ?? Array.Empty<SpecTopicRule>();
@@ -91,3 +109,14 @@ public sealed record SpecResolution(
     SpecCandidate? Binding,
     SpecOrigin? Origin,
     IReadOnlyList<SpecConflict> Conflicts);
+
+/// <summary>A named bundle of decisions that can be proposed and approved together.</summary>
+public sealed record SpecProfileDecision(string Topic, string Choice, IReadOnlyDictionary<string, string> Params);
+
+public sealed record SpecProfile(
+    string Id,
+    string Label,
+    string Description,
+    string ProjectType,
+    IReadOnlyList<SpecProfileDecision> Decisions,
+    string Source = "core");

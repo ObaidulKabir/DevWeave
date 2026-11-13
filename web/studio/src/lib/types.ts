@@ -242,6 +242,10 @@ export interface SpecParameter {
 
 export interface SpecChoice {
   id: string;
+  label: string;
+  support: 'recommended' | 'supported' | 'discouraged' | 'deprecated';
+  source: string;
+  custom: boolean;
   parameters: SpecParameter[];
 }
 
@@ -249,6 +253,10 @@ export interface SpecTopic {
   id: string;
   title: string;
   description: string;
+  domain: string;
+  allowCustom: boolean;
+  default?: string | null;
+  source: string;
   choices: SpecChoice[];
   constraintRules: string[];
   rules: { whenChoice: string; otherTopic: string; allowedOtherChoices: string[] }[];

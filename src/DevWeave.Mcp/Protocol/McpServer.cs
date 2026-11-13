@@ -131,8 +131,16 @@ public sealed class McpServer
                 new { topic = StringProp() }, new[] { "topic" }),
             Tool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities",
                 new { }, Array.Empty<string>()),
-            Tool("list_spec_topics", "List predefined specification topics with their legal choices and typed parameters",
+            Tool("list_spec_topics", "List this project's specification topics (built-in packs plus approved custom ones) with legal choices and typed parameters",
                 new { }, Array.Empty<string>()),
+            Tool("get_spec_catalog", "Read the effective specification catalog: packs, topics, profiles and any overlay problems",
+                new { }, Array.Empty<string>()),
+            Tool("list_spec_options", "List ranked options for a topic, marking which are recommended and which are compatible with decisions that already bind. Choose from this list",
+                new { topic = StringProp() }, new[] { "topic" }),
+            Tool("next_open_topics", "List topics that still need a decision, in the order they should be decided",
+                new { }, Array.Empty<string>()),
+            Tool("propose_spec_overlay", "Propose a catalog extension (custom topics, options, profiles, hidden or deprecated options). Needs human approval before it applies. Requires WriteKnowledge grant",
+                new { overlay = new { type = "object" }, rationale = StringProp() }, new[] { "overlay" }),
             Tool("propose_spec_decision", "Propose a specification decision for a topic that has no binding decision. It is validated against the topic definition and needs human approval before it binds. Requires WriteKnowledge grant",
                 new { topic = StringProp(), level = StringProp(), choice = StringProp(), @params = new { type = "object" }, rationale = StringProp() },
                 new[] { "topic", "level", "choice" }),
@@ -173,10 +181,26 @@ public sealed class McpServer
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
-            "list_spec_topics" => _specs.Topics.Select(SpecProjection.Topic).ToArray(),
+            "list_spec_topics" => (await _specs.CatalogAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct))
+                .Topics.Select(SpecProjection.Topic).ToArray(),
+            "get_spec_catalog" => SpecProjection.Catalog(await _specs.CatalogAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "list_spec_options" => SpecProjection.Options(await _specs.OptionsAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
+            "next_open_topics" => SpecProjection.OpenTopics(await _specs.OpenTopicsAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "propose_spec_overlay" => await ProposeOverlayFromArgsAsync(scope, args, ct),
             "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
         };
+    }
+
+    private async Task<object> ProposeOverlayFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var item = await _specs.ProposeOverlayAsync(
+            scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("overlay").GetRawText(),
+            args.TryGetProperty("rationale", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString()! : "Proposed by agent.", ct);
+        return new { itemId = item.Id.Value, item.Key, state = item.State.ToString() };
     }
 
     private async Task<object> ProposeSpecFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)

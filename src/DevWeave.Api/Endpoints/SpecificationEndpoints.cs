@@ -14,6 +14,8 @@ namespace DevWeave.Api.Endpoints;
 /// </summary>
 public static class SpecificationEndpoints
 {
+    public sealed record ProposeOverlayRequest(JsonElement Overlay, string? Reason);
+
     public sealed record ProposeSpecDecisionRequest(string TopicId, string Level, JsonElement Decision, string? Reason);
 
     public static IEndpointRouteBuilder MapSpecificationEndpoints(this IEndpointRouteBuilder endpoints)
@@ -21,13 +23,52 @@ public static class SpecificationEndpoints
         var group = endpoints.MapGroup("/tenants/{tenantId:guid}")
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
-        group.MapGet("/spec/topics", (SpecificationService service) =>
-            Results.Ok(service.Topics.Select(SpecProjection.Topic)));
+        // Tenant-wide view of the built-in defaults. A project's effective catalog is under /projects/{p}/spec/catalog.
+        group.MapGet("/spec/topics", () => Results.Ok(SpecCatalog.Default.Topics.Select(SpecProjection.Topic)));
+        group.MapGet("/projects/{projectId:guid}/spec/catalog", CatalogAsync);
+        group.MapGet("/projects/{projectId:guid}/spec/topics", TopicsAsync);
+        group.MapGet("/projects/{projectId:guid}/spec/topics/{topicId}/options", OptionsAsync);
+        group.MapGet("/projects/{projectId:guid}/spec/open-topics", OpenTopicsAsync);
+        group.MapPost("/projects/{projectId:guid}/spec/overlays", ProposeOverlayAsync);
         group.MapGet("/projects/{projectId:guid}/spec/effective", EffectiveAsync);
         group.MapGet("/projects/{projectId:guid}/spec/topics/{topicId}/resolve", ResolveAsync);
         group.MapPost("/projects/{projectId:guid}/spec/decisions", ProposeAsync);
         return endpoints;
     }
+
+    private static Task<IResult> CatalogAsync(
+        Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () => Results.Ok(SpecProjection.Catalog(await service.CatalogAsync(
+            new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), ct))));
+
+    private static Task<IResult> TopicsAsync(
+        Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () => Results.Ok((await service.CatalogAsync(
+            new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), ct))
+            .Topics.Select(SpecProjection.Topic)));
+
+    private static Task<IResult> OptionsAsync(
+        Guid tenantId, Guid projectId, string topicId, HttpContext http, SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () => Results.Ok(SpecProjection.Options(await service.OptionsAsync(
+            new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), topicId, ct))));
+
+    private static Task<IResult> OpenTopicsAsync(
+        Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () => Results.Ok(SpecProjection.OpenTopics(await service.OpenTopicsAsync(
+            new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), ct))));
+
+    private static Task<IResult> ProposeOverlayAsync(
+        Guid tenantId, Guid projectId, ProposeOverlayRequest request, HttpContext http,
+        SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () =>
+        {
+            var item = await service.ProposeOverlayAsync(
+                new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http),
+                request.Overlay.GetRawText(), request.Reason ?? string.Empty, ct);
+            return Results.Created(
+                $"/tenants/{tenantId}/knowledge/{item.Id}",
+                new { itemId = item.Id.Value, item.Key, state = item.State.ToString() });
+        });
 
     private static Task<IResult> EffectiveAsync(
         Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>

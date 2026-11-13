@@ -22,6 +22,9 @@ public sealed record SpecOptionView(
     bool Compatible,
     IReadOnlyList<string> Reasons);
 
+/// <summary>An available package upgrade, what it changes, and which current decisions it affects.</summary>
+public sealed record PackUpgradeView(SpecPackDiff Diff, IReadOnlyList<string> AffectedDecisions);
+
 public sealed record OpenTopicView(SpecTopic Topic, string? Default, int DependedOnBy);
 
 public sealed class SpecDecisionRejectedException(IReadOnlyList<SpecIssue> issues)
@@ -205,6 +208,115 @@ public sealed class SpecificationService(
     }
 
     /// <summary>
+    /// Upgrades available for packs this project is held back on, with a diff and the current decisions the
+    /// move would affect. Accepting an upgrade is an overlay that pins the new version, approved by a person.
+    /// </summary>
+    public async Task<IReadOnlyList<PackUpgradeView>> UpgradesAsync(
+        TenantId tenant, ProjectId project, PrincipalId actor, CancellationToken ct = default)
+    {
+        await AuthorizeAsync(tenant, project, actor, write: false, ct);
+        var catalog = await catalogs.BuildAsync(tenant, project, ct);
+        var candidates = await LoadCandidatesAsync(tenant, project, catalog, ct);
+        var bound = catalog.Topics
+            .Select(t => SpecResolver.Resolve(t.Id, candidates))
+            .Where(r => r.Binding is not null)
+            .ToDictionary(r => r.Topic, r => r.Binding!.Decision.Choice);
+
+        var upgrades = new List<PackUpgradeView>();
+        foreach (var status in catalog.Packs.Where(p => p.UpdateAvailable))
+        {
+            var from = SpecCatalogService.Packs.First(p => p.Id == status.Id && p.Version == status.Version);
+            var to = SpecCatalogService.Packs.First(p => p.Id == status.Id && p.Version == status.LatestVersion);
+            var diff = SpecPackDiff.Compare(from, to);
+
+            var affected = new List<string>();
+            foreach (var topic in diff.TopicsRemoved.Where(bound.ContainsKey))
+                affected.Add($"{topic}: the topic is removed, but '{bound[topic]}' is currently decided.");
+            foreach (var change in diff.ChoiceChanges.Where(c => c.Change is "removed" or "deprecated"))
+            {
+                if (bound.TryGetValue(change.Topic, out var current) && current == change.Choice)
+                    affected.Add($"{change.Topic}: '{change.Choice}' is {change.Change} and currently decided.");
+            }
+
+            upgrades.Add(new PackUpgradeView(diff, affected));
+        }
+
+        return upgrades;
+    }
+
+    /// <summary>
+    /// Proposes several decisions as one bundle (usually a profile, optionally edited). Every decision is
+    /// validated against its topic first; a person approves the whole bundle once.
+    /// </summary>
+    public async Task<KnowledgeItem> ProposeBundleAsync(
+        TenantId tenant,
+        ProjectId project,
+        PrincipalId actor,
+        string? profileId,
+        SpecScopeLevel level,
+        IReadOnlyList<SpecProfileDecision>? decisions,
+        string reason,
+        CancellationToken ct = default)
+    {
+        await AuthorizeAsync(tenant, project, actor, write: true, ct);
+        if (level == SpecScopeLevel.Platform)
+            throw new SpecDecisionRejectedException([new SpecIssue("/scope/level", "Bundles can only be tenant or project level.")]);
+
+        var catalog = await catalogs.BuildAsync(tenant, project, ct);
+        var profile = profileId is null ? null : catalog.Profiles.FirstOrDefault(p => p.Id == profileId)
+            ?? throw new NotFoundException($"Profile '{profileId}' is not defined.");
+        var lines = decisions ?? profile?.Decisions
+            ?? throw new SpecDecisionRejectedException([new SpecIssue("/decisions", "Provide a profile or a list of decisions.")]);
+
+        var issues = new List<SpecIssue>();
+        if (lines.Count == 0)
+            issues.Add(new SpecIssue("/decisions", "A bundle needs at least one decision."));
+        if (lines.GroupBy(l => l.Topic).Any(g => g.Count() > 1))
+            issues.Add(new SpecIssue("/decisions", "A bundle can decide each topic only once."));
+
+        foreach (var line in lines)
+        {
+            var topic = catalog.Find(line.Topic);
+            if (topic is null)
+            {
+                issues.Add(new SpecIssue($"/decisions/{line.Topic}", "Topic is not defined."));
+                continue;
+            }
+
+            if (catalog.IsLocked(line.Topic))
+            {
+                issues.Add(new SpecIssue($"/decisions/{line.Topic}", "Topic is locked by the platform and cannot be changed."));
+                continue;
+            }
+
+            var decision = new SpecDecision(line.Topic, level, line.Choice, line.Params, Array.Empty<SpecConstraint>(), false, null);
+            issues.AddRange(SpecDecisionValidator.Validate(topic, decision)
+                .Select(i => new SpecIssue($"/decisions/{line.Topic}{i.Path.Replace("/decision", string.Empty, StringComparison.Ordinal)}", i.Message)));
+        }
+
+        if (issues.Count > 0)
+            throw new SpecDecisionRejectedException(issues);
+
+        await EnsureSchemaAsync(SpecBundleJson.TypeId, SpecBundleJson.SchemaVersion,
+            "A set of specification decisions approved together.", SpecBundleJson.SchemaDocument, ct);
+
+        var content = SpecBundleJson.ToJson(new SpecBundle(profileId, level, lines, null));
+        var levelText = SpecDecisionJson.ToLevelString(level);
+        var item = await createItem.ExecuteAsync(
+            tenant, project, $"spec.bundle.{levelText}.{Guid.NewGuid():N}",
+            $"Specification profile ({levelText}): {profile?.Label ?? "custom selection"}",
+            Classification.Internal, RepresentationKind.StructuredData,
+            SpecBundleJson.TypeId, SpecBundleJson.SchemaVersion, actor, ct);
+
+        await addRevision.ExecuteAsync(
+            tenant, item.Id, 0, SpecBundleJson.SchemaVersion, content, actor,
+            string.IsNullOrWhiteSpace(reason) ? "Proposed specification bundle." : reason,
+            sourceReference: null, supersededRevisionId: null, ct);
+
+        return item;
+    }
+
+    /// <summary>
     /// Proposes a catalog overlay (custom topics, options, profiles, hidden or deprecated options). It is
     /// checked against the current effective catalog first and binds only after a person approves it.
     /// </summary>
@@ -221,6 +333,9 @@ public sealed class SpecificationService(
         issues.AddRange(overlay.EnablePacks
             .Where(id => catalog.Packs.All(p => p.Id != id))
             .Select(id => new SpecIssue("/enablePacks", $"Unknown package '{id}'.")));
+        issues.AddRange(overlay.PinPacks
+            .Where(pin => SpecCatalogService.Packs.All(p => p.Id != pin.Pack || p.Version != pin.Version))
+            .Select(pin => new SpecIssue("/pinPacks", $"Package '{pin.Pack}' has no version '{pin.Version}'.")));
         if (issues.Count > 0)
             throw new SpecDecisionRejectedException(issues);
 
@@ -262,6 +377,24 @@ public sealed class SpecificationService(
 
             candidates.Add(new SpecCandidate(
                 decision, item.Id.Value, revision.Id.Value, revision.RevisionNumber, item.ProjectId.Value, item.CreatedAt));
+        }
+
+        foreach (var item in all.Where(i => i.TypeId == SpecBundleJson.TypeId && SpecItems.IsBinding(i)))
+        {
+            var revision = await revisions.GetByIdAsync(tenant, item.CurrentRevisionId!, ct);
+            var bundle = revision is null ? null : SpecBundleJson.TryParse(revision.Content, out _);
+            if (revision is null || bundle is null)
+                continue;
+
+            if (bundle.Level == SpecScopeLevel.Project && item.ProjectId != project)
+                continue;
+
+            foreach (var line in bundle.Decisions.Where(l => catalog.Find(l.Topic) is not null))
+            {
+                candidates.Add(new SpecCandidate(
+                    new SpecDecision(line.Topic, bundle.Level, line.Choice, line.Params, Array.Empty<SpecConstraint>(), false, bundle.Rationale),
+                    item.Id.Value, revision.Id.Value, revision.RevisionNumber, item.ProjectId.Value, item.CreatedAt));
+            }
         }
 
         return candidates;

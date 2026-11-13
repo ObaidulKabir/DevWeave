@@ -348,6 +348,100 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
         Assert.NotEqual(JsonValueKind.Null, bad.RootElement.GetProperty("error").ValueKind);
     }
 
+    [Fact]
+    public async Task One_approval_makes_every_decision_in_a_profile_bundle_binding_and_edits_are_validated()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var specs = scope.ServiceProvider.GetRequiredService<SpecificationService>();
+
+        // Take the Java profile but edit one line: PostgreSQL 17 instead of 18.
+        var catalog = await specs.CatalogAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        var profile = catalog.Profiles.Single(p => p.Id == "java-spring-postgres-react");
+        var lines = profile.Decisions
+            .Select(d => d.Topic == "db.engine"
+                ? d with { Params = new Dictionary<string, string> { ["majorVersion"] = "17" } }
+                : d)
+            .ToList();
+
+        var bundle = await specs.ProposeBundleAsync(
+            seed.Tenant.Id, seed.Project.Id, seed.Member.Id, profile.Id, SpecScopeLevel.Project, lines, "Move to the JVM");
+
+        // Before approval: still the predefined C# stack.
+        var before = await specs.ResolveAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, "backend.language");
+        Assert.Equal("csharp", before.Binding!.Decision.Choice);
+
+        using (var approval = _factory.Services.CreateScope())
+        {
+            var db = approval.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            (await db.KnowledgeItems.SingleAsync(i => i.Id == bundle.Id)).Approve();
+            await db.SaveChangesAsync();
+        }
+
+        using var fresh = _factory.Services.CreateScope();
+        var service = fresh.ServiceProvider.GetRequiredService<SpecificationService>();
+        var effective = await service.EffectiveAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        SpecResolution Of(string topic) => effective.Resolutions.Single(r => r.Topic == topic);
+
+        Assert.Equal("java", Of("backend.language").Binding!.Decision.Choice);
+        Assert.Equal("spring-boot", Of("backend.framework").Binding!.Decision.Choice);
+        Assert.Equal("17", Of("db.engine").Binding!.Decision.Params["majorVersion"]);
+        Assert.All(new[] { "backend.language", "db.engine", "test.framework.backend" },
+            t => Assert.Equal(bundle.Id.Value, Of(t).Binding!.ItemId));
+        Assert.Equal(SpecOrigin.Override, Of("backend.language").Origin);
+        Assert.Empty(effective.Incompatibilities);
+    }
+
+    [Fact]
+    public async Task Bundles_reject_locked_topics_bad_lines_and_duplicates_before_storage()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var specs = scope.ServiceProvider.GetRequiredService<SpecificationService>();
+        var none = new Dictionary<string, string>();
+
+        var rejected = await Assert.ThrowsAsync<SpecDecisionRejectedException>(() =>
+            specs.ProposeBundleAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, null, SpecScopeLevel.Project,
+                [new SpecProfileDecision("source.code-policy", "store-source", none),
+                 new SpecProfileDecision("db.engine", "oracle", none),
+                 new SpecProfileDecision("api.style", "rest", none),
+                 new SpecProfileDecision("api.style", "grpc", none),
+                 new SpecProfileDecision("nope.topic", "x", none)], ""));
+        Assert.Contains(rejected.Issues, i => i.Message.Contains("locked"));
+        Assert.Contains(rejected.Issues, i => i.Path.Contains("db.engine"));
+        Assert.Contains(rejected.Issues, i => i.Message.Contains("only once"));
+        Assert.Contains(rejected.Issues, i => i.Message.Contains("not defined"));
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            specs.ProposeBundleAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, "no-such-profile", SpecScopeLevel.Project, null, ""));
+        await Assert.ThrowsAsync<SpecDecisionRejectedException>(() =>
+            specs.ProposeBundleAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, null, SpecScopeLevel.Project, null, ""));
+    }
+
+    [Fact]
+    public async Task Rest_applies_a_profile_bundle_and_reports_no_pending_pack_upgrades()
+    {
+        var seed = await SeedAsync();
+        using var client = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var root = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/spec";
+
+        using var created = await client.PostAsJsonAsync($"{root}/bundles",
+            new { profileId = "dotnet-postgres-react", level = "project", reason = "Standard stack" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        using var edited = await client.PostAsJsonAsync($"{root}/bundles", new
+        {
+            level = "project",
+            decisions = new object[] { new { topic = "db.engine", choice = "postgresql", @params = new { majorVersion = 9 } } },
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, edited.StatusCode);
+
+        using var upgrades = await client.GetAsync($"{root}/upgrades");
+        Assert.Equal(HttpStatusCode.OK, upgrades.StatusCode);
+        using var doc = await upgrades.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(0, doc!.RootElement.GetArrayLength());
+    }
+
     private async Task<Seed> SeedAsync()
     {
         using var scope = _factory.Services.CreateScope();

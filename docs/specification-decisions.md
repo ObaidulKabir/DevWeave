@@ -60,10 +60,23 @@ Extra surfaces: `GET .../spec/catalog`, `.../spec/topics`, `.../spec/topics/{top
 compatibility reasons), `.../spec/open-topics`, `POST .../spec/overlays`. MCP: `get_spec_catalog`,
 `list_spec_options`, `next_open_topics`, `propose_spec_overlay`.
 
+## Profiles, bundles and package upgrades
+
+- A **profile** is a named set of decisions (for example `dotnet-postgres-react`). `POST .../spec/bundles`
+  (MCP `propose_spec_profile`) sends a profile, optionally with edited lines, as one `spec.bundle` item. Every
+  line is validated against its topic and locked topics are refused. **One approval** makes all lines binding.
+- Several versions of a pack may ship. The newest applies unless an approved overlay **pins** an older one
+  (`pinPacks`). `GET .../spec/upgrades` (MCP `get_spec_pack_upgrades`) returns the diff for each pack that is
+  held back: added and removed topics, added, removed and deprecated options, changed defaults and predefined
+  decisions, profile changes, and the current decisions the move would affect. Accepting an upgrade is an
+  overlay that pins the new version, approved by a person.
+- Studio: the **Catalog** page turns on packs, reviews and applies profiles line by line, shows upgrade diffs,
+  and adds options or topics.
+
 ## Known limits
 
 - "Defined at" ordering uses the item's creation time, not the approval time.
 - A tenant-level decision is stored in the project that proposed it and binds every project in the tenant.
 - Changing a related decision does not yet mark linked decisions for re-review.
-- Studio does not yet have screens to create overlays, enable packs or review package upgrades.
-- Package version pinning and upgrade diffs, and approving a profile as one bundle, are not built yet.
+- Only one version of each built-in pack ships today, so the upgrade view is empty until a newer pack version is released. The diff logic is covered by tests with synthetic packs.
+- Custom options added from Studio carry no parameters; richer definitions need the API.

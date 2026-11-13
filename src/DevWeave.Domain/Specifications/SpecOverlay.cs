@@ -6,6 +6,9 @@ public sealed record SpecChoiceRef(string Topic, string Choice);
 
 public sealed record SpecChoiceAddition(string Topic, SpecChoice Choice);
 
+/// <summary>Holds a tenant or project on one version of a built-in pack until a person approves moving on.</summary>
+public sealed record SpecPackPin(string Pack, string Version);
+
 /// <summary>
 /// A tenant- or project-level extension of the built-in catalog. Overlays only add or narrow; they can
 /// never change a locked platform decision or replace a built-in topic.
@@ -14,6 +17,7 @@ public sealed record SpecOverlay(
     SpecScopeLevel Level,
     string? Namespace,
     IReadOnlyList<string> EnablePacks,
+    IReadOnlyList<SpecPackPin> PinPacks,
     IReadOnlyList<SpecTopic> AddTopics,
     IReadOnlyList<SpecChoiceAddition> AddChoices,
     IReadOnlyList<SpecChoiceRef> HideChoices,
@@ -41,6 +45,7 @@ public static class SpecOverlayJson
         },
         "namespace": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,19}$" },
         "enablePacks": { "type": "array", "items": { "type": "string" } },
+        "pinPacks": { "type": "array", "items": { "type": "object", "required": ["pack", "version"] } },
         "addTopics": { "type": "array", "items": { "type": "object" } },
         "addChoices": { "type": "array", "items": { "type": "object", "required": ["topic", "choice"] } },
         "hideChoices": { "type": "array", "items": { "type": "object", "required": ["topic", "choice"] } },
@@ -71,6 +76,9 @@ public static class SpecOverlayJson
                 level,
                 SpecCatalogJson.OptStr(root, "namespace"),
                 SpecCatalogJson.Array(root, "enablePacks").Select(x => x.GetString() ?? string.Empty).ToArray(),
+                SpecCatalogJson.Array(root, "pinPacks")
+                    .Select(x => new SpecPackPin(SpecCatalogJson.Str(x, "pack"), SpecCatalogJson.Str(x, "version")))
+                    .ToArray(),
                 SpecCatalogJson.Array(root, "addTopics").Select(t => SpecCatalogJson.ReadTopic(t, source)).ToArray(),
                 SpecCatalogJson.Array(root, "addChoices")
                     .Select(a => new SpecChoiceAddition(SpecCatalogJson.Str(a, "topic"), SpecCatalogJson.ReadChoice(a.GetProperty("choice"), source)))

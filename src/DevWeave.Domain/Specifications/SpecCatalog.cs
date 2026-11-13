@@ -3,7 +3,11 @@ using System.Text.RegularExpressions;
 namespace DevWeave.Domain.Specifications;
 
 /// <summary>A package and whether it is part of the effective catalog.</summary>
-public sealed record SpecPackStatus(string Id, string Version, string Description, bool Enabled, bool Required);
+public sealed record SpecPackStatus(
+    string Id, string Version, string Description, bool Enabled, bool Required, string LatestVersion, bool Pinned)
+{
+    public bool UpdateAvailable => !string.Equals(Version, LatestVersion, StringComparison.Ordinal);
+}
 
 /// <summary>An overlay that could not be applied, with the reasons.</summary>
 public sealed record SpecOverlayProblem(string Source, IReadOnlyList<SpecIssue> Issues);
@@ -30,10 +34,31 @@ public static class SpecCatalogBuilder
     private static readonly Regex NamespacePattern = new("^[a-z][a-z0-9-]{1,19}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>Merges packs with overlays (given widest first). An invalid overlay is skipped whole and reported.</summary>
-    public static SpecCatalog Build(IReadOnlyList<SpecPack> allPacks, IReadOnlyList<(SpecOverlay Overlay, string Source)> overlays)
+    public static SpecCatalog Build(IReadOnlyList<SpecPack> allVersions, IReadOnlyList<(SpecOverlay Overlay, string Source)> overlays)
     {
-        var enabled = allPacks.Where(p => p.EnabledByDefault).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
         var problems = new List<SpecOverlayProblem>();
+
+        // Several versions of a pack may ship. The newest is the default; an approved pin holds a tenant or project back.
+        var latest = allVersions.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.OrderByDescending(p => Parse(p.Version)).First());
+        var chosen = new Dictionary<string, SpecPack>(latest, StringComparer.Ordinal);
+        var pinned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (overlay, source) in overlays)
+        {
+            foreach (var pin in overlay.PinPacks)
+            {
+                var match = allVersions.FirstOrDefault(p => p.Id == pin.Pack && p.Version == pin.Version);
+                if (match is null)
+                    problems.Add(new SpecOverlayProblem(source, [new SpecIssue("/pinPacks", $"Package '{pin.Pack}' has no version '{pin.Version}'.")]));
+                else
+                {
+                    chosen[pin.Pack] = match;
+                    pinned.Add(pin.Pack);
+                }
+            }
+        }
+
+        var allPacks = chosen.Values.OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
+        var enabled = allPacks.Where(p => p.EnabledByDefault).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
 
         // Pack enablement is resolved first, so a topic added later by an overlay can build on an enabled pack.
         foreach (var (overlay, source) in overlays)
@@ -66,10 +91,11 @@ public static class SpecCatalogBuilder
         }
 
         var catalog = new SpecCatalog(
-            allPacks.Select(p => new SpecPackStatus(p.Id, p.Version, p.Description, enabled.Contains(p.Id), p.EnabledByDefault)).ToArray(),
+            allPacks.Select(p => new SpecPackStatus(
+                p.Id, p.Version, p.Description, enabled.Contains(p.Id), p.EnabledByDefault, latest[p.Id].Version, pinned.Contains(p.Id))).ToArray(),
             topics, profiles, decisions, problems);
 
-        var builtInRoots = allPacks.SelectMany(p => p.Topics).Select(t => Root(t.Id)).ToHashSet(StringComparer.Ordinal);
+        var builtInRoots = allVersions.SelectMany(p => p.Topics).Select(t => Root(t.Id)).ToHashSet(StringComparer.Ordinal);
         foreach (var (overlay, source) in overlays)
         {
             var issues = Validate(catalog, overlay, builtInRoots, out var next);
@@ -218,6 +244,9 @@ public static class SpecCatalogBuilder
 
     private static void Replace(List<SpecTopic> topics, SpecTopic updated) =>
         topics[topics.FindIndex(t => t.Id == updated.Id)] = updated;
+
+    private static Version Parse(string version) =>
+        Version.TryParse(version, out var v) ? v : new Version(0, 0);
 
     public static string Root(string id)
     {

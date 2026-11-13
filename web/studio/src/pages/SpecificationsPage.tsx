@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { EmptyState, Panel } from '../components/Panel';
-import { ApiError, apiFetch } from '../lib/api';
+import { Chip, ParameterField, SUPPORT_TONE, explainSpecError, type SpecProblem } from '../components/SpecBits';
+import { apiFetch } from '../lib/api';
 import { formatWhen } from '../lib/format';
-import type { SpecDecisionView, SpecEffective, SpecParameter, SpecResolutionView, SpecTopic } from '../lib/types';
+import type { SpecDecisionView, SpecEffective, SpecResolutionView, SpecTopic } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const ORIGIN_LABEL: Record<string, { label: string; tone: string; hint: string }> = {
@@ -31,31 +32,6 @@ function topicState(resolution: SpecResolutionView | undefined, hasIssue: boolea
   return { label: 'Decided', tone: 'bg-emerald-50 text-emerald-800' };
 }
 
-const SUPPORT_TONE: Record<string, string> = {
-  recommended: 'bg-emerald-50 text-emerald-800',
-  supported: 'bg-slate-100 text-slate-700',
-  discouraged: 'bg-amber-50 text-amber-900',
-  deprecated: 'bg-rose-50 text-rose-800',
-};
-
-function Chip({ tone, children }: { tone: string; children: React.ReactNode }) {
-  return <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${tone}`}>{children}</span>;
-}
-
-function explain(error: unknown): { message: string; issues: { path: string; message: string }[] } {
-  if (error instanceof ApiError) {
-    try {
-      const body = JSON.parse(error.body ?? '{}') as { message?: string; issues?: { path: string; message: string }[] };
-      if (error.status === 422) return { message: 'That decision does not fit this topic.', issues: body.issues ?? [] };
-      if (error.status === 409) return { message: body.message ?? 'This topic is locked by the platform and cannot be changed.', issues: [] };
-      if (error.status === 403 || error.status === 404) return { message: 'You do not have permission to propose decisions here.', issues: [] };
-    } catch {
-      /* fall through */
-    }
-  }
-  return { message: 'Could not send the decision. Check the connection and try again.', issues: [] };
-}
-
 function DecisionFacts({ decision }: { decision: SpecDecisionView }) {
   const entries = Object.entries(decision.params);
   return (
@@ -80,47 +56,6 @@ function DecisionFacts({ decision }: { decision: SpecDecisionView }) {
         {decision.locked ? <span className="ml-2 text-xs font-semibold text-rose-700">Locked: cannot be overridden</span> : null}
       </dd>
     </dl>
-  );
-}
-
-function ParameterField({
-  parameter,
-  value,
-  onChange,
-}: {
-  parameter: SpecParameter;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const id = `param-${parameter.name}`;
-  return (
-    <label className="block text-sm font-semibold" htmlFor={id}>
-      {parameter.name}
-      {parameter.required ? null : <span className="ml-1 text-xs font-normal text-[var(--muted)]">optional</span>}
-      {parameter.kind === 'boolean' ? (
-        <select id={id} className="field mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Choose…</option>
-          <option value="true">Yes</option>
-          <option value="false">No</option>
-        </select>
-      ) : parameter.allowedValues.length > 0 ? (
-        <select id={id} className="field mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Choose…</option>
-          {parameter.allowedValues.map((option) => (
-            <option key={option} value={option}>{option}</option>
-          ))}
-        </select>
-      ) : (
-        <input
-          id={id}
-          className="field mt-1"
-          inputMode={parameter.kind === 'integer' ? 'numeric' : undefined}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={parameter.kind === 'integer' ? 'A whole number' : 'Text'}
-        />
-      )}
-    </label>
   );
 }
 
@@ -307,7 +242,7 @@ function TopicDetail({
   const [values, setValues] = useState<Record<string, string>>({});
   const [rationale, setRationale] = useState('');
   const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<{ message: string; issues: { path: string; message: string }[] }>();
+  const [problem, setProblem] = useState<SpecProblem>();
   const [sent, setSent] = useState(false);
 
   const choice = topic.choices.find((c) => c.id === choiceId);
@@ -348,7 +283,7 @@ function TopicDetail({
       setRationale('');
       await run(onProposed);
     } catch (error) {
-      setProblem(explain(error));
+      setProblem(explainSpecError(error));
     } finally {
       setBusy(false);
     }

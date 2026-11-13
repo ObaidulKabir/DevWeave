@@ -14,6 +14,10 @@ namespace DevWeave.Api.Endpoints;
 /// </summary>
 public static class SpecificationEndpoints
 {
+    public sealed record BundleLine(string Topic, string Choice, JsonElement? Params);
+
+    public sealed record ProposeBundleRequest(string? ProfileId, string Level, List<BundleLine>? Decisions, string? Reason);
+
     public sealed record ProposeOverlayRequest(JsonElement Overlay, string? Reason);
 
     public sealed record ProposeSpecDecisionRequest(string TopicId, string Level, JsonElement Decision, string? Reason);
@@ -30,6 +34,8 @@ public static class SpecificationEndpoints
         group.MapGet("/projects/{projectId:guid}/spec/topics/{topicId}/options", OptionsAsync);
         group.MapGet("/projects/{projectId:guid}/spec/open-topics", OpenTopicsAsync);
         group.MapPost("/projects/{projectId:guid}/spec/overlays", ProposeOverlayAsync);
+        group.MapPost("/projects/{projectId:guid}/spec/bundles", ProposeBundleAsync);
+        group.MapGet("/projects/{projectId:guid}/spec/upgrades", UpgradesAsync);
         group.MapGet("/projects/{projectId:guid}/spec/effective", EffectiveAsync);
         group.MapGet("/projects/{projectId:guid}/spec/topics/{topicId}/resolve", ResolveAsync);
         group.MapPost("/projects/{projectId:guid}/spec/decisions", ProposeAsync);
@@ -56,6 +62,40 @@ public static class SpecificationEndpoints
         Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>
         GuardAsync(async () => Results.Ok(SpecProjection.OpenTopics(await service.OpenTopicsAsync(
             new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), ct))));
+
+    private static Task<IResult> UpgradesAsync(
+        Guid tenantId, Guid projectId, HttpContext http, SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () => Results.Ok(SpecProjection.Upgrades(await service.UpgradesAsync(
+            new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http), ct))));
+
+    private static Task<IResult> ProposeBundleAsync(
+        Guid tenantId, Guid projectId, ProposeBundleRequest request, HttpContext http,
+        SpecificationService service, CancellationToken ct) =>
+        GuardAsync(async () =>
+        {
+            if (!Enum.TryParse<SpecScopeLevel>(request.Level, ignoreCase: true, out var level))
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    code = "invalid-decision",
+                    message = "Level must be tenant or project.",
+                });
+            }
+
+            var lines = request.Decisions?.Select(l => new SpecProfileDecision(
+                l.Topic,
+                l.Choice,
+                l.Params is { ValueKind: JsonValueKind.Object } p
+                    ? p.EnumerateObject().ToDictionary(x => x.Name, x => SpecDecisionJson.Scalar(x.Value), StringComparer.Ordinal)
+                    : new Dictionary<string, string>())).ToList();
+
+            var item = await service.ProposeBundleAsync(
+                new TenantId(tenantId), new ProjectId(projectId), AuthenticatedPrincipal.GetId(http),
+                request.ProfileId, level, lines, request.Reason ?? string.Empty, ct);
+            return Results.Created(
+                $"/tenants/{tenantId}/knowledge/{item.Id}",
+                new { itemId = item.Id.Value, item.Key, state = item.State.ToString() });
+        });
 
     private static Task<IResult> ProposeOverlayAsync(
         Guid tenantId, Guid projectId, ProposeOverlayRequest request, HttpContext http,

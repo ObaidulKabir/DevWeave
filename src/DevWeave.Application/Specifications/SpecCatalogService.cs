@@ -21,7 +21,7 @@ internal static class SpecItems
 /// </summary>
 public sealed class SpecCatalogService(IKnowledgeItemRepository items, IKnowledgeRevisionRepository revisions)
 {
-    private static readonly IReadOnlyList<SpecPack> Packs = SpecPackLoader.LoadBuiltIn();
+    public static IReadOnlyList<SpecPack> Packs { get; } = SpecPackLoader.LoadBuiltIn();
 
     public static IReadOnlySet<string> BuiltInRoots { get; } =
         Packs.SelectMany(p => p.Topics).Select(t => SpecCatalogBuilder.Root(t.Id)).ToHashSet(StringComparer.Ordinal);

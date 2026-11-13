@@ -139,6 +139,11 @@ public sealed class McpServer
                 new { topic = StringProp() }, new[] { "topic" }),
             Tool("next_open_topics", "List topics that still need a decision, in the order they should be decided",
                 new { }, Array.Empty<string>()),
+            Tool("get_spec_pack_upgrades", "List available upgrades for built-in packs this project is held back on, with a diff and affected decisions",
+                new { }, Array.Empty<string>()),
+            Tool("propose_spec_profile", "Propose a whole profile (or a custom list of decisions) as one bundle for a single human approval. Each decision is validated against its topic. Requires WriteKnowledge grant",
+                new { profile = StringProp(), level = StringProp(), decisions = new { type = "array", items = new { type = "object" } }, rationale = StringProp() },
+                new[] { "level" }),
             Tool("propose_spec_overlay", "Propose a catalog extension (custom topics, options, profiles, hidden or deprecated options). Needs human approval before it applies. Requires WriteKnowledge grant",
                 new { overlay = new { type = "object" }, rationale = StringProp() }, new[] { "overlay" }),
             Tool("propose_spec_decision", "Propose a specification decision for a topic that has no binding decision. It is validated against the topic definition and needs human approval before it binds. Requires WriteKnowledge grant",
@@ -190,9 +195,27 @@ public sealed class McpServer
             "next_open_topics" => SpecProjection.OpenTopics(await _specs.OpenTopicsAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
             "propose_spec_overlay" => await ProposeOverlayFromArgsAsync(scope, args, ct),
+            "propose_spec_profile" => await ProposeBundleFromArgsAsync(scope, args, ct),
+            "get_spec_pack_upgrades" => SpecProjection.Upgrades(await _specs.UpgradesAsync(
+                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
             "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
         };
+    }
+
+    private async Task<object> ProposeBundleFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        if (!Enum.TryParse<SpecScopeLevel>(args.GetProperty("level").GetString(), ignoreCase: true, out var level))
+            throw new ArgumentException("level must be tenant or project.");
+
+        var profile = args.TryGetProperty("profile", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+        var lines = args.TryGetProperty("decisions", out var d) && d.ValueKind == JsonValueKind.Array
+            ? SpecCatalogJson.ReadDecisions(args)
+            : null;
+        var item = await _specs.ProposeBundleAsync(
+            scope.TenantId, scope.ProjectId!, scope.ActorId, profile, level, lines,
+            args.TryGetProperty("rationale", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString()! : "Proposed by agent.", ct);
+        return new { itemId = item.Id.Value, item.Key, state = item.State.ToString() };
     }
 
     private async Task<object> ProposeOverlayFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)

@@ -47,7 +47,7 @@ public static class SpecProjection
 
     public static object Catalog(SpecCatalog c) => new
     {
-        packs = c.Packs.Select(p => new { p.Id, p.Version, p.Description, p.Enabled, p.Required }),
+        packs = c.Packs.Select(p => new { p.Id, p.Version, p.Description, p.Enabled, p.Required, p.LatestVersion, p.Pinned, p.UpdateAvailable }),
         topics = c.Topics.Select(Topic),
         profiles = c.Profiles.Select(Profile),
         problems = c.Problems.Select(p => new { p.Source, issues = p.Issues.Select(i => new { i.Path, i.Message }) }),
@@ -64,6 +64,22 @@ public static class SpecProjection
             o.Reasons,
         }),
     };
+
+    public static object Upgrades(IReadOnlyList<PackUpgradeView> upgrades) =>
+        upgrades.Select(u => new
+        {
+            pack = u.Diff.PackId,
+            from = u.Diff.From,
+            to = u.Diff.To,
+            topicsAdded = u.Diff.TopicsAdded,
+            topicsRemoved = u.Diff.TopicsRemoved,
+            choiceChanges = u.Diff.ChoiceChanges.Select(c => new { c.Topic, c.Choice, c.Change }),
+            defaultChanges = u.Diff.DefaultChanges.Select(d => new { d.Topic, d.From, d.To }),
+            decisionChanges = u.Diff.DecisionChanges.Select(d => new { d.Topic, d.FromChoice, d.ToChoice, d.LockChanged }),
+            profilesAdded = u.Diff.ProfilesAdded,
+            profilesRemoved = u.Diff.ProfilesRemoved,
+            affectedDecisions = u.AffectedDecisions,
+        });
 
     public static object OpenTopics(IReadOnlyList<OpenTopicView> topics) =>
         topics.Select(t => new { topic = Topic(t.Topic), t.Default, t.DependedOnBy });

@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { AccessPage } from './pages/AccessPage';
+import { CatalogPage } from './pages/CatalogPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { CoordinationPage } from './pages/CoordinationPage';
 import { DocumentsPage } from './pages/DocumentsPage';
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="specifications" element={<SpecificationsPage />} />
+            <Route path="catalog" element={<CatalogPage />} />
             <Route path="relations" element={<RelationsPage />} />
             <Route path="work" element={<WorkPage />} />
             <Route path="activity" element={<ActivityPage />} />

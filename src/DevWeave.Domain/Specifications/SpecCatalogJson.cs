@@ -55,7 +55,12 @@ public static class SpecCatalogJson
         return new SpecChoice(Str(e, "id"), parameters, OptStr(e, "label"), support, source);
     }
 
-    public static SpecProfile ReadProfile(JsonElement e, string source)
+    public static SpecProfile ReadProfile(JsonElement e, string source) =>
+        new(
+            Str(e, "id"), OptStr(e, "label") ?? Str(e, "id"), OptStr(e, "description") ?? string.Empty,
+            OptStr(e, "projectType") ?? "general", ReadDecisions(e), source);
+
+    public static IReadOnlyList<SpecProfileDecision> ReadDecisions(JsonElement e)
     {
         var decisions = new List<SpecProfileDecision>();
         foreach (var d in Array(e, "decisions"))
@@ -70,9 +75,7 @@ public static class SpecCatalogJson
             decisions.Add(new SpecProfileDecision(Str(d, "topic"), Str(d, "choice"), parameters));
         }
 
-        return new SpecProfile(
-            Str(e, "id"), OptStr(e, "label") ?? Str(e, "id"), OptStr(e, "description") ?? string.Empty,
-            OptStr(e, "projectType") ?? "general", decisions, source);
+        return decisions;
     }
 
     public static IEnumerable<JsonElement> Array(JsonElement e, string name) =>

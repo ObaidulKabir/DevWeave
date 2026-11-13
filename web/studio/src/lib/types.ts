@@ -289,3 +289,44 @@ export interface SpecEffective {
   incompatibilities: { path: string; message: string }[];
   undecidedTopics: string[];
 }
+
+export interface SpecPackStatus {
+  id: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  required: boolean;
+  latestVersion: string;
+  pinned: boolean;
+  updateAvailable: boolean;
+}
+
+export interface SpecProfile {
+  id: string;
+  label: string;
+  description: string;
+  projectType: string;
+  source: string;
+  decisions: { topic: string; choice: string; params: Record<string, string> }[];
+}
+
+export interface SpecCatalog {
+  packs: SpecPackStatus[];
+  topics: SpecTopic[];
+  profiles: SpecProfile[];
+  problems: { source: string; issues: { path: string; message: string }[] }[];
+}
+
+export interface SpecUpgrade {
+  pack: string;
+  from: string;
+  to: string;
+  topicsAdded: string[];
+  topicsRemoved: string[];
+  choiceChanges: { topic: string; choice: string; change: string }[];
+  defaultChanges: { topic: string; from?: string | null; to?: string | null }[];
+  decisionChanges: { topic: string; fromChoice?: string | null; toChoice?: string | null; lockChanged: boolean }[];
+  profilesAdded: string[];
+  profilesRemoved: string[];
+  affectedDecisions: string[];
+}

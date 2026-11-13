@@ -144,6 +144,7 @@ public static class DependencyInjection
         services.AddScoped<IParticipationScheduler>(sp => sp.GetRequiredService<CoordinationService>());
         services.AddScoped<IIntegrationQueue>(sp => sp.GetRequiredService<CoordinationService>());
         services.AddScoped<IKillSwitchAuthority>(sp => sp.GetRequiredService<CoordinationService>());
+        services.AddScoped<IWorkStatusReader>(sp => sp.GetRequiredService<CoordinationService>());
         services.AddScoped<CoordinationService>();
 
         services.AddScoped<IPlanCatalogue>(sp => sp.GetRequiredService<CommercialService>());

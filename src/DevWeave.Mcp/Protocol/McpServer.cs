@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
@@ -20,6 +21,9 @@ public sealed class McpServer
     private readonly ILeaseAuthority _leases;
     private readonly IPlanBaselines _baselines;
     private readonly IParticipationScheduler _scheduler;
+    private readonly ICodebaseRegistry _codebases;
+    private readonly IIntegrationQueue _integration;
+    private readonly IWorkStatusReader _status;
     private readonly PlanDesignService _planning;
     private readonly SpecificationService _specs;
     private readonly ILogger<McpServer> _logger;
@@ -33,6 +37,9 @@ public sealed class McpServer
         ILeaseAuthority leases,
         IPlanBaselines baselines,
         IParticipationScheduler scheduler,
+        ICodebaseRegistry codebases,
+        IIntegrationQueue integration,
+        IWorkStatusReader status,
         PlanDesignService planning,
         SpecificationService specs,
         ILogger<McpServer> logger)
@@ -42,6 +49,9 @@ public sealed class McpServer
         _leases = leases;
         _baselines = baselines;
         _scheduler = scheduler;
+        _codebases = codebases;
+        _integration = integration;
+        _status = status;
         _planning = planning;
         _specs = specs;
         _logger = logger;
@@ -67,6 +77,11 @@ public sealed class McpServer
             };
 
             return new JsonRpcResponse("2.0", request.Id, result, null);
+        }
+        catch (Exception ex) when (DescribeError(ex) is { } known)
+        {
+            _logger.LogInformation("MCP request {Method} refused: {Kind}", request.Method, known.Data);
+            return new JsonRpcResponse("2.0", request.Id, null, known);
         }
         catch (Exception ex)
         {
@@ -116,7 +131,35 @@ public sealed class McpServer
             Tool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
                 new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
                 new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
-            Tool("list_ready_work", "Create a work package under a campaign baseline (scheduler input). Declare what it implements (approved knowledge revisions from that baseline, work items, specification topics) so plan changes can be traced to it",
+            Tool("get_plan_status", "Current plan version and every campaign with the plan version it runs on. Call at start-up and whenever a request is refused",
+                new { }, Array.Empty<string>()),
+            Tool("list_work_packages", "List a campaign's work packages with status, declared scope and whether each can still progress (and why not)",
+                new { campaignId = UuidProp() }, new[] { "campaignId" }),
+            Tool("get_work_status", "Check whether one work package can still progress, and the reason if it cannot (for example a newer plan version was locked)",
+                new { workPackageId = UuidProp() }, new[] { "workPackageId" }),
+            Tool("create_work_package", "Create a work package under a campaign's plan version. Declare what it implements (approved knowledge revisions from that version, work items, specification topics) so plan changes can be traced to it",
+                new
+                {
+                    campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
+                    implementsRevisionIds = new { type = "array", items = UuidProp() },
+                    workItemIds = new { type = "array", items = UuidProp() },
+                    specTopics = new { type = "array", items = StringProp() },
+                },
+                new[] { "campaignId", "baselineId", "objective" }),
+            Tool("release_lease", "Release a lease you hold. Always allowed, including after the plan changed",
+                new { leaseId = UuidProp(), expectedFence = new { type = "integer" } },
+                new[] { "leaseId", "expectedFence" }),
+            Tool("submit_change_set", "Record a change set (repository reference only, never source) for an open work package",
+                new
+                {
+                    workPackageId = UuidProp(), codebaseTargetId = UuidProp(), providerRef = StringProp(),
+                    commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
+                },
+                new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
+            Tool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged",
+                new { changeSetId = UuidProp(), idempotencyKey = StringProp() },
+                new[] { "changeSetId", "idempotencyKey" }),
+            Tool("list_ready_work", "Deprecated alias of create_work_package: despite its name it creates a package. Use create_work_package",
                 new
                 {
                     campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
@@ -179,7 +222,17 @@ public sealed class McpServer
             "register_runtime" => await RegisterRuntimeFromArgsAsync(scope, args, ct),
             "heartbeat_lease" => await RenewLeaseFromArgsAsync(scope, args, ct),
             "request_assignment" => await AcquireLeaseFromArgsAsync(scope, runtimeId, args, ct),
-            "list_ready_work" => await CreatePackageFromArgsAsync(scope, args, ct),
+            "list_ready_work" or "create_work_package" => await CreatePackageFromArgsAsync(scope, args, ct),
+            "get_plan_status" => await _status.GetPlanStatusAsync(scope, ct),
+            "list_work_packages" => await _status.ListWorkPackagesAsync(scope, args.GetProperty("campaignId").GetGuid(), ct),
+            "get_work_status" => await _status.GetWorkStatusAsync(scope, args.GetProperty("workPackageId").GetGuid(), ct),
+            "release_lease" => await ReleaseLeaseFromArgsAsync(scope, args, ct),
+            "submit_change_set" => await SubmitChangeSetFromArgsAsync(scope, args, ct),
+            "request_integration" => new
+            {
+                queueItemId = await _integration.EnqueueAsync(scope, args.GetProperty("changeSetId").GetGuid(),
+                    args.GetProperty("idempotencyKey").GetString()!, ct),
+            },
             "get_plan_baseline" => await DescribeBaselineFromArgsAsync(scope, args, ct),
             "read_plan_outline" => PlanDesignProjection.Outline(
                 await _planning.ReadAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
@@ -333,6 +386,46 @@ public sealed class McpServer
         var id = await _runtimeRegistry.RegisterAsync(scope, registration, ct);
         return new { id };
     }
+
+    private async Task<object> ReleaseLeaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        await _leases.ReleaseAsync(scope, args.GetProperty("leaseId").GetGuid(), args.GetProperty("expectedFence").GetInt64(), ct);
+        return new { released = true };
+    }
+
+    private async Task<object> SubmitChangeSetFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var paths = args.TryGetProperty("changedPaths", out var p) && p.ValueKind == JsonValueKind.Array
+            ? p.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToArray()
+            : Array.Empty<string>();
+        var id = await _codebases.RecordChangeSetAsync(scope, new ChangeSetDraft(
+            args.GetProperty("workPackageId").GetGuid(),
+            args.GetProperty("codebaseTargetId").GetGuid(),
+            args.GetProperty("providerRef").GetString()!,
+            args.GetProperty("commitSha").GetString()!,
+            paths), ct);
+        return new { changeSetId = id };
+    }
+
+    /// <summary>
+    /// Maps expected refusals to stable JSON-RPC codes so agents can react without parsing text:
+    /// -32004 not found, -32009 conflict (for example the plan moved on), -32003 forbidden,
+    /// -32602 invalid arguments (with issues when available).
+    /// </summary>
+    private static JsonRpcError? DescribeError(Exception ex) => ex switch
+    {
+        NotFoundException => new JsonRpcError(-32004, ex.Message, new { kind = "not-found" }),
+        ConflictException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
+        UnauthorizedTenantException => new JsonRpcError(-32003, ex.Message, new { kind = "forbidden" }),
+        SpecDecisionRejectedException rejected => new JsonRpcError(-32602, ex.Message,
+            new { kind = "invalid", issues = rejected.Issues.Select(i => new { i.Path, i.Message }) }),
+        PayloadValidationException => new JsonRpcError(-32602, ex.Message, new { kind = "invalid" }),
+        ProhibitedContentException => new JsonRpcError(-32602, ex.Message, new { kind = "prohibited-content" }),
+        InvalidOperationException when ex.Message.StartsWith("Unknown tool", StringComparison.Ordinal)
+            => new JsonRpcError(-32601, ex.Message, new { kind = "unknown-tool" }),
+        ArgumentException or KeyNotFoundException or FormatException => new JsonRpcError(-32602, ex.Message, new { kind = "invalid" }),
+        _ => null,
+    };
 
     private async Task<object> RenewLeaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
     {

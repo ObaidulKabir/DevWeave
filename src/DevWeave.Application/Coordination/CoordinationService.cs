@@ -23,7 +23,8 @@ public sealed class CoordinationService :
     IProjectMcpDirectory,
     IParticipationScheduler,
     IIntegrationQueue,
-    IKillSwitchAuthority
+    IKillSwitchAuthority,
+    IWorkStatusReader
 {
     private readonly ICoordinationRepository _repository;
     private readonly IUnitOfWork _uow;
@@ -778,6 +779,72 @@ public sealed class CoordinationService :
     public async Task<bool> IsKilledAsync(AuthorizedScope scope, KillSwitchTargetType type, Guid targetId, CancellationToken ct = default)
     {
         return await _repository.IsTargetKilledAsync(scope.TenantId, type, targetId, ct);
+    }
+
+    // --- IWorkStatusReader ---
+
+    public async Task<PlanStatusView> GetPlanStatusAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        var baselines = await _repository.ListBaselinesByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        var current = baselines.FirstOrDefault();
+        var versions = baselines.ToDictionary(b => b.Id.Value, b => b.ExpectedPlanVersion);
+        var campaigns = await _repository.ListCampaignsByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        return new PlanStatusView(
+            current?.ExpectedPlanVersion ?? 0,
+            current?.Id.Value,
+            current?.CreatedAt,
+            campaigns.Select(c => new CampaignStatusView(
+                c.Id.Value,
+                c.BaselineId,
+                versions.GetValueOrDefault(c.BaselineId),
+                current is not null && c.BaselineId == current.Id.Value,
+                c.Status.ToString(),
+                c.Objective)).ToArray());
+    }
+
+    public async Task<IReadOnlyList<WorkPackageStatusView>> ListWorkPackagesAsync(AuthorizedScope scope, Guid campaignId,
+        CancellationToken ct = default)
+    {
+        var campaign = await _repository.GetCampaignByIdAsync(scope.TenantId, new CampaignId(campaignId), ct);
+        if (campaign is null || campaign.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Campaign was not found within this project.");
+        var packages = await _repository.ListWorkPackagesByCampaignAsync(scope.TenantId, campaign.Id, ct);
+        var views = new List<WorkPackageStatusView>();
+        foreach (var package in packages)
+            views.Add(await DescribeWorkAsync(scope, package, ct));
+        return views;
+    }
+
+    public async Task<WorkPackageStatusView> GetWorkStatusAsync(AuthorizedScope scope, Guid workPackageId,
+        CancellationToken ct = default)
+    {
+        var package = await _repository.GetWorkPackageByIdAsync(scope.TenantId, new WorkPackageId(workPackageId), ct);
+        if (package is null || package.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Work package was not found within this project.");
+        return await DescribeWorkAsync(scope, package, ct);
+    }
+
+    private async Task<WorkPackageStatusView> DescribeWorkAsync(AuthorizedScope scope, WorkPackage package, CancellationToken ct)
+    {
+        var baselines = await _repository.ListBaselinesByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        var current = baselines.FirstOrDefault();
+        var version = baselines.FirstOrDefault(b => b.Id.Value == package.BaselineId)?.ExpectedPlanVersion ?? 0;
+        var blocked = await DescribeBlockedPackageAsync(scope, package, ct);
+        return new WorkPackageStatusView(
+            package.Id.Value,
+            package.CampaignId.Value,
+            package.BaselineId,
+            version,
+            current is not null && package.BaselineId == current.Id.Value,
+            package.Key,
+            package.Objective,
+            package.Status.ToString(),
+            blocked is null,
+            blocked,
+            package.ScopeRevisionIds,
+            package.ScopeWorkItemIds,
+            package.ScopeSpecTopics,
+            package.IsUnscoped);
     }
 
     // --- Plan-change enforcement ---

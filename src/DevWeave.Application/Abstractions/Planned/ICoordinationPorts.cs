@@ -140,3 +140,46 @@ public interface ICoordinationEvents
     Task<Page<CoordinationEventView>> ReplayAsync(AuthorizedScope scope, Guid campaignId,
         long afterSequence, int limit, CancellationToken ct = default);
 }
+
+/// <summary>
+/// Read-only execution status for agents and Studio: which plan version is current, and whether a given
+/// piece of work may still progress (and if not, why). Agents call this after any refusal or plan notice.
+/// </summary>
+public interface IWorkStatusReader
+{
+    Task<PlanStatusView> GetPlanStatusAsync(AuthorizedScope scope, CancellationToken ct = default);
+    Task<IReadOnlyList<WorkPackageStatusView>> ListWorkPackagesAsync(AuthorizedScope scope, Guid campaignId,
+        CancellationToken ct = default);
+    Task<WorkPackageStatusView> GetWorkStatusAsync(AuthorizedScope scope, Guid workPackageId,
+        CancellationToken ct = default);
+}
+
+public sealed record PlanStatusView(
+    int CurrentPlanVersion,
+    Guid? CurrentBaselineId,
+    DateTimeOffset? LockedAt,
+    IReadOnlyList<CampaignStatusView> Campaigns);
+
+public sealed record CampaignStatusView(
+    Guid Id,
+    Guid BaselineId,
+    int PlanVersion,
+    bool OnCurrentPlan,
+    string Status,
+    string Objective);
+
+public sealed record WorkPackageStatusView(
+    Guid Id,
+    Guid CampaignId,
+    Guid BaselineId,
+    int PlanVersion,
+    bool OnCurrentPlan,
+    string Key,
+    string Objective,
+    string Status,
+    bool CanProgress,
+    string? BlockedReason,
+    IReadOnlyList<Guid> ImplementsRevisionIds,
+    IReadOnlyList<Guid> WorkItemIds,
+    IReadOnlyList<string> SpecTopics,
+    bool Unscoped);

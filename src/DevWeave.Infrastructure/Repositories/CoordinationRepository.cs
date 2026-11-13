@@ -190,6 +190,15 @@ public sealed class CoordinationRepository : ICoordinationRepository
             .FirstOrDefaultAsync(b => b.TenantId == tenantId && b.Id == id, ct);
     }
 
+    public async Task<List<PlanBaseline>> ListBaselinesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default)
+    {
+        return await _context.PlanBaselines
+            .Where(b => b.TenantId == tenantId && b.ProjectId == projectId)
+            .OrderByDescending(b => b.ExpectedPlanVersion)
+            .ThenByDescending(b => b.CreatedAt)
+            .ToListAsync(ct);
+    }
+
     // Codebase Targets
     public async Task AddCodebaseTargetAsync(CodebaseTarget target, CancellationToken ct = default)
     {

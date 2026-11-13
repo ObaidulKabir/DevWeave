@@ -1,5 +1,6 @@
 using System.Text;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Schema;
@@ -14,6 +15,7 @@ public sealed class AddRevision
     private readonly ISchemaDefinitionRepository _schemas;
     private readonly IPayloadValidator _payloadValidator;
     private readonly IContentInspector _inspector;
+    private readonly IProjectMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
 
     public AddRevision(
@@ -23,8 +25,10 @@ public sealed class AddRevision
         ISchemaDefinitionRepository schemas,
         IPayloadValidator payloadValidator,
         IContentInspector inspector,
+        IProjectMembershipRepository memberships,
         IUnitOfWork unitOfWork)
     {
+        _memberships = memberships;
         _items = items;
         _revisions = revisions;
         _principals = principals;
@@ -52,6 +56,9 @@ public sealed class AddRevision
         // Deny-by-default: provenance actor must resolve inside the tenant (KNW-013, REV-002).
         var principal = await _principals.GetByIdAsync(tenantId, actor, ct)
             ?? throw new NotFoundException($"Principal '{actor}' was not found within tenant '{tenantId}'.");
+
+        // Only active project members who can edit (not Viewers) may revise the project's knowledge.
+        await ProjectWorkAuthorization.EnsureMemberAsync(_memberships, tenantId, item.ProjectId, actor, reviewerOnly: false, ct);
 
         // SRS 7.3 / REV-002: the item pins its (TypeId, SchemaVersion) immutably, so a revision's schema
         // version is derived, not caller-chosen. A caller-supplied version that disagrees is rejected so

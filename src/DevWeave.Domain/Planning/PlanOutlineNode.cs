@@ -35,4 +35,24 @@ public sealed class PlanOutlineNode
             Position = position, CreatedBy = actor, CreatedAt = DateTimeOffset.UtcNow,
         };
     }
+
+    /// <summary>
+    /// Moves this node under a different outline parent. The project root cannot be moved.
+    /// Cycle prevention is the caller's responsibility.
+    /// </summary>
+    public void Reparent(KnowledgeItemId newParentId, KnowledgeItemId rootItemId, int position)
+    {
+        if (ParentItemId is null)
+            throw new InvalidOperationException("The outline root cannot be moved.");
+        if (position < 0)
+            throw new ArgumentException("Outline position must be nonnegative.", nameof(position));
+        if (newParentId == ItemId)
+            throw new ArgumentException("An item cannot parent itself.", nameof(newParentId));
+        if (rootItemId == ItemId)
+            throw new ArgumentException("A child cannot identify itself as the root.", nameof(rootItemId));
+
+        ParentItemId = newParentId;
+        RootItemId = rootItemId;
+        Position = position;
+    }
 }

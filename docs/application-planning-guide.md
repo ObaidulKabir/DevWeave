@@ -14,7 +14,7 @@ There is a fourth, distinct execution concept: a **WorkPackage** belongs to a co
 
 ## From an idea to an outline
 
-The **Plan outline** is structural decomposition, not a semantic Relation. Start with one Knowledge item describing the application outcome; add its schema-valid first revision, then attach it as the project's root. Attach revised modules, requirements, decisions, and acceptance criteria below a parent item. Each Knowledge item can be attached once, every child has exactly one parent, and this initial append-only outline does not support moving or deleting nodes. A project has at most one root; unplaced Knowledge items remain valid and can be attached later. New Knowledge revisions do not silently change the outline or the Work links.
+The **Plan outline** is structural decomposition, not a semantic Relation. Start with one Knowledge item describing the application outcome; add its schema-valid first revision, then attach it as the project's root. Attach revised modules, requirements, decisions, and acceptance criteria below a parent item. Each Knowledge item can be attached once and every child has exactly one parent. Non-root items can be **moved** (reparented; the subtree moves with them) or **detached** when they have no children. The root cannot be moved or detached. A project has at most one root; unplaced Knowledge items remain valid and can be attached later. New Knowledge revisions do not silently change the outline or the Work links. Moves and detaches are audited and do not rewrite locked PlanBaselines.
 
 **Plan Work links** connect a WorkItem to the exact immutable, *current and human-reviewed* Knowledge revision used to justify it. A new Knowledge revision makes an older link historically accurate but potentially stale: review the change and explicitly pin a new link. Do not treat an outline edge as evidence that a semantic relation or delivery dependency exists.
 
@@ -32,21 +32,28 @@ An agent with an active project membership, credential, and approved `ReadKnowle
 
 ### Example: TaskBoard Lite
 
-Goal: "A signed-in user can create and list their own tasks."
+Goal (v1): "A signed-in user can create and list their own tasks."  
+Goal (v2): same outcome plus "unauthenticated requests are rejected."
 
 | Element | Illustrative plan entry |
 | --- | --- |
-| Knowledge K-01 | Goal (outline **root**): users manage personal tasks. |
+| Knowledge K-01 | Goal (outline **root**): users manage personal tasks. Item **description** states the application outcome. |
 | Knowledge K-API | Module under K-01: Personal tasks API (create/list; no UI/sharing). |
 | Knowledge K-02 | Requirement under K-API: create a task with a title; reject empty title. |
-| Knowledge K-03 | Requirement under K-API: list only the authenticated user's tasks. |
+| Knowledge K-03 | Requirement under K-API: list only the authenticated user's tasks (r2 also ties isolation to the auth gate). |
 | Knowledge K-04 | Decision under K-API: persist tasks in PostgreSQL with owner identity. |
-| Knowledge K-05 | Constraint under K-01: no source/secrets in DevWeave; store refs only. |
-| Outline | `K-01 → K-API → {K-02, K-03, K-04}` and `K-01 → K-05`. Structural parent/child only. |
-| Relation | K-04 `supports` K-03 (**semantic** edge; only if `supports` is registered). Not implied by the outline. |
+| Knowledge K-05 | Constraint: no source/secrets in DevWeave; store refs only. **Moved** under K-API in v2 (was under K-01 in v1). |
+| Knowledge K-AUTH | Module under K-01 (v2): Authentication gate before create/list. |
+| Knowledge K-06 | Requirement under K-AUTH: reject unauthenticated create/list with 401. |
+| Knowledge K-07 | Decision under K-AUTH: validate JWT bearer tokens at the API edge. |
+| Knowledge K-DRAFT | Deferred shared-lists idea: attached then **detached** — remains Knowledge, not on the outline. |
+| Outline (v2) | `K-01 → K-API → {K-02, K-03, K-04, K-05}` and `K-01 → K-AUTH → {K-06, K-07}`. Structural parent/child only. |
+| Relation | K-04 `supports` K-03; K-07 `supports` K-06 (**semantic** edges). Not implied by the outline. |
 | Milestone M-01 | TaskBoard MVP: create, list, and isolate tasks. |
 | Work W-01 | Implement create-task API; **Plan Work link** pins K-02's reviewed current revision. |
-| Work W-02 | Implement user-scoped list API; depends on W-01; **Plan Work links** pin K-03 and K-04 revisions. |
+| Work W-02 | Implement user-scoped list API; depends on W-01; links pin K-03 and K-04 (r1 link on K-03 stays historically accurate after r2). |
+| Work W-03 | Enforce JWT auth on create/list; depends on W-01/W-02; links pin K-06 and K-07. |
+| PlanBaseline | Bootstrap locks **v1**, evolves the living plan (move/detach/add/revise), then locks **v2** (OD-07 suspends the prior campaign) and starts a new campaign on v2. |
 
 The table is a **planning example**. The pilot bootstrap (`scripts/pilot/bootstrap.ps1`) materializes this shape after registering/publishing the schemas and the `supports` relation type.
 

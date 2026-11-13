@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Domain.Agents;
+using DevWeave.Domain.Audit;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
@@ -26,6 +27,7 @@ public sealed class PlanDesignService(
     IAgentGrantRepository grants,
     IAgentCredentialRepository credentials,
     IContentInspector inspector,
+    IAuditRepository audit,
     IUnitOfWork uow)
 {
     public async Task<PlanOutlineView> ReadAsync(TenantId tenant, ProjectId project, PrincipalId actor,
@@ -102,6 +104,98 @@ public sealed class PlanDesignService(
         return node;
     }
 
+    public async Task<PlanOutlineNode> MoveAsync(TenantId tenant, ProjectId project, PrincipalId actor,
+        KnowledgeItemId itemId, KnowledgeItemId newParentId, int position, CancellationToken ct = default)
+    {
+        await EnsureHumanWriterAsync(tenant, project, actor, ct);
+        var node = await plans.GetNodeAsync(tenant, project, itemId, ct)
+            ?? throw new NotFoundException("Outline item was not found.");
+        if (node.ParentItemId is null)
+            throw new ConflictException("The outline root cannot be moved.");
+
+        var nodes = await plans.ListNodesAsync(tenant, project, ct);
+        var root = nodes.SingleOrDefault(n => n.ParentItemId is null)
+            ?? throw new ConflictException("Outline has no root.");
+        var newParent = await plans.GetNodeAsync(tenant, project, newParentId, ct)
+            ?? throw new NotFoundException("New parent is not in this project's outline.");
+        if (newParent.RootItemId != root.ItemId)
+            throw new ConflictException("New parent is not connected to the project root.");
+        if (WouldCreateCycle(nodes, itemId, newParentId))
+            throw new ConflictException("Cannot move an item under one of its descendants.");
+
+        var previousParent = node.ParentItemId;
+        node.Reparent(newParentId, root.ItemId, position);
+        await audit.AddAsync(
+            AuditRecord.Record(
+                tenant,
+                actor,
+                "plan.outline.moved",
+                "PlanOutlineNode",
+                itemId.Value.ToString(),
+                JsonSerializer.Serialize(new
+                {
+                    projectId = project.Value,
+                    itemId = itemId.Value,
+                    previousParentId = previousParent?.Value,
+                    newParentId = newParentId.Value,
+                    position,
+                }),
+                correlationId: null),
+            ct);
+        await uow.SaveChangesAsync(ct);
+        return node;
+    }
+
+    public async Task DetachAsync(TenantId tenant, ProjectId project, PrincipalId actor,
+        KnowledgeItemId itemId, CancellationToken ct = default)
+    {
+        await EnsureHumanWriterAsync(tenant, project, actor, ct);
+        var node = await plans.GetNodeAsync(tenant, project, itemId, ct)
+            ?? throw new NotFoundException("Outline item was not found.");
+        if (node.ParentItemId is null)
+            throw new ConflictException("The outline root cannot be detached. Attach a different root only after removing the whole outline.");
+        var nodes = await plans.ListNodesAsync(tenant, project, ct);
+        if (nodes.Any(n => n.ParentItemId == itemId))
+            throw new ConflictException("Detach children first, or move them under another parent.");
+        if ((await plans.ListLinksAsync(tenant, project, ct)).Any(l => l.KnowledgeItemId == itemId))
+            throw new ConflictException("Work is still linked to this item. Remove or move those work links before detaching it.");
+
+        var previousParent = node.ParentItemId;
+        await plans.RemoveNodeAsync(node, ct);
+        await audit.AddAsync(
+            AuditRecord.Record(
+                tenant,
+                actor,
+                "plan.outline.detached",
+                "PlanOutlineNode",
+                itemId.Value.ToString(),
+                JsonSerializer.Serialize(new
+                {
+                    projectId = project.Value,
+                    itemId = itemId.Value,
+                    previousParentId = previousParent?.Value,
+                }),
+                correlationId: null),
+            ct);
+        await uow.SaveChangesAsync(ct);
+    }
+
+    private static bool WouldCreateCycle(
+        IReadOnlyList<PlanOutlineNode> nodes,
+        KnowledgeItemId movingId,
+        KnowledgeItemId newParentId)
+    {
+        var parentByItem = nodes.ToDictionary(n => n.ItemId, n => n.ParentItemId);
+        KnowledgeItemId? cursor = newParentId;
+        while (cursor is not null)
+        {
+            if (cursor == movingId)
+                return true;
+            parentByItem.TryGetValue(cursor, out cursor);
+        }
+        return false;
+    }
+
     public async Task<PlanWorkLink> LinkAsync(TenantId tenant, ProjectId project, PrincipalId actor,
         WorkItemId workId, KnowledgeItemId itemId, KnowledgeRevisionId revisionId, CancellationToken ct = default)
     {
@@ -116,12 +210,72 @@ public sealed class PlanDesignService(
             throw new ConflictException("Work links require the current human-reviewed Knowledge revision.");
         if (await plans.GetNodeAsync(tenant, project, itemId, ct) is null)
             throw new ConflictException("Knowledge item must belong to the project outline.");
-        if ((await plans.ListLinksAsync(tenant, project, ct)).Any(l => l.WorkItemId == workId && l.RevisionId == revisionId))
+        var existing = (await plans.ListLinksAsync(tenant, project, ct))
+            .Where(l => l.WorkItemId == workId && l.KnowledgeItemId == itemId)
+            .ToList();
+        if (existing.Any(l => l.RevisionId == revisionId))
             throw new ConflictException("This revision is already linked to the work item.");
+
+        // Linking a newer revision re-pins the work item: the older pins are replaced, so a revised item
+        // stops reporting stale links once someone has looked at the change and re-pinned.
+        foreach (var old in existing)
+            await plans.RemoveLinkAsync(old, ct);
+
         var link = PlanWorkLink.Create(tenant, project, workId, itemId, revisionId, actor);
         await plans.AddLinkAsync(link, ct);
+        await audit.AddAsync(
+            AuditRecord.Record(
+                tenant,
+                actor,
+                existing.Count == 0 ? "plan.work-link.created" : "plan.work-link.repinned",
+                "PlanWorkLink",
+                link.Id.Value.ToString(),
+                JsonSerializer.Serialize(new
+                {
+                    projectId = project.Value,
+                    workItemId = workId.Value,
+                    knowledgeItemId = itemId.Value,
+                    revisionId = revisionId.Value,
+                    replacedRevisionIds = existing.Select(l => l.RevisionId.Value).ToArray(),
+                }),
+                correlationId: null),
+            ct);
         await uow.SaveChangesAsync(ct);
         return link;
+    }
+
+    /// <summary>Removes every link between a work item and a knowledge item, with an audit record.</summary>
+    public async Task<int> UnlinkAsync(TenantId tenant, ProjectId project, PrincipalId actor,
+        WorkItemId workId, KnowledgeItemId itemId, CancellationToken ct = default)
+    {
+        await EnsureHumanWriterAsync(tenant, project, actor, ct);
+        var links = (await plans.ListLinksAsync(tenant, project, ct))
+            .Where(l => l.WorkItemId == workId && l.KnowledgeItemId == itemId)
+            .ToList();
+        if (links.Count == 0)
+            throw new NotFoundException("This work item is not linked to that Knowledge item.");
+
+        foreach (var link in links)
+            await plans.RemoveLinkAsync(link, ct);
+
+        await audit.AddAsync(
+            AuditRecord.Record(
+                tenant,
+                actor,
+                "plan.work-link.removed",
+                "PlanWorkLink",
+                $"{workId.Value}:{itemId.Value}",
+                JsonSerializer.Serialize(new
+                {
+                    projectId = project.Value,
+                    workItemId = workId.Value,
+                    knowledgeItemId = itemId.Value,
+                    revisionIds = links.Select(l => l.RevisionId.Value).ToArray(),
+                }),
+                correlationId: null),
+            ct);
+        await uow.SaveChangesAsync(ct);
+        return links.Count;
     }
 
     public async Task<PlanExpansionProposal> ProposeAsync(TenantId tenant, ProjectId project, PrincipalId actor,
@@ -194,7 +348,7 @@ public sealed class PlanDesignService(
     {
         var (principal, _) = await AuthorizeAsync(tenant, project, actor, write: true, review: false, ct);
         if (principal.Type != PrincipalType.Human)
-            throw new UnauthorizedTenantException("Only humans can attach Knowledge or pin Work revisions.");
+            throw new UnauthorizedTenantException("Only humans can change the plan outline or pin Work revisions.");
     }
 
     private async Task<(Principal Principal, Classification Ceiling)> AuthorizeAsync(TenantId tenant, ProjectId project,

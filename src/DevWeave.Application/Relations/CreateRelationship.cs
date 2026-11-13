@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -18,14 +19,17 @@ public sealed class CreateRelationship
     private readonly IRelationshipRepository _relationships;
     private readonly IRelationTypeRepository _relationTypes;
     private readonly IKnowledgeItemRepository _items;
+    private readonly IProjectMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
 
     public CreateRelationship(
         IRelationshipRepository relationships,
         IRelationTypeRepository relationTypes,
         IKnowledgeItemRepository items,
+        IProjectMembershipRepository memberships,
         IUnitOfWork unitOfWork)
     {
+        _memberships = memberships;
         _relationships = relationships;
         _relationTypes = relationTypes;
         _items = items;
@@ -41,6 +45,9 @@ public sealed class CreateRelationship
         PrincipalId createdBy,
         CancellationToken ct = default)
     {
+        // Only active project members who can edit (not Viewers) may change the plan's structure.
+        await ProjectWorkAuthorization.EnsureMemberAsync(_memberships, tenantId, projectId, createdBy, reviewerOnly: false, ct);
+
         // BR-007: an unknown relation type is rejected outright.
         var relationType = await _relationTypes.GetByCodeAsync(relationTypeCode, ct)
             ?? throw new RelationTypeMismatchException(

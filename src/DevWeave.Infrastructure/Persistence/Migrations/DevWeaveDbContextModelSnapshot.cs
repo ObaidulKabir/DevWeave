@@ -1035,6 +1035,9 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("TenantId", "ProjectId", "ExpectedPlanVersion")
+                        .IsUnique();
+
                     b.ToTable("plan_baselines", (string)null);
                 });
 

@@ -22,16 +22,22 @@ public static class CoordinationEndpoints
 
         group.MapGet("/baselines/preview", PreviewBaselineAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/baselines", ListBaselinesAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/baselines", LockBaselineAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/baselines/{baselineId:guid}", DescribeBaselineAsync);
+        group.MapPost("/campaigns/suspend-drifted", SuspendDriftedCampaignsAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/codebase-targets", RegisterCodebaseTargetAsync);
         group.MapPost("/change-sets", RecordChangeSetAsync);
 
-        group.MapPost("/campaigns", CreateCampaignAsync);
+        group.MapPost("/campaigns", CreateCampaignAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/campaigns", ListCampaignsAsync);
-        group.MapPost("/campaigns/{campaignId:guid}/transition", TransitionCampaignAsync);
+        group.MapPost("/campaigns/{campaignId:guid}/transition", TransitionCampaignAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/campaigns/{campaignId:guid}/packages", ListPackagesAsync);
 
         group.MapPost("/runtimes", RegisterRuntimeAsync)
@@ -73,14 +79,39 @@ public static class CoordinationEndpoints
         new(new TenantId(tenantId), AuthenticatedPrincipal.GetId(http), new ProjectId(projectId), purpose, http.TraceIdentifier);
 
     private static async Task<IResult> PreviewBaselineAsync(
-        Guid tenantId, Guid projectId, PlanLockReview review, CancellationToken ct)
+        Guid tenantId, Guid projectId, IPlanBaselines baselines, HttpContext http, CancellationToken ct)
     {
-        var preview = await review.PreviewAsync(new TenantId(tenantId), new ProjectId(projectId), ct);
+        var preview = await baselines.PreviewLockAsync(Scope(tenantId, projectId, http, "Preview plan baseline"), ct);
         return Results.Ok(new PlanLockPreviewResponse(
             preview.CanLock,
             preview.Items.Select(i => new PlanLockItemResponse(
                 i.ItemId.Value, i.Key, i.Title, i.TypeId, i.RevisionId.Value, i.RevisionNumber, i.ParentKey)).ToList(),
-            preview.Blockers.Select(b => new PlanLockBlockerResponse(b.Key, b.Reason)).ToList()));
+            preview.Blockers.Select(b => new PlanLockBlockerResponse(b.Key, b.Reason)).ToList(),
+            preview.CurrentPlanVersion,
+            preview.NextPlanVersion,
+            new PlanDriftResponse(
+                preview.Drift.HasDrift,
+                preview.Drift.LastBaselineId,
+                preview.Drift.LastPlanVersion,
+                preview.Drift.AddedKeys,
+                preview.Drift.RemovedKeys,
+                preview.Drift.ChangedKeys,
+                preview.Drift.StaleWorkLinkKeys,
+                preview.Drift.ActiveCampaignIdsOnPriorBaselines)));
+    }
+
+    private static async Task<IResult> ListBaselinesAsync(
+        Guid tenantId, Guid projectId, IPlanBaselines baselines, HttpContext http, CancellationToken ct)
+    {
+        var list = await baselines.ListBaselinesAsync(Scope(tenantId, projectId, http, "List plan baselines"), ct);
+        return Results.Ok(list.Select(b => new
+        {
+            id = b.Id,
+            goal = b.Goal,
+            planVersion = b.PlanVersion,
+            revisionCount = b.RevisionCount,
+            createdAt = b.CreatedAt,
+        }));
     }
 
     private static async Task<IResult> LockBaselineAsync(
@@ -107,6 +138,19 @@ public static class CoordinationEndpoints
             return Results.Ok(manifest);
         }
         catch (NotFoundException) { return Results.NotFound(); }
+    }
+
+    private static async Task<IResult> SuspendDriftedCampaignsAsync(
+        Guid tenantId, Guid projectId, IPlanBaselines baselines, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var suspended = await baselines.SuspendDriftedCampaignsAsync(
+                Scope(tenantId, projectId, http, "Suspend campaigns on prior plan baselines"), ct);
+            return Results.Ok(new { suspended });
+        }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
     private static async Task<IResult> RegisterCodebaseTargetAsync(
@@ -147,6 +191,7 @@ public static class CoordinationEndpoints
             return Results.Created($"/tenants/{tenantId}/projects/{projectId}/coordination/campaigns/{id}", new { id });
         }
         catch (NotFoundException) { return Results.NotFound(); }
+        catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
@@ -263,6 +308,7 @@ public static class CoordinationEndpoints
             return Results.Created($"/tenants/{tenantId}/projects/{projectId}/coordination/packages/{id}", new { id });
         }
         catch (NotFoundException) { return Results.NotFound(); }
+        catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
@@ -456,5 +502,19 @@ public static class CoordinationEndpoints
 public sealed record PlanLockItemResponse(
     Guid ItemId, string Key, string Title, string TypeId, Guid RevisionId, int RevisionNumber, string? ParentKey);
 public sealed record PlanLockBlockerResponse(string Key, string Reason);
+public sealed record PlanDriftResponse(
+    bool HasDrift,
+    Guid? LastBaselineId,
+    int? LastPlanVersion,
+    IReadOnlyList<string> AddedKeys,
+    IReadOnlyList<string> RemovedKeys,
+    IReadOnlyList<string> ChangedKeys,
+    IReadOnlyList<string> StaleWorkLinkKeys,
+    IReadOnlyList<Guid> ActiveCampaignIdsOnPriorBaselines);
 public sealed record PlanLockPreviewResponse(
-    bool CanLock, IReadOnlyList<PlanLockItemResponse> Items, IReadOnlyList<PlanLockBlockerResponse> Blockers);
+    bool CanLock,
+    IReadOnlyList<PlanLockItemResponse> Items,
+    IReadOnlyList<PlanLockBlockerResponse> Blockers,
+    int CurrentPlanVersion,
+    int NextPlanVersion,
+    PlanDriftResponse Drift);

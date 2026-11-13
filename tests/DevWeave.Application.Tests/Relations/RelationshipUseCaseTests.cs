@@ -246,8 +246,9 @@ public sealed class RelationshipUseCaseTests
         var d = await SeedItemAsync(fakes, tenant, project, "doc");
         var relationship = await AddEdgeAsync(fakes, tenant, r, d);
 
-        await new RevokeRelationship(fakes.Relationships, fakes.UnitOfWork)
-            .ExecuteAsync(tenant, relationship.Id);
+        await new RevokeRelationship(fakes.Relationships, fakes.Memberships, fakes.Audit, fakes.UnitOfWork)
+            .ExecuteAsync(tenant, relationship.Id, PrincipalId.New(), "No longer needed");
+        Assert.Single(fakes.Audit.Records);
 
         var traverse = new TraverseRelationships(fakes.Relationships, fakes.Items);
         Assert.Empty((await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 3, 10)).Paths);
@@ -273,7 +274,7 @@ public sealed class RelationshipUseCaseTests
     private static Fakes CreateFakes() => new();
 
     private static CreateRelationship CreateUseCase(Fakes fakes) =>
-        new(fakes.Relationships, fakes.RelationTypes, fakes.Items, fakes.UnitOfWork);
+        new(fakes.Relationships, fakes.RelationTypes, fakes.Items, fakes.Memberships, fakes.UnitOfWork);
 
     private static async Task<RelationType> SeedRelationTypeAsync(
         InMemoryRelationTypeRepository repository,
@@ -327,6 +328,48 @@ public sealed class RelationshipUseCaseTests
         public InMemoryRelationTypeRepository RelationTypes { get; } = new();
         public InMemoryKnowledgeItemRepository Items { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
+        public RecordingAudit Audit { get; } = new();
+        public MemberOfEveryItemProject Memberships => new(Items);
+    }
+
+    /// <summary>These tests are about relation rules, not access: any principal edits any project that has items.</summary>
+    private sealed class MemberOfEveryItemProject(InMemoryKnowledgeItemRepository items) : IProjectMembershipRepository
+    {
+        public Task AddAsync(ProjectMembership membership, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<ProjectMembership?> GetByIdAsync(TenantId tenantId, ProjectMembershipId id, CancellationToken ct = default) =>
+            Task.FromResult<ProjectMembership?>(null);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>([]);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>(items.Items
+                .Where(i => i.TenantId == tenantId)
+                .Select(i => i.ProjectId)
+                .Distinct()
+                .Select(p => ProjectMembership.Grant(tenantId, p, principalId, ProjectRole.Member))
+                .ToList());
+    }
+
+    private sealed class RecordingAudit : IAuditRepository
+    {
+        public List<DevWeave.Domain.Audit.AuditRecord> Records { get; } = [];
+
+        public Task AddAsync(DevWeave.Domain.Audit.AuditRecord record, CancellationToken ct = default)
+        {
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<DevWeave.Domain.Audit.AuditRecord?> GetByIdAsync(TenantId tenantId, DevWeave.Domain.Audit.AuditRecordId id, CancellationToken ct = default) =>
+            Task.FromResult(Records.FirstOrDefault(r => r.Id == id));
+
+        public Task<List<DevWeave.Domain.Audit.AuditRecord>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult(Records.ToList());
+
+        public Task<List<DevWeave.Domain.Audit.AuditRecord>> ListForResourceAsync(TenantId tenantId, string resourceType, string resourceId, CancellationToken ct = default) =>
+            Task.FromResult(Records.Where(r => r.ResourceType == resourceType && r.ResourceId == resourceId).ToList());
     }
 
     private sealed class InMemoryRelationTypeRepository : IRelationTypeRepository

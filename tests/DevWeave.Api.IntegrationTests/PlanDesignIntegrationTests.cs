@@ -54,6 +54,38 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
     }
 
     [Fact]
+    public async Task Outline_move_reparents_and_rejects_cycles_root_and_non_leaves_on_detach()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var design = scope.ServiceProvider.GetRequiredService<PlanDesignService>();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, null, 0);
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Child.Id, seed.Root.Id, 0);
+
+        var sibling = NewItem(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, "sibling");
+        db.Add(sibling);
+        db.Add(NewRevision(sibling, seed.Owner.Id));
+        await db.SaveChangesAsync();
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, sibling.Id, seed.Root.Id, 1);
+
+        var moved = await design.MoveAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Child.Id, sibling.Id, 0);
+        Assert.Equal(sibling.Id, moved.ParentItemId);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            design.MoveAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, sibling.Id, seed.Child.Id, 0));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            design.MoveAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, sibling.Id, 0));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            design.DetachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, sibling.Id));
+
+        await design.DetachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Child.Id);
+        var remaining = await design.ReadAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id);
+        Assert.DoesNotContain(remaining.Nodes, n => n.ItemId == seed.Child.Id);
+    }
+
+    [Fact]
     public async Task Links_require_current_reviewed_revision_and_project_ownership()
     {
         var seed = await SeedAsync();
@@ -251,6 +283,132 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
         var baselineId = await baselines.LockAsync(scopeFor,
             draft with { ApprovedRevisions = new[] { new ResourceRef(seed.Root.Id.Value, seed.Root.CurrentRevisionId!.Value) } });
         Assert.NotEqual(Guid.Empty, baselineId);
+    }
+
+    [Fact]
+    public async Task Only_a_project_owner_or_admin_can_lock_a_baseline_or_suspend_drifted_campaigns()
+    {
+        var seed = await SeedAsync();
+        using (var approval = _factory.Services.CreateScope())
+        {
+            await approval.ServiceProvider.GetRequiredService<PlanDesignService>()
+                .AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, null, 0);
+            var db = approval.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            (await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Root.Id)).Approve(seed.Root.CurrentRevisionId!);
+            await db.SaveChangesAsync();
+        }
+
+        using var scope = _factory.Services.CreateScope();
+        var baselines = scope.ServiceProvider.GetRequiredService<IPlanBaselines>();
+        var editorScope = new AuthorizedScope(seed.Tenant.Id, seed.Editor.Id, seed.Project.Id, "test", "corr");
+        var draft = new BaselineDraft("Goal", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1);
+
+        // A Member (not Owner/Admin) cannot lock the plan or suspend campaigns on a prior baseline.
+        await Assert.ThrowsAsync<NotFoundException>(() => baselines.LockAsync(editorScope, draft));
+        await Assert.ThrowsAsync<NotFoundException>(() => baselines.SuspendDriftedCampaignsAsync(editorScope));
+
+        var ownerScope = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "test", "corr");
+        var baselineId = await baselines.LockAsync(ownerScope, draft);
+        Assert.NotEqual(Guid.Empty, baselineId);
+    }
+
+    [Fact]
+    public async Task Linking_a_newer_revision_repins_the_work_item_and_clears_the_stale_link_and_unlink_removes_it()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var design = scope.ServiceProvider.GetRequiredService<PlanDesignService>();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, null, 0);
+        var item = await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Root.Id);
+        item.Approve(item.CurrentRevisionId!);
+        await db.SaveChangesAsync();
+
+        var firstLink = await design.LinkAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id,
+            seed.Work.Id, seed.Root.Id, item.CurrentRevisionId!);
+
+        // A new revision makes the link stale (reported via BuildDriftAsync, exercised through CoordinationService
+        // in PlanDesignIntegrationTests' baseline test); here we verify re-pinning clears the old link outright.
+        var nextRevision = item.AddRevision("1.0", "{\"summary\":\"Plan v2\"}", seed.Owner.Id, "revised", null, null, item.CurrentRevisionNumber);
+        db.Add(nextRevision);
+        await db.SaveChangesAsync();
+        item.Approve(nextRevision.Id);
+        await db.SaveChangesAsync();
+
+        var repinned = await design.LinkAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id,
+            seed.Work.Id, seed.Root.Id, nextRevision.Id);
+        Assert.NotEqual(firstLink.Id, repinned.Id);
+
+        var linksAfterRepin = await scope.ServiceProvider.GetRequiredService<IPlanDesignRepository>()
+            .ListLinksAsync(seed.Tenant.Id, seed.Project.Id, default);
+        var onlyLink = Assert.Single(linksAfterRepin, l => l.WorkItemId == seed.Work.Id && l.KnowledgeItemId == seed.Root.Id);
+        Assert.Equal(nextRevision.Id, onlyLink.RevisionId);
+
+        var removed = await design.UnlinkAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Work.Id, seed.Root.Id);
+        Assert.Equal(1, removed);
+        var linksAfterUnlink = await scope.ServiceProvider.GetRequiredService<IPlanDesignRepository>()
+            .ListLinksAsync(seed.Tenant.Id, seed.Project.Id, default);
+        Assert.DoesNotContain(linksAfterUnlink, l => l.WorkItemId == seed.Work.Id);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            design.UnlinkAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Work.Id, seed.Root.Id));
+    }
+
+    [Fact]
+    public async Task Drift_report_distinguishes_added_changed_and_removed_items_without_cross_contamination()
+    {
+        var seed = await SeedAsync();
+        using var scope = _factory.Services.CreateScope();
+        var design = scope.ServiceProvider.GetRequiredService<PlanDesignService>();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var baselines = scope.ServiceProvider.GetRequiredService<IPlanBaselines>();
+        var ownerScope = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "test", "corr");
+
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Root.Id, null, 0);
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Child.Id, seed.Root.Id, 0);
+        var root = await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Root.Id);
+        var child = await db.KnowledgeItems.SingleAsync(i => i.Id == seed.Child.Id);
+        root.Approve(root.CurrentRevisionId!);
+        child.Approve(child.CurrentRevisionId!);
+        await db.SaveChangesAsync();
+
+        var baselineId = await baselines.LockAsync(ownerScope,
+            new BaselineDraft("Baseline 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
+
+        // Removed: child is taken out of the outline entirely after being baselined.
+        await design.DetachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, seed.Child.Id);
+
+        // Changed: root gets a new, approved revision.
+        var nextRoot = root.AddRevision("1.0", "{\"summary\":\"v2\"}", seed.Owner.Id, "revised", null, null, root.CurrentRevisionNumber);
+        db.Add(nextRoot);
+        await db.SaveChangesAsync();
+        root.Approve(nextRoot.Id);
+        await db.SaveChangesAsync();
+
+        // Added: a brand-new item, approved and attached to the outline for the first time.
+        var extra = KnowledgeItem.Create(seed.Tenant.Id, seed.Project.Id, $"extra-{Guid.NewGuid():N}", "extra",
+            Classification.Internal, RepresentationKind.Text, "doc.note", "1.0", seed.Owner.Id);
+        var extraRevision = extra.AddRevision("1.0", "{\"summary\":\"new\"}", seed.Owner.Id, "new idea", null, null, 0);
+        db.Add(extra);
+        db.Add(extraRevision);
+        await db.SaveChangesAsync();
+        await design.AttachAsync(seed.Tenant.Id, seed.Project.Id, seed.Owner.Id, extra.Id, root.Id, 0);
+        extra.Approve(extraRevision.Id);
+        await db.SaveChangesAsync();
+
+        var preview = await baselines.PreviewLockAsync(ownerScope);
+
+        Assert.True(preview.Drift.HasDrift);
+        Assert.Equal(baselineId, preview.Drift.LastBaselineId);
+        Assert.Equal(1, preview.Drift.LastPlanVersion);
+        Assert.Equal(new[] { extra.Key }, preview.Drift.AddedKeys);
+        Assert.Equal(new[] { root.Key }, preview.Drift.ChangedKeys);
+        Assert.Equal(new[] { child.Key }, preview.Drift.RemovedKeys);
+
+        // Each item appears in exactly one list; the original bug conflated added/changed and cleared removed.
+        Assert.DoesNotContain(root.Key, preview.Drift.AddedKeys);
+        Assert.DoesNotContain(extra.Key, preview.Drift.ChangedKeys);
+        Assert.DoesNotContain(child.Key, preview.Drift.ChangedKeys);
     }
 
     private async Task<Seed> SeedAsync()

@@ -1,3 +1,4 @@
+using DevWeave.Application.Planning;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Coordination;
 
@@ -7,10 +8,39 @@ namespace DevWeave.Application.Abstractions.Planned;
 // itself: implementations must recheck the authenticated scope, baseline, grant and fence.
 public interface IPlanBaselines
 {
+    Task<BaselineLockPreview> PreviewLockAsync(AuthorizedScope scope, CancellationToken ct = default);
     Task<Guid> LockAsync(AuthorizedScope scope, BaselineDraft draft, CancellationToken ct = default);
     Task<ExportManifest> DescribeAsync(AuthorizedScope scope, Guid baselineId,
         CancellationToken ct = default);
+    Task<IReadOnlyList<BaselineSummary>> ListBaselinesAsync(AuthorizedScope scope, CancellationToken ct = default);
+    Task<int> SuspendDriftedCampaignsAsync(AuthorizedScope scope, CancellationToken ct = default);
 }
+
+/// <summary>Server-computed lock preview including plan version CAS and drift vs the last baseline.</summary>
+public sealed record BaselineLockPreview(
+    bool CanLock,
+    IReadOnlyList<PlanLockItem> Items,
+    IReadOnlyList<PlanLockBlocker> Blockers,
+    int CurrentPlanVersion,
+    int NextPlanVersion,
+    PlanDriftReport Drift);
+
+public sealed record PlanDriftReport(
+    bool HasDrift,
+    Guid? LastBaselineId,
+    int? LastPlanVersion,
+    IReadOnlyList<string> AddedKeys,
+    IReadOnlyList<string> RemovedKeys,
+    IReadOnlyList<string> ChangedKeys,
+    IReadOnlyList<string> StaleWorkLinkKeys,
+    IReadOnlyList<Guid> ActiveCampaignIdsOnPriorBaselines);
+
+public sealed record BaselineSummary(
+    Guid Id,
+    string Goal,
+    int PlanVersion,
+    int RevisionCount,
+    DateTimeOffset CreatedAt);
 
 public interface ICodebaseRegistry
 {

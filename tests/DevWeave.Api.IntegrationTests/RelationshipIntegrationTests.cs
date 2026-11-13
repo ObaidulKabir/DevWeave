@@ -164,6 +164,56 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         Assert.Empty(await relationships.ListIncomingAsync(new TenantId(alpha.Id), new KnowledgeItemId(targetB.Id)));
     }
 
+    [Fact]
+    public async Task Creating_and_revoking_a_relationship_requires_editing_project_membership()
+    {
+        var tenant = await CreateTenantAsync("Alpha Corp");
+        var owner = await CreatePrincipalAsync(tenant.Id, "owner@alphacorp.com", PrincipalType.Human);
+        var outsider = await CreatePrincipalAsync(tenant.Id, "outsider@alphacorp.com", PrincipalType.Human);
+        var viewer = await CreatePrincipalAsync(tenant.Id, "viewer@alphacorp.com", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "agile", "Agile", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "shop-api", profile.Id, owner.Id);
+
+        var source = await CreateKnowledgeItemAsync(tenant.Id, project.Id, "requirement", owner.Id);
+        var target = await CreateKnowledgeItemAsync(tenant.Id, project.Id, "design", owner.Id);
+
+        using (var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id))
+        {
+            using var grant = await ownerClient.PostAsJsonAsync(
+                $"/tenants/{tenant.Id}/projects/{project.Id}/members",
+                new GrantProjectMembershipRequest(viewer.Id, ProjectRole.Viewer),
+                JsonOptions);
+            grant.EnsureSuccessStatusCode();
+        }
+
+        // Someone with no project membership at all cannot create a relationship in it.
+        var outsiderAttempt = await TryCreateRelationshipAsync(
+            tenant.Id, project.Id, source.Id, target.Id, "references", outsider.Id);
+        Assert.Equal(HttpStatusCode.NotFound, outsiderAttempt.StatusCode);
+
+        // A Viewer can see the project but cannot change its structure.
+        var viewerAttempt = await TryCreateRelationshipAsync(
+            tenant.Id, project.Id, source.Id, target.Id, "references", viewer.Id);
+        Assert.Equal(HttpStatusCode.NotFound, viewerAttempt.StatusCode);
+
+        var relationship = await CreateRelationshipAsync(tenant.Id, project.Id, source.Id, target.Id, "references", owner.Id);
+
+        using (var viewerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, viewer.Id))
+        {
+            using var revokeAttempt = await viewerClient.PostAsJsonAsync(
+                $"/tenants/{tenant.Id}/relationships/{relationship.Id}/revoke", new { }, JsonOptions);
+            Assert.Equal(HttpStatusCode.NotFound, revokeAttempt.StatusCode);
+        }
+
+        using (var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id))
+        {
+            using var revoke = await ownerClient.PostAsJsonAsync(
+                $"/tenants/{tenant.Id}/relationships/{relationship.Id}/revoke",
+                new { reason = "No longer needed" }, JsonOptions);
+            Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
+        }
+    }
+
     private async Task<TenantResponse> CreateTenantAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync("/tenants", new CreateTenantRequest(name), JsonOptions);

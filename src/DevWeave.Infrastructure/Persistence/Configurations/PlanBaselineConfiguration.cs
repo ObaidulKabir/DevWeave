@@ -38,5 +38,9 @@ public sealed class PlanBaselineConfiguration : IEntityTypeConfiguration<PlanBas
 
         builder.Property(b => b.ExpectedPlanVersion);
         builder.Property(b => b.CreatedAt);
+
+        // One baseline per plan version per project: two simultaneous locks cannot both win.
+        builder.HasIndex(b => new { b.TenantId, b.ProjectId, b.ExpectedPlanVersion })
+            .IsUnique();
     }
 }

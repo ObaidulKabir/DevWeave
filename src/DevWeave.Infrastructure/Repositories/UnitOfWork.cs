@@ -34,5 +34,13 @@ internal sealed class UnitOfWork : IUnitOfWork
         {
             throw new ConflictException("The resource changed since it was read. Reload and retry with the current version.");
         }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_plan_baselines_TenantId_ProjectId_ExpectedPlanVersion",
+        })
+        {
+            throw new ConflictException("Another baseline locked this plan version at the same moment. Refresh the lock preview and try again.");
+        }
     }
 }

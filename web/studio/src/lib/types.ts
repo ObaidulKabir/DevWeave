@@ -56,10 +56,32 @@ export interface PlanLockItem {
   parentKey?: string | null;
 }
 
+export interface PlanDrift {
+  hasDrift: boolean;
+  lastBaselineId?: string | null;
+  lastPlanVersion?: number | null;
+  addedKeys: string[];
+  removedKeys: string[];
+  changedKeys: string[];
+  staleWorkLinkKeys: string[];
+  activeCampaignIdsOnPriorBaselines: string[];
+}
+
 export interface PlanLockPreview {
   canLock: boolean;
   items: PlanLockItem[];
   blockers: { key: string; reason: string }[];
+  currentPlanVersion: number;
+  nextPlanVersion: number;
+  drift: PlanDrift;
+}
+
+export interface PlanBaselineSummary {
+  id: string;
+  goal: string;
+  planVersion: number;
+  revisionCount: number;
+  createdAt: string;
 }
 
 export interface PlanOutlineNode {

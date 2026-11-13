@@ -23,6 +23,12 @@ internal sealed class PlanDesignRepository(DevWeaveDbContext db) : IPlanDesignRe
         return Task.CompletedTask;
     }
 
+    public Task RemoveNodeAsync(PlanOutlineNode node, CancellationToken ct)
+    {
+        db.PlanOutlineNodes.Remove(node);
+        return Task.CompletedTask;
+    }
+
     public async Task<IReadOnlyList<PlanWorkLink>> ListLinksAsync(TenantId tenant, ProjectId project, CancellationToken ct) =>
         await db.PlanWorkLinks.AsNoTracking().Where(l => l.TenantId == tenant && l.ProjectId == project)
             .OrderBy(l => l.CreatedAt).ToListAsync(ct);
@@ -31,6 +37,15 @@ internal sealed class PlanDesignRepository(DevWeaveDbContext db) : IPlanDesignRe
     {
         db.PlanWorkLinks.Add(link);
         return Task.CompletedTask;
+    }
+
+    public async Task RemoveLinkAsync(PlanWorkLink link, CancellationToken ct)
+    {
+        // The caller typically holds a no-tracking instance (from ListLinksAsync); FindAsync checks the
+        // local change tracker first, so this never conflicts with an instance already tracked in this
+        // unit of work and still removes the right row when none is tracked yet.
+        var tracked = await db.PlanWorkLinks.FindAsync([link.Id], ct) ?? link;
+        db.PlanWorkLinks.Remove(tracked);
     }
 
     public Task<PlanExpansionProposal?> GetProposalAsync(TenantId tenant, ProjectId project, PlanExpansionProposalId id, CancellationToken ct) =>

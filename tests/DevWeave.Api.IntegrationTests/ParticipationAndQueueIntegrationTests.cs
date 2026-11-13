@@ -42,14 +42,27 @@ public sealed class ParticipationAndQueueIntegrationTests : IClassFixture<Identi
                 new RuntimeRegistration(agent.Id, "TestRuntime", "1.0", new List<string> { "code.write" }, "attest-1"));
         }
 
-        // 3. Create Campaign
+        // 3. Create Campaign against a real project baseline
         Guid campaignId;
         using (var scope = _factory.Services.CreateScope())
         {
+            var repo = scope.ServiceProvider.GetRequiredService<ICoordinationRepository>();
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var baseline = PlanBaseline.Lock(
+                new TenantId(tenant.Id),
+                new ProjectId(project.Id),
+                "Participation test baseline",
+                Array.Empty<Guid>(),
+                Array.Empty<Guid>(),
+                new[] { "ok" },
+                1);
+            await repo.AddBaselineAsync(baseline);
+            await uow.SaveChangesAsync();
+
             var coordinator = scope.ServiceProvider.GetRequiredService<ICampaignCoordinator>();
             campaignId = await coordinator.CreateAsync(
                 new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(user.Id), new ProjectId(project.Id), "Create", "trace"),
-                new CampaignDraft(Guid.NewGuid(), new List<Guid>(), "Fix bugs", "Autonomous", "camp-1"));
+                new CampaignDraft(baseline.Id.Value, new List<Guid>(), "Fix bugs", "Autonomous", "camp-1"));
         }
 
         // 4. Participation Offer

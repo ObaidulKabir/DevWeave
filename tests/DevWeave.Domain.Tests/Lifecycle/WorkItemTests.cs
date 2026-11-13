@@ -60,6 +60,49 @@ public sealed class WorkItemTests
     }
 
     [Fact]
+    public void LFC_005_the_reporter_cannot_verify_their_own_work()
+    {
+        var reporter = PrincipalId.New();
+        var verifier = PrincipalId.New();
+        var item = Create();
+        item.Report(ReportedExecutionState.Completed, reporter, "done", 1);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            item.Verify(reporter, "self verification", item.Version));
+
+        var verified = item.Verify(verifier, "checked", item.Version);
+        Assert.Equal(WorkVerificationState.Verified, item.VerificationState);
+        Assert.Equal(WorkItemTransitionDimension.Verification, verified.Dimension);
+    }
+
+    [Fact]
+    public void LFC_005_a_rejected_approval_can_be_reopened_and_approved_after_rework()
+    {
+        var reporter = PrincipalId.New();
+        var verifier = PrincipalId.New();
+        var approver = PrincipalId.New();
+        var item = Create();
+        item.Report(ReportedExecutionState.Completed, reporter, "done", 1);
+        item.Verify(verifier, "checked", item.Version);
+        item.RejectApproval(approver, "does not meet the criterion", item.Version);
+        Assert.Equal(WorkApprovalState.Rejected, item.ApprovalState);
+
+        // Without reopening, approval can never be reached again: Approve requires Pending.
+        Assert.Throws<InvalidOperationException>(() => item.Approve(approver, "retry", item.Version));
+
+        // Reworking (any report, even unchanged) reopens approval instead of leaving it stuck Rejected.
+        var transitions = item.Report(ReportedExecutionState.InProgress, reporter, "reworking", item.Version);
+        Assert.Contains(transitions, t => t.Dimension == WorkItemTransitionDimension.Approval);
+        Assert.Equal(WorkApprovalState.Pending, item.ApprovalState);
+
+        item.Report(ReportedExecutionState.Completed, reporter, "done again", item.Version);
+        item.Verify(verifier, "checked again", item.Version);
+        var approved = item.Approve(approver, "now it meets the criterion", item.Version);
+        Assert.Equal(WorkApprovalState.Approved, item.ApprovalState);
+        Assert.Equal(WorkItemTransitionDimension.Approval, approved.Dimension);
+    }
+
+    [Fact]
     public void LFC_005_changed_execution_invalidates_verification_and_approval_with_audit_events()
     {
         var reporter = PrincipalId.New();

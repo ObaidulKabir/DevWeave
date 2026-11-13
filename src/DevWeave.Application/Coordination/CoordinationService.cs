@@ -6,6 +6,7 @@ using DevWeave.Application.Planning;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 
 namespace DevWeave.Application.Coordination;
@@ -27,19 +28,31 @@ public sealed class CoordinationService :
     private readonly IRepositoryReferenceAdapter _git;
     private readonly PlanLockReview _planLock;
     private readonly IAuditRepository _audit;
+    private readonly IPlanDesignRepository _plans;
+    private readonly IKnowledgeItemRepository _knowledge;
+    private readonly IProjectMembershipRepository _memberships;
+    private readonly IKnowledgeRevisionRepository _revisions;
 
     public CoordinationService(
         ICoordinationRepository repository,
         IUnitOfWork uow,
         IRepositoryReferenceAdapter git,
         PlanLockReview planLock,
-        IAuditRepository audit)
+        IAuditRepository audit,
+        IPlanDesignRepository plans,
+        IKnowledgeItemRepository knowledge,
+        IProjectMembershipRepository memberships,
+        IKnowledgeRevisionRepository revisions)
     {
         _repository = repository;
         _uow = uow;
         _git = git;
         _planLock = planLock;
         _audit = audit;
+        _plans = plans;
+        _knowledge = knowledge;
+        _memberships = memberships;
+        _revisions = revisions;
     }
 
     // --- IRuntimeRegistry ---
@@ -145,10 +158,12 @@ public sealed class CoordinationService :
 
     public async Task<Guid> CreateAsync(AuthorizedScope scope, CampaignDraft draft, CancellationToken ct = default)
     {
+        var baseline = await RequireProjectBaselineAsync(scope, draft.BaselineId, ct);
+
         var campaign = ExecutionCampaign.Create(
             scope.TenantId,
             scope.ProjectId!,
-            draft.BaselineId,
+            baseline.Id.Value,
             draft.Objective,
             draft.ExecutionMode);
 
@@ -248,14 +263,31 @@ public sealed class CoordinationService :
 
     // --- IPlanBaselines ---
 
+    public async Task<BaselineLockPreview> PreviewLockAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        var preview = await _planLock.PreviewAsync(scope.TenantId, scope.ProjectId!, ct);
+        var (current, next) = await GetPlanVersionsAsync(scope.TenantId, scope.ProjectId!, ct);
+        var drift = await BuildDriftAsync(scope.TenantId, scope.ProjectId!, preview, ct);
+        return new BaselineLockPreview(preview.CanLock, preview.Items, preview.Blockers, current, next, drift);
+    }
+
     public async Task<Guid> LockAsync(AuthorizedScope scope, BaselineDraft draft, CancellationToken ct = default)
     {
+        // Locking freezes what every agent builds against, so only a project Owner or Admin may do it.
+        await Lifecycle.ProjectWorkAuthorization.EnsureMemberAsync(
+            _memberships, scope.TenantId, scope.ProjectId!, scope.ActorId, reviewerOnly: true, ct);
+
         // The server decides what the approved plan is: the current revision of every outline item,
         // each reviewed by a human. Nothing unapproved, stale or from another project can be locked
         // (MCO-BR-01, MCO-BR-10).
         var preview = await _planLock.PreviewAsync(scope.TenantId, scope.ProjectId!, ct);
         if (!preview.CanLock)
             throw new ConflictException(preview.Describe());
+
+        var (_, nextVersion) = await GetPlanVersionsAsync(scope.TenantId, scope.ProjectId!, ct);
+        if (draft.ExpectedPlanVersion != nextVersion)
+            throw new ConflictException(
+                $"Expected plan version {nextVersion}, but the request supplied {draft.ExpectedPlanVersion}. Another baseline may have been locked; refresh the lock preview and try again.");
 
         var approved = preview.Items.Select(i => i.RevisionId.Value).ToList();
 
@@ -279,7 +311,7 @@ public sealed class CoordinationService :
             approved,
             draft.Dependencies,
             draft.AcceptanceCriteria,
-            draft.ExpectedPlanVersion);
+            nextVersion);
 
         await _repository.AddBaselineAsync(baseline, ct);
         await _audit.AddAsync(
@@ -293,19 +325,39 @@ public sealed class CoordinationService :
                 {
                     projectId = scope.ProjectId!.Value,
                     goal = draft.Goal,
+                    planVersion = nextVersion,
                     revisionCount = approved.Count,
                     revisionIds = approved,
                 }),
                 scope.CorrelationId),
             ct);
+
+        // ARCH:OD-07 — freeze implementation still bound to prior baselines once a new plan version locks.
+        var suspended = await SuspendCampaignsNotOnBaselineAsync(scope.TenantId, scope.ProjectId!, baseline.Id.Value, ct);
+
         await _uow.SaveChangesAsync(ct);
+
+        if (suspended > 0)
+        {
+            await _audit.AddAsync(
+                AuditRecord.Record(
+                    scope.TenantId,
+                    scope.ActorId,
+                    "plan.campaigns.suspended_for_rebase",
+                    "ExecutionCampaign",
+                    baseline.Id.Value.ToString(),
+                    JsonSerializer.Serialize(new { suspended, newBaselineId = baseline.Id.Value, planVersion = nextVersion }),
+                    scope.CorrelationId),
+                ct);
+            await _uow.SaveChangesAsync(ct);
+        }
+
         return baseline.Id.Value;
     }
 
     public async Task<ExportManifest> DescribeAsync(AuthorizedScope scope, Guid baselineId, CancellationToken ct = default)
     {
-        var baseline = await _repository.GetBaselineByIdAsync(scope.TenantId, new BaselineId(baselineId), ct)
-            ?? throw new NotFoundException("Baseline not found.");
+        var baseline = await RequireProjectBaselineAsync(scope, baselineId, ct);
 
         return new ExportManifest(
             scope.TenantId.Value,
@@ -313,6 +365,170 @@ public sealed class CoordinationService :
             baseline.CreatedAt,
             baseline.ApprovedRevisionIds.Select(id => new ResourceRef(Guid.Empty, id)).ToList(),
             new List<string>());
+    }
+
+    public async Task<IReadOnlyList<BaselineSummary>> ListBaselinesAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        var baselines = await _repository.ListBaselinesByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        return baselines
+            .Select(b => new BaselineSummary(b.Id.Value, b.Goal, b.ExpectedPlanVersion, b.ApprovedRevisionIds.Count, b.CreatedAt))
+            .ToList();
+    }
+
+    public async Task<int> SuspendDriftedCampaignsAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        await Lifecycle.ProjectWorkAuthorization.EnsureMemberAsync(
+            _memberships, scope.TenantId, scope.ProjectId!, scope.ActorId, reviewerOnly: true, ct);
+
+        var baselines = await _repository.ListBaselinesByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        var latest = baselines.FirstOrDefault();
+        if (latest is null)
+            return 0;
+
+        var suspended = await SuspendCampaignsNotOnBaselineAsync(scope.TenantId, scope.ProjectId!, latest.Id.Value, ct);
+        if (suspended > 0)
+            await _uow.SaveChangesAsync(ct);
+        return suspended;
+    }
+
+    private async Task<PlanBaseline> RequireProjectBaselineAsync(AuthorizedScope scope, Guid baselineId, CancellationToken ct)
+    {
+        var baseline = await _repository.GetBaselineByIdAsync(scope.TenantId, new BaselineId(baselineId), ct)
+            ?? throw new NotFoundException("Baseline not found.");
+        if (baseline.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Baseline was not found within this project.");
+        return baseline;
+    }
+
+    private async Task<(int Current, int Next)> GetPlanVersionsAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct)
+    {
+        var baselines = await _repository.ListBaselinesByProjectAsync(tenantId, projectId, ct);
+        var current = baselines.Count == 0 ? 0 : baselines.Max(b => b.ExpectedPlanVersion);
+        return (current, current + 1);
+    }
+
+    /// <summary>
+    /// Compares the living approved plan with the last locked baseline item by item. A baseline only
+    /// stores revision ids, so each one is resolved back to its knowledge item: an item present in both
+    /// with a different revision is "changed", one only in the living plan is "added", and one only in
+    /// the baseline is "removed" (or "changed" when it is still in the outline but awaiting review).
+    /// </summary>
+    private async Task<PlanDriftReport> BuildDriftAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        PlanLockPreview preview,
+        CancellationToken ct)
+    {
+        var baselines = await _repository.ListBaselinesByProjectAsync(tenantId, projectId, ct);
+        var last = baselines.FirstOrDefault();
+        var campaigns = await _repository.ListCampaignsByProjectAsync(tenantId, projectId, ct);
+        var activeOnPrior = last is null
+            ? Array.Empty<Guid>()
+            : campaigns
+                .Where(c => c.Status == CampaignStatus.Active && c.BaselineId != last.Id.Value)
+                .Select(c => c.Id.Value)
+                .ToArray();
+
+        // A work item counts as stale only if its newest pin for an item is behind that item's current revision.
+        var staleLinks = new List<string>();
+        var newestPins = (await _plans.ListLinksAsync(tenantId, projectId, ct))
+            .GroupBy(l => (l.WorkItemId, l.KnowledgeItemId))
+            .Select(g => g.OrderByDescending(l => l.CreatedAt).First());
+        foreach (var link in newestPins)
+        {
+            var item = await _knowledge.GetByIdAsync(tenantId, link.KnowledgeItemId, ct);
+            if (item is null || item.ProjectId != projectId)
+                continue;
+            if (item.CurrentRevisionId is { } current && current != link.RevisionId)
+                staleLinks.Add($"{item.Key}→work");
+        }
+        staleLinks = staleLinks.Distinct(StringComparer.Ordinal).ToList();
+
+        var living = preview.Items.ToDictionary(i => i.ItemId, i => i);
+
+        if (last is null)
+        {
+            return new PlanDriftReport(
+                HasDrift: living.Count > 0 || staleLinks.Count > 0,
+                LastBaselineId: null,
+                LastPlanVersion: null,
+                AddedKeys: living.Values.Select(i => i.Key).OrderBy(k => k, StringComparer.Ordinal).ToList(),
+                RemovedKeys: Array.Empty<string>(),
+                ChangedKeys: Array.Empty<string>(),
+                StaleWorkLinkKeys: staleLinks,
+                ActiveCampaignIdsOnPriorBaselines: activeOnPrior);
+        }
+
+        // Resolve each locked revision to the item it belongs to.
+        var locked = new Dictionary<KnowledgeItemId, Guid>();
+        var unresolved = new List<string>();
+        foreach (var revisionId in last.ApprovedRevisionIds)
+        {
+            var revision = await _revisions.GetByIdAsync(tenantId, new KnowledgeRevisionId(revisionId), ct);
+            if (revision is null)
+                unresolved.Add(revisionId.ToString("N")[..8]);
+            else
+                locked[revision.KnowledgeItemId] = revisionId;
+        }
+
+        var added = new List<string>();
+        var changed = new List<string>();
+        var removed = new List<string>(unresolved);
+
+        foreach (var (itemId, entry) in living)
+        {
+            if (!locked.TryGetValue(itemId, out var lockedRevision))
+                added.Add(entry.Key);
+            else if (lockedRevision != entry.RevisionId.Value)
+                changed.Add(entry.Key);
+        }
+
+        foreach (var itemId in locked.Keys.Where(id => !living.ContainsKey(id)))
+        {
+            var item = await _knowledge.GetByIdAsync(tenantId, itemId, ct);
+            var stillInOutline = item is not null && await _plans.GetNodeAsync(tenantId, projectId, itemId, ct) is not null;
+            if (stillInOutline)
+                changed.Add(item!.Key); // edited and awaiting review, so not part of the approved set right now
+            else
+                removed.Add(item?.Key ?? itemId.Value.ToString("N")[..8]);
+        }
+
+        static List<string> Sorted(List<string> keys) => keys.Distinct(StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        added = Sorted(added);
+        changed = Sorted(changed);
+        removed = Sorted(removed);
+
+        var hasDrift = added.Count > 0 || changed.Count > 0 || removed.Count > 0
+            || staleLinks.Count > 0 || activeOnPrior.Length > 0;
+
+        return new PlanDriftReport(
+            hasDrift,
+            last.Id.Value,
+            last.ExpectedPlanVersion,
+            added,
+            removed,
+            changed,
+            staleLinks,
+            activeOnPrior);
+    }
+
+    private async Task<int> SuspendCampaignsNotOnBaselineAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        Guid keepBaselineId,
+        CancellationToken ct)
+    {
+        var campaigns = await _repository.ListCampaignsByProjectAsync(tenantId, projectId, ct);
+        var count = 0;
+        foreach (var campaign in campaigns)
+        {
+            if (campaign.Status != CampaignStatus.Active || campaign.BaselineId == keepBaselineId)
+                continue;
+            campaign.Suspend();
+            count++;
+        }
+
+        return count;
     }
 
     // --- ICodebaseRegistry ---
@@ -424,11 +640,21 @@ public sealed class CoordinationService :
 
     public async Task<Guid> CreatePackageAsync(AuthorizedScope scope, PackageDraft draft, CancellationToken ct = default)
     {
+        var campaign = await _repository.GetCampaignByIdAsync(scope.TenantId, new CampaignId(draft.CampaignId), ct)
+            ?? throw new NotFoundException("Campaign not found.");
+        if (campaign.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Campaign was not found within this project.");
+
+        var baseline = await RequireProjectBaselineAsync(scope, draft.BaselineId, ct);
+        if (campaign.BaselineId != baseline.Id.Value)
+            throw new ConflictException(
+                "Work package baseline must match the campaign baseline. Create the package under the campaign's locked plan version.");
+
         var package = WorkPackage.Create(
             scope.TenantId,
             scope.ProjectId!,
-            new CampaignId(draft.CampaignId),
-            draft.BaselineId,
+            campaign.Id,
+            baseline.Id.Value,
             Guid.NewGuid().ToString("N")[..8], // Auto-generated key
             draft.Objective);
 

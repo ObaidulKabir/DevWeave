@@ -119,13 +119,18 @@ public sealed class WorkItem
                 transitions.Add(Changed(WorkItemTransitionDimension.Verification,
                     oldVerification, VerificationState, actor, "Execution report changed; verification invalidated."));
             }
-            if (ApprovalState == WorkApprovalState.Approved)
+            // Reworking the item reopens approval, whether it had been approved or rejected; otherwise a
+            // rejected item could never be approved again.
+            if (ApprovalState is WorkApprovalState.Approved or WorkApprovalState.Rejected)
             {
                 var oldApproval = ApprovalState;
                 ApprovalState = WorkApprovalState.Pending;
                 ApprovedBy = null;
                 transitions.Add(Changed(WorkItemTransitionDimension.Approval,
-                    oldApproval, ApprovalState, actor, "Execution report changed; approval invalidated."));
+                    oldApproval, ApprovalState, actor,
+                    oldApproval == WorkApprovalState.Rejected
+                        ? "Work reopened after rejection; approval is pending again."
+                        : "Execution report changed; approval invalidated."));
             }
         }
 
@@ -140,6 +145,8 @@ public sealed class WorkItem
             throw new InvalidOperationException("Work item must be reported completed before verification.");
         if (VerificationState == WorkVerificationState.Verified)
             throw new InvalidOperationException("Work item is already verified.");
+        if (actor == ReportedBy)
+            throw new InvalidOperationException("Whoever reported the work as completed cannot also verify it.");
 
         var previous = VerificationState;
         VerificationState = WorkVerificationState.Verified;

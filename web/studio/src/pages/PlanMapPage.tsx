@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { StateBadge } from '../components/StateBadge';
 import type { KnowledgeItem, Relationship, WorkItem } from '../lib/types';
@@ -16,16 +16,37 @@ type MapNode = {
   accent: string;
   depth?: number;
 };
+type Position = { x: number; y: number };
+type Positions = Record<string, Position>;
 
-const NODE_W = 236;
+function nodeKey(kind: MapNode['kind'], id: string) {
+  return `${kind}:${id}`;
+}
+
+function applyPositions(nodes: MapNode[], positions: Positions): MapNode[] {
+  return nodes.map((node) => {
+    const override = positions[nodeKey(node.kind, node.id)];
+    return override ? { ...node, x: override.x, y: override.y } : node;
+  });
+}
+
+function svgPoint(svg: SVGSVGElement, clientX: number, clientY: number): Position {
+  const point = svg.createSVGPoint();
+  point.x = clientX;
+  point.y = clientY;
+  const matrix = svg.getScreenCTM();
+  if (!matrix) return { x: 0, y: 0 };
+  const local = point.matrixTransform(matrix.inverse());
+  return { x: local.x, y: local.y };
+}
+
+const NODE_W = 220;
 const NODE_H = 68;
-const ROW = 88;
-const KNOWLEDGE_ORIGIN_X = 36;
-const DEPTH_STEP = 56;
-const RELATION_X = 420;
-const WORK_X = 780;
+const ROW = 86;
+const KNOWLEDGE_ORIGIN_X = 28;
+const DEPTH_GAP = 36;
 const PAD_TOP = 108;
-const LANE_GAP = 28;
+const LANE_GAP = 40;
 
 function mentionsKey(description: string | undefined, key: string) {
   if (!description || !key) return false;
@@ -68,30 +89,45 @@ function MapCard({
   node,
   selected,
   dimmed,
+  dragging,
   onSelect,
+  onDragStart,
 }: {
   node: MapNode;
   selected: boolean;
   dimmed: boolean;
+  dragging: boolean;
   onSelect: () => void;
+  onDragStart: (clientX: number, clientY: number) => void;
 }) {
-  const label = `${node.kind}: ${node.key}, ${node.title}. ${node.subtitle}`;
+  const label = `${node.kind}: ${node.key}, ${node.title}. ${node.subtitle}. Drag to reposition.`;
   return (
     <g
       role="button"
       tabIndex={0}
       aria-label={label}
       aria-pressed={selected}
-      onClick={onSelect}
+      onPointerDown={(event: ReactPointerEvent<SVGGElement>) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDragStart(event.clientX, event.clientY);
+      }}
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDragStart(event.clientX, event.clientY);
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onSelect();
         }
       }}
-      className="cursor-pointer outline-none"
+      className={`outline-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       opacity={dimmed ? 0.22 : 1}
-      style={{ transition: 'opacity 160ms ease' }}
+      style={{ touchAction: 'none', transition: dragging ? undefined : 'opacity 160ms ease' }}
     >
       <title>{label}</title>
       <rect
@@ -101,9 +137,9 @@ function MapCard({
         height={NODE_H}
         rx={14}
         fill={selected ? '#effcf9' : '#ffffff'}
-        stroke={selected ? '#0b5f59' : '#c9d4e3'}
-        strokeWidth={selected ? 2.5 : 1.25}
-        filter={selected ? 'url(#node-glow)' : undefined}
+        stroke={dragging ? '#0ea5a0' : selected ? '#0b5f59' : '#c9d4e3'}
+        strokeWidth={dragging || selected ? 2.5 : 1.25}
+        filter={selected || dragging ? 'url(#node-glow)' : undefined}
       />
       <rect x={node.x} y={node.y} width={5} height={NODE_H} rx={2.5} fill={node.accent} />
       <text x={node.x + 16} y={node.y + 22} fill={node.accent} fontSize={11} fontWeight={700} fontFamily="IBM Plex Mono, ui-monospace, monospace">
@@ -125,6 +161,43 @@ export function PlanMapPage() {
   const [showMentions, setShowMentions] = useState(true);
   const [selection, setSelection] = useState<Selection>(null);
   const [zoom, setZoom] = useState(1);
+  const [fitted, setFitted] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [positions, setPositions] = useState<Positions>({});
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const detailRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{
+    key: string;
+    kind: MapNode['kind'];
+    id: string;
+    offsetX: number;
+    offsetY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+
+  const fitZoom = (mapWidth: number, forFullscreen = fullscreen) => {
+    const chrome = forFullscreen ? 24 : 280;
+    const inspectorReserve = window.matchMedia('(min-width: 1024px)').matches ? 360 : 48;
+    const available = Math.max(480, window.innerWidth - chrome - inspectorReserve);
+    return Number(Math.min(1.25, Math.max(0.55, (available - 32) / mapWidth)).toFixed(2));
+  };
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [fullscreen]);
 
   const layout = useMemo(() => {
     const visibleRelations = relationships.filter((item) => showRevoked || item.status.toLowerCase() !== 'revoked');
@@ -163,21 +236,25 @@ export function PlanMapPage() {
     });
 
     const maxDepth = Math.max(0, ...[...depthById.values()]);
-    const knowledgeLaneWidth = NODE_W + Math.min(maxDepth, 4) * DEPTH_STEP + 24;
+    const depthColumns = Math.min(maxDepth, 4) + 1;
+    const knowledgeLaneWidth = depthColumns * NODE_W + Math.max(0, depthColumns - 1) * DEPTH_GAP + 16;
     const relationX = KNOWLEDGE_ORIGIN_X + knowledgeLaneWidth + LANE_GAP;
-    const workX = relationX + NODE_W + LANE_GAP + 24;
+    const workX = relationX + NODE_W + LANE_GAP;
 
-    const knowledgeNodes: MapNode[] = knowledge.map((item) => ({
-      id: item.id,
-      key: item.key,
-      title: item.title,
-      subtitle: `${item.typeId} · ${item.state}`,
-      x: KNOWLEDGE_ORIGIN_X + Math.min(depthById.get(item.id) ?? 0, 4) * DEPTH_STEP,
-      y: yById.get(item.id) ?? PAD_TOP,
-      kind: 'knowledge',
-      accent: typeAccent(item.typeId),
-      depth: depthById.get(item.id) ?? 0,
-    }));
+    const knowledgeNodes: MapNode[] = knowledge.map((item) => {
+      const depth = Math.min(depthById.get(item.id) ?? 0, 4);
+      return {
+        id: item.id,
+        key: item.key,
+        title: item.title,
+        subtitle: `${item.typeId} · ${item.state}`,
+        x: KNOWLEDGE_ORIGIN_X + depth * (NODE_W + DEPTH_GAP),
+        y: yById.get(item.id) ?? PAD_TOP,
+        kind: 'knowledge' as const,
+        accent: typeAccent(item.typeId),
+        depth,
+      };
+    });
     const knowledgeNodeById = new Map(knowledgeNodes.map((node) => [node.id, node]));
 
     const preferredRelationYs = visibleRelations.map((relation) => {
@@ -248,7 +325,7 @@ export function PlanMapPage() {
     }
     const workNodeById = new Map(workNodes.map((node) => [node.id, node]));
 
-    const mapWidth = Math.max(1100, workX + NODE_W + 48);
+    const mapWidth = Math.max(980, workX + NODE_W + 40);
     const mapHeight = Math.max(
       420,
       ...knowledgeNodes.map((node) => node.y + NODE_H + 48),
@@ -274,6 +351,95 @@ export function PlanMapPage() {
       maxDepth,
     };
   }, [knowledge, relationships, workItems, milestones, outline, showRevoked]);
+
+  useEffect(() => {
+    if (fitted || layout.mapWidth < 100) return;
+    setZoom(fitZoom(layout.mapWidth));
+    setFitted(true);
+  }, [layout.mapWidth, fitted]);
+
+  useEffect(() => {
+    if (layout.mapWidth < 100) return;
+    setZoom(fitZoom(layout.mapWidth, fullscreen));
+  }, [fullscreen]);
+
+  const placed = useMemo(() => {
+    const knowledgeNodes = applyPositions(layout.knowledgeNodes, positions);
+    const relationNodes = applyPositions(layout.relationNodes, positions);
+    const workNodes = applyPositions(layout.workNodes, positions);
+    const all = [...knowledgeNodes, ...relationNodes, ...workNodes];
+    const mapWidth = Math.max(
+      layout.mapWidth,
+      ...all.map((node) => node.x + NODE_W + 40),
+    );
+    const mapHeight = Math.max(
+      layout.mapHeight,
+      ...all.map((node) => node.y + NODE_H + 48),
+    );
+    return {
+      knowledgeNodes,
+      relationNodes,
+      workNodes,
+      all,
+      knowledgeNodeById: new Map(knowledgeNodes.map((node) => [node.id, node])),
+      relationNodeById: new Map(relationNodes.map((node) => [node.id, node])),
+      workNodeById: new Map(workNodes.map((node) => [node.id, node])),
+      mapWidth,
+      mapHeight,
+    };
+  }, [layout, positions]);
+
+  function beginDrag(node: MapNode, clientX: number, clientY: number) {
+    const svg = svgRef.current;
+    if (!svg || dragRef.current) return;
+    const point = svgPoint(svg, clientX, clientY);
+    const key = nodeKey(node.kind, node.id);
+    dragRef.current = {
+      key,
+      kind: node.kind,
+      id: node.id,
+      offsetX: point.x - node.x,
+      offsetY: point.y - node.y,
+      originX: point.x,
+      originY: point.y,
+      moved: false,
+    };
+    setDraggingKey(key);
+    setSelection({ kind: node.kind, id: node.id });
+
+    const onMove = (event: MouseEvent | PointerEvent) => {
+      const drag = dragRef.current;
+      const surface = svgRef.current;
+      if (!drag || !surface) return;
+      const next = svgPoint(surface, event.clientX, event.clientY);
+      if (!drag.moved && Math.hypot(next.x - drag.originX, next.y - drag.originY) > 3) {
+        drag.moved = true;
+      }
+      const x = Math.max(8, next.x - drag.offsetX);
+      const y = Math.max(72, next.y - drag.offsetY);
+      setPositions((current) => ({ ...current, [drag.key]: { x, y } }));
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const drag = dragRef.current;
+      dragRef.current = null;
+      setDraggingKey(null);
+      if (drag && !drag.moved) {
+        setSelection({ kind: drag.kind, id: drag.id });
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   const neighborhood = useMemo(() => {
     const ids = new Set<string>();
@@ -328,6 +494,19 @@ export function PlanMapPage() {
       ? layout.visibleRelations.find((item) => item.id === selection.id)
       : workItems.find((item) => item.id === selection?.id);
   const activeSelection = selectedRecord ? selection : null;
+  const knowledgeParent = selection?.kind === 'knowledge'
+    ? (() => {
+        const parentId = outline.nodes.find((node) => node.itemId === selection.id)?.parentItemId;
+        return parentId ? knowledge.find((item) => item.id === parentId) ?? null : null;
+      })()
+    : null;
+
+  useEffect(() => {
+    if (!selectedRecord) return;
+    if (typeof window === 'undefined' || window.matchMedia('(min-width: 1024px)').matches) return;
+    detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [selectedRecord, selection?.id, selection?.kind]);
+
   const focusActive = Boolean(activeSelection);
   const edgeVisible = (from: string, to: string, extra?: string) =>
     !focusActive || neighborhood.has(from) || neighborhood.has(to) || (extra ? neighborhood.has(extra) : false);
@@ -341,12 +520,13 @@ export function PlanMapPage() {
               !outline.links.some((link) => link.workItemId === work.id && link.knowledgeItemId === item.id),
           )
           .map((item) => ({
-            source: layout.knowledgeNodeById.get(item.id),
-            target: layout.workNodeById.get(work.id),
+            source: placed.knowledgeNodeById.get(item.id),
+            target: placed.workNodeById.get(work.id),
             id: `mention:${item.id}:${work.id}`,
           })),
       )
     : [];
+  const hasCustomLayout = Object.keys(positions).length > 0;
 
   return (
     <div className="space-y-6">
@@ -354,8 +534,8 @@ export function PlanMapPage() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">Project planning diagram</p>
         <h2 className="font-display mt-2 text-2xl font-bold">Plan map: {project?.name ?? 'current project'}</h2>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">
-          Knowledge is laid out as an outline tree (depth left → right). Relations sit between linked items. Work aligns toward the knowledge it references.
-          Select a node to focus its neighborhood.
+          Knowledge is laid out as an outline tree (depth left → right). Select a card to read its details in the inspector beside the map while the neighborhood stays focused.
+          Drag cards to clear crossings. Layout changes stay in this browser session only.
         </p>
         {!live && <p className="mt-3 text-xs text-amber-800">Preview mode has no persisted plan. Connect a live tenant to display its records.</p>}
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--muted)]" aria-label="Diagram legend">
@@ -375,27 +555,83 @@ export function PlanMapPage() {
             <input type="checkbox" checked={showMentions} onChange={(event) => setShowMentions(event.target.checked)} />
             Show text mentions
           </label>
-          <div className="ml-auto flex items-center gap-1" role="group" aria-label="Zoom">
-            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.max(0.65, Number((value - 0.1).toFixed(2))))}>−</button>
+          <div className="ml-auto flex flex-wrap items-center gap-1" role="group" aria-label="Zoom and layout">
+            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.max(0.55, Number((value - 0.1).toFixed(2))))}>−</button>
             <span className="min-w-12 text-center text-xs font-semibold text-[var(--muted)]">{Math.round(zoom * 100)}%</span>
-            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(2))))}>+</button>
-            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom(1)}>Reset</button>
+            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.min(1.4, Number((value + 0.1).toFixed(2))))}>+</button>
+            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom(fitZoom(placed.mapWidth))}>Fit</button>
+            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom(1)}>100%</button>
+            <button
+              type="button"
+              className="btn btn-ghost px-2 py-1 text-xs"
+              disabled={!hasCustomLayout}
+              onClick={() => setPositions({})}
+            >
+              Reset positions
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost px-2 py-1 text-xs"
+              onClick={() => setFullscreen(true)}
+            >
+              Fullscreen
+            </button>
           </div>
         </div>
       </section>
 
-      <section className="panel overflow-hidden rounded-2xl" aria-label="Plan diagram">
-        <div className="border-b border-[var(--line)] px-5 py-3 text-xs text-[var(--muted)]">
-          {knowledge.length} knowledge · {layout.visibleRelations.length} relations · {milestones.length} milestones · {workItems.length} work
-          <span className="ml-2">Scroll to pan · zoom controls above.</span>
+      <section
+        className={
+          fullscreen
+            ? 'fixed inset-0 z-50 flex flex-col bg-[var(--paper)]'
+            : 'panel overflow-hidden rounded-2xl'
+        }
+        aria-label="Plan diagram"
+        aria-modal={fullscreen ? true : undefined}
+        role={fullscreen ? 'dialog' : undefined}
+      >
+        <div className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] px-5 py-3 text-xs text-[var(--muted)]">
+          <span>
+            {knowledge.length} knowledge · {layout.visibleRelations.length} relations · {milestones.length} milestones · {workItems.length} work
+            <span className="ml-2">
+              {fullscreen
+                ? 'Fullscreen · Esc to exit · select a card for details beside the map.'
+                : 'Drag cards to rearrange · select a card to read its details beside the map.'}
+            </span>
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-1" role="group" aria-label="Map view controls">
+            {fullscreen && (
+              <>
+                <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.max(0.55, Number((value - 0.1).toFixed(2))))}>−</button>
+                <span className="min-w-12 text-center text-xs font-semibold">{Math.round(zoom * 100)}%</span>
+                <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom((value) => Math.min(1.4, Number((value + 0.1).toFixed(2))))}>+</button>
+                <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setZoom(fitZoom(placed.mapWidth, true))}>Fit</button>
+              </>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost px-2 py-1 text-xs"
+              onClick={() => setFullscreen((value) => !value)}
+            >
+              {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            </button>
+          </div>
         </div>
-        <div className="overflow-auto">
+        <div className={`lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-stretch ${fullscreen ? 'min-h-0 h-full flex-1' : ''}`}>
+        <div
+          className={
+            fullscreen
+              ? 'h-full min-h-[50vh] overflow-auto border-b border-[var(--line)] lg:min-h-0 lg:border-b-0 lg:border-r'
+              : 'max-h-[min(70vh,920px)] min-h-[420px] overflow-auto border-b border-[var(--line)] lg:border-b-0 lg:border-r'
+          }
+        >
           <svg
-            width={layout.mapWidth * zoom}
-            height={layout.mapHeight * zoom}
-            viewBox={`0 0 ${layout.mapWidth} ${layout.mapHeight}`}
+            ref={svgRef}
+            width={placed.mapWidth * zoom}
+            height={placed.mapHeight * zoom}
+            viewBox={`0 0 ${placed.mapWidth} ${placed.mapHeight}`}
             role="group"
-            aria-label="Interactive project plan diagram with knowledge, relations, milestones and work"
+            aria-label="Interactive project plan diagram with knowledge, relations, milestones and work. Drag cards to reposition."
           >
             <defs>
               <marker id="plan-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
@@ -408,15 +644,15 @@ export function PlanMapPage() {
                 <feDropShadow dx="0" dy="1" stdDeviation="2" floodColor="#0f766e" floodOpacity="0.25" />
               </filter>
             </defs>
-            <rect width={layout.mapWidth} height={layout.mapHeight} fill="#f5f8fc" />
-            <rect x={12} y={72} width={layout.knowledgeLaneWidth + 12} height={layout.mapHeight - 84} rx={18} fill="#ecfdf8" opacity={0.55} />
-            <rect x={layout.relationX - 16} y={72} width={NODE_W + 32} height={layout.mapHeight - 84} rx={18} fill="#eef2ff" opacity={0.45} />
-            <rect x={layout.workX - 16} y={72} width={NODE_W + 32} height={layout.mapHeight - 84} rx={18} fill="#fff7ed" opacity={0.45} />
+            <rect width={placed.mapWidth} height={placed.mapHeight} fill="#f5f8fc" />
+            <rect x={12} y={72} width={layout.knowledgeLaneWidth + 12} height={placed.mapHeight - 84} rx={18} fill="#ecfdf8" opacity={0.55} />
+            <rect x={layout.relationX - 16} y={72} width={NODE_W + 32} height={placed.mapHeight - 84} rx={18} fill="#eef2ff" opacity={0.45} />
+            <rect x={layout.workX - 16} y={72} width={NODE_W + 32} height={placed.mapHeight - 84} rx={18} fill="#fff7ed" opacity={0.45} />
 
             <text x={KNOWLEDGE_ORIGIN_X} y={36} fill="#0f766e" fontSize={14} fontWeight={700}>01  KNOWLEDGE</text>
             <text x={layout.relationX} y={36} fill="#525ba3" fontSize={14} fontWeight={700}>02  RELATIONS</text>
             <text x={layout.workX} y={36} fill="#b45309" fontSize={14} fontWeight={700}>03  MILESTONES + WORK</text>
-            <text x={KNOWLEDGE_ORIGIN_X} y={58} fill="#5b6b7c" fontSize={11}>Outline depth left → right</text>
+            <text x={KNOWLEDGE_ORIGIN_X} y={58} fill="#5b6b7c" fontSize={11}>Drag cards to clarify links</text>
             <text x={layout.relationX} y={58} fill="#5b6b7c" fontSize={11}>Aligned to linked items</text>
             <text x={layout.workX} y={58} fill="#5b6b7c" fontSize={11}>Grouped by milestone</text>
 
@@ -443,17 +679,13 @@ export function PlanMapPage() {
             ))}
 
             {outline.nodes.filter((node) => node.parentItemId).map((node) => {
-              const parent = layout.knowledgeNodeById.get(node.parentItemId!);
-              const child = layout.knowledgeNodeById.get(node.itemId);
+              const parent = placed.knowledgeNodeById.get(node.parentItemId!);
+              const child = placed.knowledgeNodeById.get(node.itemId);
               if (!parent || !child) return null;
-              const x1 = parent.x + 18;
-              const y1 = parent.y + NODE_H;
-              const x2 = child.x + 18;
-              const y2 = child.y;
               return (
                 <path
                   key={`outline:${node.itemId}`}
-                  d={`M ${x1} ${y1} C ${x1} ${y1 + 18}, ${x2} ${y2 - 18}, ${x2} ${y2}`}
+                  d={elbow(parent.x + NODE_W, parent.y + NODE_H / 2, child.x - 6, child.y + NODE_H / 2, 0.4)}
                   fill="none"
                   stroke="#0284c7"
                   strokeWidth={2}
@@ -463,8 +695,8 @@ export function PlanMapPage() {
             })}
 
             {outline.links.map((link) => {
-              const source = layout.knowledgeNodeById.get(link.knowledgeItemId);
-              const target = layout.workNodeById.get(link.workItemId);
+              const source = placed.knowledgeNodeById.get(link.knowledgeItemId);
+              const target = placed.workNodeById.get(link.workItemId);
               const older = knowledge.find((item) => item.id === link.knowledgeItemId)?.currentRevisionId !== link.revisionId;
               if (!source || !target) return null;
               return (
@@ -481,9 +713,9 @@ export function PlanMapPage() {
             })}
 
             {layout.visibleRelations.map((relation) => {
-              const source = layout.knowledgeNodeById.get(relation.sourceItemId);
-              const target = layout.knowledgeNodeById.get(relation.targetItemId);
-              const node = layout.relationNodeById.get(relation.id);
+              const source = placed.knowledgeNodeById.get(relation.sourceItemId);
+              const target = placed.knowledgeNodeById.get(relation.targetItemId);
+              const node = placed.relationNodeById.get(relation.id);
               if (!node) return null;
               const visible = edgeVisible(relation.sourceItemId, relation.targetItemId, relation.id);
               return (
@@ -512,10 +744,10 @@ export function PlanMapPage() {
 
             {workItems.flatMap((item) =>
               (item.dependsOn ?? []).map((dependencyId) => {
-                const prerequisite = layout.workNodeById.get(dependencyId);
-                const dependent = layout.workNodeById.get(item.id);
+                const prerequisite = placed.workNodeById.get(dependencyId);
+                const dependent = placed.workNodeById.get(item.id);
                 if (!prerequisite || !dependent) return null;
-                const right = layout.workX + NODE_W + 18;
+                const right = Math.max(prerequisite.x, dependent.x) + NODE_W + 24;
                 return (
                   <path
                     key={`${dependencyId}:${item.id}`}
@@ -530,13 +762,15 @@ export function PlanMapPage() {
               }),
             )}
 
-            {[...layout.knowledgeNodes, ...layout.relationNodes, ...layout.workNodes].map((node) => (
+            {placed.all.map((node) => (
               <MapCard
                 key={`${node.kind}:${node.id}`}
                 node={node}
                 selected={activeSelection?.kind === node.kind && activeSelection.id === node.id}
                 dimmed={focusActive && !neighborhood.has(node.id)}
+                dragging={draggingKey === nodeKey(node.kind, node.id)}
                 onSelect={() => setSelection({ kind: node.kind, id: node.id })}
+                onDragStart={(clientX, clientY) => beginDrag(node, clientX, clientY)}
               />
             ))}
 
@@ -545,81 +779,125 @@ export function PlanMapPage() {
             {!workItems.length && !milestones.length && <text x={layout.workX} y={150} fill="#5b6b7c" fontSize={13}>No milestones or work items yet</text>}
           </svg>
         </div>
-      </section>
 
-      <section className="panel rounded-2xl p-5" aria-live="polite">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-display text-lg font-bold">{selectedRecord ? 'Selected record' : 'How to read this map'}</h3>
-          {activeSelection && (
-            <button type="button" className="btn btn-ghost text-xs" onClick={() => setSelection(null)}>Clear focus</button>
-          )}
-        </div>
-        {selectedRecord ? (
-          <div className="mt-3 space-y-2 text-sm">
-            <p className="font-semibold">
-              {'key' in selectedRecord ? selectedRecord.key : selectedRecord.relationTypeCode}
-              {' · '}
-              {'title' in selectedRecord ? selectedRecord.title : 'Directed relation'}
-            </p>
-            {selection?.kind === 'knowledge' && (
-              <>
-                <p>
-                  Type: {(selectedRecord as KnowledgeItem).typeId}
-                  {' · '}Revision: {(selectedRecord as KnowledgeItem).currentRevisionNumber}
-                  {' · '}Review: {(selectedRecord as KnowledgeItem).reviewState}
-                  {' · '}Verification: {(selectedRecord as KnowledgeItem).verificationState}
-                </p>
-                {(selectedRecord as KnowledgeItem).description?.trim() ? (
-                  <p className="whitespace-pre-wrap text-[var(--muted)]">{(selectedRecord as KnowledgeItem).description}</p>
-                ) : (
-                  <p className="italic text-[var(--muted)]">No details recorded on this item.</p>
-                )}
-              </>
-            )}
-            {selection?.kind === 'relation' && (
-              <p>
-                Source: {knowledge.find((item) => item.id === (selectedRecord as Relationship).sourceItemId)?.key ?? 'Unknown'}
-                {' → '}
-                Target: {knowledge.find((item) => item.id === (selectedRecord as Relationship).targetItemId)?.key ?? 'Unknown'}
-                {' · '}
-                {(selectedRecord as Relationship).status}
-              </p>
-            )}
-            {selection?.kind === 'work' && (
-              <>
-                <p>
-                  Planned: {(selectedRecord as WorkItem).plannedState}
-                  {' · '}Reported: {(selectedRecord as WorkItem).reportedState}
-                  {' · '}Verified: {(selectedRecord as WorkItem).verificationState}
-                  {' · '}Approved: {(selectedRecord as WorkItem).approvalState}
-                </p>
-                <p className="text-[var(--muted)]">{(selectedRecord as WorkItem).description || 'No description recorded.'}</p>
-              </>
-            )}
-            <StateBadge
-              value={
-                selection?.kind === 'relation'
-                  ? (selectedRecord as Relationship).status
-                  : selection?.kind === 'work'
-                    ? (selectedRecord as WorkItem).approvalState
-                    : (selectedRecord as KnowledgeItem).state
-              }
-            />
+        <aside
+          ref={detailRef}
+          className={
+            fullscreen
+              ? 'h-full max-h-[40vh] overflow-auto bg-[var(--paper)] p-5 lg:max-h-none'
+              : 'max-h-[min(70vh,920px)] overflow-auto bg-[var(--paper)] p-5'
+          }
+          aria-live="polite"
+          aria-label={selectedRecord ? 'Selected record details' : 'How to read this map'}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <Link
-                className="text-sm font-semibold text-[var(--signal)] hover:underline"
-                to={selection?.kind === 'knowledge' ? '/knowledge' : selection?.kind === 'relation' ? '/relations' : '/work'}
-              >
-                Open {selection?.kind} page →
-              </Link>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--signal)]">
+                {selection?.kind === 'knowledge' ? 'Knowledge' : selection?.kind === 'relation' ? 'Relation' : selection?.kind === 'work' ? 'Work' : 'Inspector'}
+              </p>
+              <h3 className="font-display mt-1 text-lg font-bold leading-snug">
+                {selectedRecord
+                  ? ('title' in selectedRecord ? selectedRecord.title : 'Directed relation')
+                  : 'How to read this map'}
+              </h3>
             </div>
+            {activeSelection && (
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setSelection(null)}>Clear</button>
+            )}
           </div>
-        ) : (
-          <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-            Outline edges show structure. Teal paths are semantic relations. Violet pins are governed Work links.
-            Selecting a node dims everything outside its neighborhood so crossings are easier to read.
-          </p>
-        )}
+
+          {selectedRecord ? (
+            <div className="mt-4 space-y-3 text-sm">
+              <p className="font-mono text-xs font-semibold text-[var(--muted)]">
+                {'key' in selectedRecord ? selectedRecord.key : selectedRecord.relationTypeCode}
+              </p>
+
+              {selection?.kind === 'knowledge' && (
+                <>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-[var(--muted)]">
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">{(selectedRecord as KnowledgeItem).typeId}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">r{(selectedRecord as KnowledgeItem).currentRevisionNumber}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Review {(selectedRecord as KnowledgeItem).reviewState}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Verify {(selectedRecord as KnowledgeItem).verificationState}</span>
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Details</h4>
+                    {(selectedRecord as KnowledgeItem).description?.trim() ? (
+                      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[var(--ink)]">
+                        {(selectedRecord as KnowledgeItem).description}
+                      </p>
+                    ) : (
+                      <p className="mt-1 italic text-[var(--muted)]">No details recorded on this item.</p>
+                    )}
+                  </div>
+                  {knowledgeParent && (
+                    <p className="text-xs text-[var(--muted)]">
+                      Outline parent: <span className="font-semibold text-[var(--ink)]">{knowledgeParent.key}</span>
+                      {' — '}{knowledgeParent.title}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {selection?.kind === 'relation' && (
+                <p className="leading-relaxed">
+                  <span className="font-semibold">
+                    {knowledge.find((item) => item.id === (selectedRecord as Relationship).sourceItemId)?.key ?? 'Unknown'}
+                  </span>
+                  {' '}
+                  <span className="text-[var(--muted)]">{(selectedRecord as Relationship).relationTypeCode}</span>
+                  {' '}
+                  <span className="font-semibold">
+                    {knowledge.find((item) => item.id === (selectedRecord as Relationship).targetItemId)?.key ?? 'Unknown'}
+                  </span>
+                  <span className="mt-1 block text-xs text-[var(--muted)]">{(selectedRecord as Relationship).status}</span>
+                </p>
+              )}
+
+              {selection?.kind === 'work' && (
+                <>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-[var(--muted)]">
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Planned {(selectedRecord as WorkItem).plannedState}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Reported {(selectedRecord as WorkItem).reportedState}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Verified {(selectedRecord as WorkItem).verificationState}</span>
+                    <span className="rounded-md border border-[var(--line)] px-2 py-0.5">Approved {(selectedRecord as WorkItem).approvalState}</span>
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Details</h4>
+                    <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[var(--ink)]">
+                      {(selectedRecord as WorkItem).description || 'No description recorded.'}
+                    </p>
+                  </div>
+                </>
+              )}
+
+              <StateBadge
+                value={
+                  selection?.kind === 'relation'
+                    ? (selectedRecord as Relationship).status
+                    : selection?.kind === 'work'
+                      ? (selectedRecord as WorkItem).approvalState
+                      : (selectedRecord as KnowledgeItem).state
+                }
+              />
+              <p className="pt-1 text-xs text-[var(--muted)]">
+                Need revisions or approval actions?{' '}
+                <Link
+                  className="font-semibold text-[var(--signal)] hover:underline"
+                  to={selection?.kind === 'knowledge' ? '/knowledge' : selection?.kind === 'relation' ? '/relations' : '/work'}
+                >
+                  Open {selection?.kind} page
+                </Link>
+              </p>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
+              Select any card to keep its details here while you read the graph.
+              Outline edges show structure; teal paths are semantic relations; violet pins are governed Work links.
+            </p>
+          )}
+        </aside>
+        </div>
       </section>
     </div>
   );

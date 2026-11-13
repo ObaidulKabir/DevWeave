@@ -17,6 +17,9 @@ export function PlanOutlinePage() {
   const [rationale, setRationale] = useState('');
   const [acceptedItems, setAcceptedItems] = useState<Record<string, string>>({});
   const [message, setMessage] = useState('');
+  const [moveItemId, setMoveItemId] = useState('');
+  const [moveParentId, setMoveParentId] = useState('');
+  const [detachItemId, setDetachItemId] = useState('');
   const base = `/tenants/${tenantId}/projects/${project?.id}/plan`;
   const byId = new Map(knowledge.map((item) => [item.id, item]));
   const children = new Map<string, typeof outline.nodes>();
@@ -30,6 +33,24 @@ export function PlanOutlinePage() {
   const candidates = knowledge.filter((item) => item.currentRevisionId && !outline.nodes.some((node) => node.itemId === item.id));
   const reviewed = knowledge.filter((item) => item.currentRevisionId && item.reviewState === 'Reviewed' &&
     outline.nodes.some((node) => node.itemId === item.id));
+  const subtreeOf = (id: string) => {
+    const ids = new Set<string>([id]);
+    const walk = (parent: string) => {
+      (children.get(parent) ?? []).forEach((node) => {
+        ids.add(node.itemId);
+        walk(node.itemId);
+      });
+    };
+    walk(id);
+    return ids;
+  };
+  const movable = tree.filter(({ id }) => outline.nodes.some((node) => node.itemId === id && node.parentItemId));
+  const moveBlocked = moveItemId ? subtreeOf(moveItemId) : new Set<string>();
+  const moveParents = tree.filter(({ id }) => !moveBlocked.has(id));
+  const detachable = tree.filter(({ id }) => {
+    const node = outline.nodes.find((entry) => entry.itemId === id);
+    return Boolean(node?.parentItemId) && !(children.get(id)?.length);
+  });
 
   async function submit(event: FormEvent, path: string, body: object, success: string) {
     event.preventDefault();
@@ -47,9 +68,9 @@ export function PlanOutlinePage() {
         <p className="text-xs font-semibold uppercase tracking-wider text-[var(--signal)]">Application decomposition</p>
         <h2 className="font-display mt-2 text-2xl font-bold">Plan outline</h2>
         <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
-          Start with one application idea, then attach revised Knowledge beneath it. Each item has one permanent
-          outline parent. Semantic Relations remain separate; Work links pin an approved basis to an exact revision.
-          Agent expansions stay proposals until a project owner or admin reviews them.
+          Start with one application idea, then attach revised Knowledge beneath it. You can reparent items later
+          (subtree moves with them); leaf items can be detached. Semantic Relations remain separate; Work links pin an
+          approved basis to an exact revision. Agent expansions stay proposals until a project owner or admin reviews them.
         </p>
         {!live && <p className="mt-2 text-sm text-amber-800">Connect a live project to edit its outline.</p>}
         {outlineError && <p className="mt-2 text-sm text-rose-800" role="alert">Could not load the project outline. Check the API and your project access before editing.</p>}
@@ -108,6 +129,44 @@ export function PlanOutlinePage() {
             </select>
           </label>
           <button className="self-end rounded-lg bg-[var(--signal)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!live || outlineError || busy || !candidates.length}>Attach item</button>
+        </form>
+
+        <form
+          className="mt-5 grid gap-3 border-t border-[var(--line)] pt-5 sm:grid-cols-3"
+          onSubmit={(event) => submit(event, '/outline/move', {
+            itemId: moveItemId,
+            newParentItemId: moveParentId,
+            position: outline.nodes.length,
+          }, 'Outline item moved.')}
+        >
+          <label className="text-xs font-semibold">Move item
+            <select className="field mt-1 w-full" value={moveItemId} onChange={(event) => { setMoveItemId(event.target.value); setMoveParentId(''); }} required>
+              <option value="">Select item</option>
+              {movable.map(({ id }) => <option key={id} value={id}>{byId.get(id)?.key ?? id} · {byId.get(id)?.title}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-semibold">New parent
+            <select className="field mt-1 w-full" value={moveParentId} onChange={(event) => setMoveParentId(event.target.value)} required>
+              <option value="">Select parent</option>
+              {moveParents.map(({ id, depth }) => (
+                <option key={id} value={id}>{'· '.repeat(depth)}{byId.get(id)?.key ?? id}</option>
+              ))}
+            </select>
+          </label>
+          <button className="self-end rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-semibold disabled:opacity-50" disabled={!live || outlineError || busy || !movable.length}>Move item</button>
+        </form>
+
+        <form
+          className="mt-4 grid gap-3 sm:grid-cols-3"
+          onSubmit={(event) => submit(event, '/outline/detach', { itemId: detachItemId }, 'Outline item detached.')}
+        >
+          <label className="text-xs font-semibold sm:col-span-2">Detach leaf
+            <select className="field mt-1 w-full" value={detachItemId} onChange={(event) => setDetachItemId(event.target.value)} required>
+              <option value="">Select leaf item</option>
+              {detachable.map(({ id }) => <option key={id} value={id}>{byId.get(id)?.key ?? id} · {byId.get(id)?.title}</option>)}
+            </select>
+          </label>
+          <button className="self-end rounded-lg border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-800 disabled:opacity-50" disabled={!live || outlineError || busy || !detachable.length}>Detach</button>
         </form>
         <Link to="/knowledge" className="mt-3 inline-block text-sm font-semibold text-[var(--signal)] hover:underline">Create or revise Knowledge</Link>
       </section>

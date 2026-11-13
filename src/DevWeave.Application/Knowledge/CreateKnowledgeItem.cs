@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -11,6 +12,7 @@ public sealed class CreateKnowledgeItem
     private readonly IProjectRepository _projects;
     private readonly IPrincipalRepository _principals;
     private readonly ISchemaDefinitionRepository _schemas;
+    private readonly IProjectMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
 
     public CreateKnowledgeItem(
@@ -18,8 +20,10 @@ public sealed class CreateKnowledgeItem
         IProjectRepository projects,
         IPrincipalRepository principals,
         ISchemaDefinitionRepository schemas,
+        IProjectMembershipRepository memberships,
         IUnitOfWork unitOfWork)
     {
+        _memberships = memberships;
         _items = items;
         _projects = projects;
         _principals = principals;
@@ -47,6 +51,9 @@ public sealed class CreateKnowledgeItem
         // Deny-by-default: only an actor resolvable inside the tenant may create an item (KNW-013).
         _ = await _principals.GetByIdAsync(tenantId, createdBy, ct)
             ?? throw new NotFoundException($"Principal '{createdBy}' was not found within tenant '{tenantId}'.");
+
+        // Only active project members who can edit (not Viewers) may add to a project's knowledge.
+        await ProjectWorkAuthorization.EnsureMemberAsync(_memberships, tenantId, projectId, createdBy, reviewerOnly: false, ct);
 
         // KNW-002 / SRS 7.3: the requested type + version must reference an active (published) schema so
         // an item can never be created against an unknown or inactive type. An unknown schema and a

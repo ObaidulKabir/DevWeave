@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
@@ -24,12 +25,18 @@ public static class KnowledgeReviewAudit
 public sealed class ReviewKnowledge
 {
     private readonly IKnowledgeItemRepository _items;
+    private readonly IProjectMembershipRepository _memberships;
     private readonly IAuditRepository _audit;
     private readonly IUnitOfWork _unitOfWork;
 
-    public ReviewKnowledge(IKnowledgeItemRepository items, IAuditRepository audit, IUnitOfWork unitOfWork)
+    public ReviewKnowledge(
+        IKnowledgeItemRepository items,
+        IProjectMembershipRepository memberships,
+        IAuditRepository audit,
+        IUnitOfWork unitOfWork)
     {
         _items = items;
+        _memberships = memberships;
         _audit = audit;
         _unitOfWork = unitOfWork;
     }
@@ -44,6 +51,7 @@ public sealed class ReviewKnowledge
     {
         var cleaned = Clean(comment);
         var item = await RequireItemAsync(tenantId, itemId, ct);
+        await EnsureReviewerAsync(item, reviewer, ct);
         item.Approve(reviewedRevisionId);
         await RecordAsync(item, reviewedRevisionId, reviewer, KnowledgeReviewAudit.ApprovedAction, "approved", cleaned, ct);
         return item;
@@ -61,10 +69,15 @@ public sealed class ReviewKnowledge
             ?? throw new ArgumentException("A reason is required when rejecting a revision.", nameof(reason));
 
         var item = await RequireItemAsync(tenantId, itemId, ct);
+        await EnsureReviewerAsync(item, reviewer, ct);
         item.Reject(reviewedRevisionId);
         await RecordAsync(item, reviewedRevisionId, reviewer, KnowledgeReviewAudit.RejectedAction, "rejected", cleaned, ct);
         return item;
     }
+
+    /// <summary>Only a project Owner or Admin may decide a review; others cannot even see the item.</summary>
+    private Task EnsureReviewerAsync(KnowledgeItem item, PrincipalId reviewer, CancellationToken ct) =>
+        ProjectWorkAuthorization.EnsureMemberAsync(_memberships, item.TenantId, item.ProjectId, reviewer, reviewerOnly: true, ct);
 
     private async Task<KnowledgeItem> RequireItemAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct) =>
         await _items.GetByIdAsync(tenantId, itemId, ct)

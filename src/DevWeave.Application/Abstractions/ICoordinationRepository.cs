@@ -40,6 +40,7 @@ public interface ICoordinationRepository
     // Baselines
     Task AddBaselineAsync(PlanBaseline baseline, CancellationToken ct = default);
     Task<PlanBaseline?> GetBaselineByIdAsync(TenantId tenantId, BaselineId id, CancellationToken ct = default);
+    Task<List<PlanBaseline>> ListBaselinesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
 
     // Codebase Targets
     Task AddCodebaseTargetAsync(CodebaseTarget target, CancellationToken ct = default);

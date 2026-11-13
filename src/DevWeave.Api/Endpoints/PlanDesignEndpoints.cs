@@ -18,7 +18,10 @@ public static class PlanDesignEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/", ReadAsync);
         group.MapPost("/outline", AttachAsync);
+        group.MapPost("/outline/move", MoveAsync);
+        group.MapPost("/outline/detach", DetachAsync);
         group.MapPost("/work-links", LinkAsync);
+        group.MapPost("/work-links/remove", UnlinkAsync);
         group.MapPost("/proposals", ProposeAsync);
         group.MapPost("/proposals/{proposalId:guid}/decide", DecideAsync);
         return endpoints;
@@ -36,12 +39,33 @@ public static class PlanDesignEndpoints
             request.ParentItemId is { } parent ? new(parent) : null, request.Position, ct),
             node => Results.Created($"/tenants/{tenantId}/projects/{projectId}/plan/outline", PlanDesignProjection.Node(node)));
 
+    private static async Task<IResult> MoveAsync(Guid tenantId, Guid projectId, MoveOutlineRequest request,
+        HttpContext http, PlanDesignService service, CancellationToken ct) =>
+        await ExecuteAsync(() => service.MoveAsync(new(tenantId), new(projectId),
+            AuthenticatedPrincipal.GetId(http), new(request.ItemId), new(request.NewParentItemId), request.Position, ct),
+            node => Results.Ok(PlanDesignProjection.Node(node)));
+
+    private static async Task<IResult> DetachAsync(Guid tenantId, Guid projectId, DetachOutlineRequest request,
+        HttpContext http, PlanDesignService service, CancellationToken ct) =>
+        await ExecuteAsync(async () =>
+        {
+            await service.DetachAsync(new(tenantId), new(projectId),
+                AuthenticatedPrincipal.GetId(http), new(request.ItemId), ct);
+            return true;
+        }, _ => Results.NoContent());
+
     private static async Task<IResult> LinkAsync(Guid tenantId, Guid projectId, CreatePlanWorkLinkRequest request,
         HttpContext http, PlanDesignService service, CancellationToken ct) =>
         await ExecuteAsync(() => service.LinkAsync(new(tenantId), new(projectId),
             AuthenticatedPrincipal.GetId(http), new(request.WorkItemId), new(request.KnowledgeItemId),
             new(request.RevisionId), ct),
             link => Results.Created($"/tenants/{tenantId}/projects/{projectId}/plan/work-links", PlanDesignProjection.Link(link)));
+
+    private static async Task<IResult> UnlinkAsync(Guid tenantId, Guid projectId, RemovePlanWorkLinkRequest request,
+        HttpContext http, PlanDesignService service, CancellationToken ct) =>
+        await ExecuteAsync(() => service.UnlinkAsync(new(tenantId), new(projectId),
+            AuthenticatedPrincipal.GetId(http), new(request.WorkItemId), new(request.KnowledgeItemId), ct),
+            removed => Results.Ok(new { removed }));
 
     private static async Task<IResult> ProposeAsync(Guid tenantId, Guid projectId, ProposeExpansionRequest request,
         HttpContext http, PlanDesignService service, CancellationToken ct) =>
@@ -66,10 +90,14 @@ public static class PlanDesignEndpoints
         catch (DbUpdateException) { return Results.Conflict(new { error = "Planning record conflicts with existing project data." }); }
         catch (ProhibitedContentException) { return Results.UnprocessableEntity(new { error = "Proposal rejected by content policy." }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 }
 
 public sealed record AttachOutlineRequest(Guid ItemId, Guid? ParentItemId, int Position);
+public sealed record MoveOutlineRequest(Guid ItemId, Guid NewParentItemId, int Position);
+public sealed record DetachOutlineRequest(Guid ItemId);
 public sealed record CreatePlanWorkLinkRequest(Guid WorkItemId, Guid KnowledgeItemId, Guid RevisionId);
+public sealed record RemovePlanWorkLinkRequest(Guid WorkItemId, Guid KnowledgeItemId);
 public sealed record ProposeExpansionRequest(Guid ParentItemId, string Key, string Title, string TypeId, string Rationale);
 public sealed record DecideExpansionRequest(Guid? AcceptedItemId);

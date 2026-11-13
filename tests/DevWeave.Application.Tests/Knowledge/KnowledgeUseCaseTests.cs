@@ -30,7 +30,7 @@ public sealed class KnowledgeUseCaseTests
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
 
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(
                 tenant.Id, project.Id, "api-design", "API Design Notes",
                 Classification.Internal, RepresentationKind.Text, "doc.note", "1.0", actor.Id);
@@ -53,7 +53,7 @@ public sealed class KnowledgeUseCaseTests
         var projectB = await SeedProjectAsync(fakes, tenantB.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenantA.Id, "a@alphacorp.com");
 
-        var useCase = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork);
+        var useCase = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             useCase.ExecuteAsync(
@@ -69,7 +69,7 @@ public sealed class KnowledgeUseCaseTests
         var projectA = await SeedProjectAsync(fakes, tenantA.Id, "shop-api");
         var actorB = await SeedPrincipalAsync(fakes, tenantB.Id, "b@betacorp.com");
 
-        var useCase = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork);
+        var useCase = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             useCase.ExecuteAsync(
@@ -89,7 +89,7 @@ public sealed class KnowledgeUseCaseTests
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
         var actorOther = await SeedPrincipalAsync(fakes, otherTenant.Id, "b@betacorp.com");
 
-        var create = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork);
+        var create = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork);
         await create.ExecuteAsync(tenant.Id, projectA.Id, "shared", "t", Classification.Public, RepresentationKind.Text, "type", "1", actor.Id);
 
         // Same tenant + same project -> conflict.
@@ -113,10 +113,10 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
-        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, item.Id, 0, "1", "{\"v\":1}", actor.Id, "seed", "src-1", null);
 
         Assert.Equal(1, revision.RevisionNumber);
@@ -137,10 +137,10 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
         await add.ExecuteAsync(tenant.Id, item.Id, 0, "1", "a", actor.Id, "one", null, null);
 
         await Assert.ThrowsAsync<ConflictException>(() =>
@@ -157,10 +157,10 @@ public sealed class KnowledgeUseCaseTests
         var actorA = await SeedPrincipalAsync(fakes, tenantA.Id, "a@alphacorp.com");
         var actorB = await SeedPrincipalAsync(fakes, tenantB.Id, "b@betacorp.com");
         await SeedActiveSchemaAsync(fakes, "type", "1");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenantA.Id, projectA.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actorA.Id);
 
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             add.ExecuteAsync(tenantA.Id, KnowledgeItemId.New(), 0, "1", "a", actorA.Id, "one", null, null));
@@ -177,7 +177,7 @@ public sealed class KnowledgeUseCaseTests
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
 
-        var create = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork);
+        var create = new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork);
 
         // No schema registered at all -> unknown type, rejected at creation (KNW-002 / SRS 7.3).
         await Assert.ThrowsAsync<NotFoundException>(() =>
@@ -201,7 +201,7 @@ public sealed class KnowledgeUseCaseTests
         schema.Publish();
         await fakes.Schemas.AddAsync(schema);
 
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
         // Deprecating the schema after the item was created makes the pinned version inactive; a later
@@ -209,7 +209,7 @@ public sealed class KnowledgeUseCaseTests
         schema.Deprecate();
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
-            new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+            new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
                 .ExecuteAsync(tenant.Id, item.Id, 0, "1", "{}", actor.Id, "one", null, null));
     }
 
@@ -221,10 +221,10 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
 
         // The item pins schema version "1"; a revision claiming a different version must be rejected so
         // the recorded version can never diverge from the schema the payload was checked against.
@@ -240,7 +240,7 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
         fakes.PayloadValidator.Impl = (content, _) =>
@@ -248,7 +248,7 @@ public sealed class KnowledgeUseCaseTests
                 ? new List<SchemaValidationIssue> { new("/v", "must be a number") }
                 : new List<SchemaValidationIssue>();
 
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
 
         var ex = await Assert.ThrowsAsync<PayloadValidationException>(() =>
             add.ExecuteAsync(tenant.Id, item.Id, 0, "1", "{\"v\":\"bad\"}", actor.Id, "one", null, null));
@@ -267,7 +267,7 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
 
         // The shared content policy (SRS 7.7, ART-008, AC-09) runs on every ingress path: a knowledge
@@ -275,7 +275,7 @@ public sealed class KnowledgeUseCaseTests
         fakes.Inspector.Result = ContentInspectionResult.Reject(SecretRejectionReasons);
 
         var ex = await Assert.ThrowsAsync<ProhibitedContentException>(() =>
-            new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+            new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
                 .ExecuteAsync(tenant.Id, item.Id, 0, "1", "{\"key\":\"AKIAABCDEFGHIJKLMNOP\"}", actor.Id, "one", null, null));
 
         Assert.Contains("AKIA", Assert.Single(ex.Reasons));
@@ -291,9 +291,9 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
-        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, item.Id, 0, "1", "{}", actor.Id, "seed", null, null);
 
         await new ApproveItem(fakes.Items, fakes.UnitOfWork).ExecuteAsync(tenant.Id, item.Id);
@@ -321,9 +321,9 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
-        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+        var revision = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, item.Id, 0, "1", "{}", actor.Id, "seed", null, null);
         await new ApproveItem(fakes.Items, fakes.UnitOfWork).ExecuteAsync(tenant.Id, item.Id);
 
@@ -355,8 +355,8 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
-        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "api", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
         var first = await add.ExecuteAsync(tenant.Id, item.Id, 0, "1", "{}", actor.Id, "seed", null, null);
         await new ApproveItem(fakes.Items, fakes.UnitOfWork).ExecuteAsync(tenant.Id, item.Id);
@@ -385,10 +385,10 @@ public sealed class KnowledgeUseCaseTests
         var tenant = Tenant.Create("Alpha Corp");
         var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
         var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
-        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork);
+        var add = new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork);
         var verify = new VerifyItem(fakes.Items, fakes.Activities, fakes.Evidence, fakes.UnitOfWork);
 
-        var rejected = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var rejected = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "r1", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
         var rejectedRevision = await add.ExecuteAsync(tenant.Id, rejected.Id, 0, "1", "{}", actor.Id, "seed", null, null);
         await SeedAcceptedEvidenceAsync(fakes, tenant.Id, project.Id, actor.Id, rejected.Id, rejectedRevision.Id);
@@ -398,7 +398,7 @@ public sealed class KnowledgeUseCaseTests
         // Even with qualifying evidence, a rejected item can never be verified.
         await Assert.ThrowsAsync<InvalidOperationException>(() => verify.ExecuteAsync(tenant.Id, rejected.Id));
 
-        var proposed = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var proposed = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenant.Id, project.Id, "r2", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
         var proposedRevision = await add.ExecuteAsync(tenant.Id, proposed.Id, 0, "1", "{}", actor.Id, "seed", null, null);
         await SeedAcceptedEvidenceAsync(fakes, tenant.Id, project.Id, actor.Id, proposed.Id, proposedRevision.Id);
@@ -419,11 +419,11 @@ public sealed class KnowledgeUseCaseTests
         var actorA = await SeedPrincipalAsync(fakes, tenantA.Id, "a@alphacorp.com");
         var actorB = await SeedPrincipalAsync(fakes, tenantB.Id, "b@betacorp.com");
 
-        var itemA = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var itemA = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenantA.Id, projectA.Id, "k", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actorA.Id);
-        var itemB = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.UnitOfWork)
+        var itemB = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenantB.Id, projectB.Id, "k", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actorB.Id);
-        var revisionB = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.UnitOfWork)
+        var revisionB = await new AddRevision(fakes.Items, fakes.Revisions, fakes.Principals, fakes.Schemas, fakes.PayloadValidator, fakes.Inspector, fakes.Memberships, fakes.UnitOfWork)
             .ExecuteAsync(tenantB.Id, itemB.Id, 0, "1", "{}", actorB.Id, "seed", null, null);
 
         // Items
@@ -503,6 +503,25 @@ public sealed class KnowledgeUseCaseTests
         public StubPayloadValidator PayloadValidator { get; } = new();
         public StubContentInspector Inspector { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
+        public OwnerOfEveryProject Memberships => new(Projects);
+    }
+
+    /// <summary>These tests are about knowledge rules, not access, so every principal owns every seeded project.</summary>
+    private sealed class OwnerOfEveryProject(InMemoryProjectRepository projects) : IProjectMembershipRepository
+    {
+        public Task AddAsync(ProjectMembership membership, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<ProjectMembership?> GetByIdAsync(TenantId tenantId, ProjectMembershipId id, CancellationToken ct = default) =>
+            Task.FromResult<ProjectMembership?>(null);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>([]);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>(projects.Projects
+                .Where(p => p.TenantId == tenantId)
+                .Select(p => ProjectMembership.Grant(tenantId, p.Id, principalId, ProjectRole.Owner))
+                .ToList());
     }
 
     private sealed class InMemoryKnowledgeItemRepository : IKnowledgeItemRepository

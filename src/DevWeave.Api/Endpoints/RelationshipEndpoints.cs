@@ -108,21 +108,34 @@ public static class RelationshipEndpoints
             : Results.Ok(Map(relationship));
     }
 
+    public sealed record RevokeRelationshipRequest(string? Reason);
+
     private static async Task<IResult> RevokeRelationshipAsync(
         Guid tenantId,
         Guid relationshipId,
+        RevokeRelationshipRequest? request,
+        HttpContext http,
         RevokeRelationship useCase,
         CancellationToken ct)
     {
         try
         {
-            var relationship = await useCase.ExecuteAsync(new TenantId(tenantId), new RelationshipId(relationshipId), ct);
+            var relationship = await useCase.ExecuteAsync(
+                new TenantId(tenantId), new RelationshipId(relationshipId), AuthenticatedPrincipal.GetId(http), request?.Reason, ct);
 
             return Results.Ok(Map(relationship));
         }
         catch (NotFoundException)
         {
             return Results.NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { code = "already-revoked", message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { code = "invalid-reason", message = ex.Message });
         }
     }
 

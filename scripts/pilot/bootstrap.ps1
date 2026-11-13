@@ -1,7 +1,11 @@
 ﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-  Bootstrap the TaskBoard Lite real-case pilot tenant, plan, agents, and coordination baseline.
+  Bootstrap the TaskBoard Lite real-case pilot tenant, plan, agents, and coordination baselines.
+
+.DESCRIPTION
+  Seeds v1 (outline + baseline + campaign), then evolves the living plan (move K-05, detach
+  K-DRAFT, add K-AUTH/K-06/K-07, revise K-03) and locks plan version 2 with a fresh campaign.
 #>
 param(
   [string]$ApiBase = "http://localhost:5080",
@@ -223,7 +227,7 @@ $null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
 $null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
   itemId = $k05.itemId; parentItemId = $k01.itemId; position = 1
 }
-Write-Host "Plan outline: K-01 / K-API / {K-02,K-03,K-04} + K-05"
+Write-Host "Plan outline v1: K-01 / K-API / {K-02,K-03,K-04} + K-05"
 
 # Semantic relation (not the same as outline parent/child)
 $relation = Invoke-Json -Method Post -Url "$route/relationships" -Headers $H -Body @{
@@ -399,6 +403,196 @@ $channel = Invoke-Json -Method Post -Url "$coord/channels" -Headers $H -Body @{
   workPackageId = $null
 }
 
+$baselineV1Id = $baseline.id
+$campaignV1Id = $campaign.id
+$pkg1V1Id = $pkg1.id
+$pkg2V1Id = $pkg2.id
+
+# --- Plan evolution (v2): move, detach, revision drift, re-baseline ---
+Write-Host "== Plan evolution (v2) ==" -ForegroundColor Cyan
+
+$kAuth = New-KnowledgeEntry -Key "K-AUTH" -Title "Authentication gate module" `
+  -Description "Module that rejects unauthenticated calls before create/list handlers run." `
+  -TypeId "plan.module" -SchemaVersion "1.0" `
+  -Content '{"name":"Authentication gate","purpose":"Require a valid caller identity on every personal-tasks API request","inScope":["Bearer token validation","401 on missing/invalid credentials"],"outOfScope":["Registration UI","password reset","OAuth providers"],"source":"v2 scope expansion"}' `
+  -Reason "Add auth module for plan version 2"
+$k06 = New-KnowledgeEntry -Key "K-06" -Title "Reject unauthenticated API requests" `
+  -Description "Create and list must return 401 when no valid authenticated caller is present." `
+  -TypeId "plan.requirement" -SchemaVersion "1.0" `
+  -Content '{"statement":"Reject create-task and list-tasks when the caller is not authenticated.","acceptance":"Missing or invalid credentials yield HTTP 401; no task rows are created or listed.","rationale":"Owner isolation presupposes an authenticated principal.","source":"v2 acceptance"}' `
+  -Reason "Capture auth requirement"
+$k07 = New-KnowledgeEntry -Key "K-07" -Title "Validate JWT bearer tokens at the API edge" `
+  -Description "Use JWT bearer validation so handlers receive a stable owner identity without storing passwords in TaskBoard." `
+  -TypeId "design.decision" -SchemaVersion "1.1" `
+  -Content '{"summary":"JWT bearer at the API edge","decision":"Validate JWT bearer tokens before create/list handlers and map subject to owner identity.","rationale":"Keeps credentials out of TaskBoard storage while giving every request a stable owner id.","alternatives":["Session cookies","API keys in headers"],"source":"v2 architecture choice"}' `
+  -Reason "Record auth decision that supports K-06"
+$kDraft = New-KnowledgeEntry -Key "K-DRAFT" -Title "Shared task lists (deferred)" `
+  -Description "Parked idea: multi-owner shared lists. Detached from the outline so it stays Knowledge without governing the locked plan." `
+  -TypeId "plan.requirement" -SchemaVersion "1.0" `
+  -Content '{"statement":"Allow two owners to share a task list.","acceptance":"Both owners see the same tasks.","rationale":"Useful later; out of MVP/v2 scope.","source":"Deferred product idea"}' `
+  -Reason "Capture deferred idea for detach demo"
+
+$null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
+  itemId = $kAuth.itemId; parentItemId = $k01.itemId; position = 2
+}
+$null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
+  itemId = $k06.itemId; parentItemId = $kAuth.itemId; position = 0
+}
+$null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
+  itemId = $k07.itemId; parentItemId = $kAuth.itemId; position = 1
+}
+$null = Invoke-Json -Method Post -Url "$route/plan/outline" -Headers $H -Body @{
+  itemId = $kDraft.itemId; parentItemId = $k01.itemId; position = 3
+}
+Write-Host "Attached K-AUTH/{K-06,K-07} and temporary K-DRAFT"
+
+# Move: constraint belongs with the API module (subtree-safe reparent)
+$null = Invoke-Json -Method Post -Url "$route/plan/outline/move" -Headers $H -Body @{
+  itemId = $k05.itemId
+  newParentItemId = $kApi.itemId
+  position = 3
+}
+Write-Host "Moved K-05 under K-API"
+
+# Detach: deferred idea leaves the outline but remains as Knowledge
+$null = Invoke-Json -Method Post -Url "$route/plan/outline/detach" -Headers $H -Body @{
+  itemId = $kDraft.itemId
+}
+Write-Host "Detached K-DRAFT (unplaced Knowledge)"
+
+# Living revision change on an already-linked requirement → stale Plan Work link
+$k03Rev2 = Invoke-Json -Method Post -Url "$ApiBase/tenants/$tenantId/knowledge/$($k03.itemId)/revisions" -Headers $H -Body @{
+  expectedCurrentRevisionNumber = $k03.revisionNumber
+  schemaVersion = "1.0"
+  content = '{"statement":"List only the authenticated user tasks.","acceptance":"User A cannot read user B tasks; unauthenticated callers receive 401 before any list runs.","rationale":"Per-user isolation requires an authenticated principal (see K-06).","source":"MVP acceptance + v2 auth gate"}'
+  actor = $ownerId
+  reason = "Tie list isolation to the authentication gate"
+  sourceReference = "docs/application-planning-guide.md#taskboard-lite"
+  supersededRevisionId = $k03.revisionId
+}
+$null = Invoke-Json -Method Post -Url "$ApiBase/tenants/$tenantId/knowledge/$($k03.itemId)/approve" -Headers $H -Body @{
+  revisionId = $k03Rev2.id
+  comment = "Approved for plan version 2"
+}
+$k03PriorRevisionId = $k03.revisionId
+$k03 = [pscustomobject]@{
+  itemId = $k03.itemId
+  key = $k03.key
+  typeId = $k03.typeId
+  revisionId = $k03Rev2.id
+  revisionNumber = $k03Rev2.revisionNumber
+}
+Write-Host "Revised+approved $($k03.key) r$($k03.revisionNumber) (prior link to r1 remains stale until re-pin)"
+
+$relationAuth = Invoke-Json -Method Post -Url "$route/relationships" -Headers $H -Body @{
+  sourceItemId = $k07.itemId
+  targetItemId = $k06.itemId
+  relationTypeCode = "supports"
+  createdBy = $ownerId
+}
+Write-Host "Semantic relation $($k07.key) -supports-> $($k06.key)"
+
+$tb3 = Invoke-Json -Method Post -Url "$route/work-items" -Headers $H -Body @{
+  key = "W-03"
+  title = "Enforce JWT auth on create and list"
+  description = @"
+Deliverable: reject unauthenticated create/list with 401.
+Governed basis: Plan Work link to $($k06.key); decision $($k07.key) supports the requirement.
+Depends on W-01/W-02 handlers existing.
+Acceptance: missing/invalid bearer → 401; valid token reaches existing owner-scoped behaviour.
+"@
+  milestoneId = $milestone.id
+  ownerId = $ownerId
+  dueAt = $null
+  priority = "High"
+  dependsOn = @($tb1.id, $tb2.id)
+}
+$linkW03 = Invoke-Json -Method Post -Url "$route/plan/work-links" -Headers $H -Body @{
+  workItemId = $tb3.id; knowledgeItemId = $k06.itemId; revisionId = $k06.revisionId
+}
+$linkW03b = Invoke-Json -Method Post -Url "$route/plan/work-links" -Headers $H -Body @{
+  workItemId = $tb3.id; knowledgeItemId = $k07.itemId; revisionId = $k07.revisionId
+}
+# Re-pin W-02 to the new K-03 revision (historical r1 link stays; map shows stale dashed edge)
+$linkW02c = Invoke-Json -Method Post -Url "$route/plan/work-links" -Headers $H -Body @{
+  workItemId = $tb2.id; knowledgeItemId = $k03.itemId; revisionId = $k03.revisionId
+}
+Write-Host "Plan Work links: W-03->$($k06.key),$($k07.key); W-02 also pins $($k03.key) r$($k03.revisionNumber)"
+
+$previewV2 = Invoke-Json -Method Get -Url "$coord/baselines/preview" -Headers $H
+Write-Host ("Drift before v2 lock: hasDrift={0} added=[{1}] changed=[{2}] stale=[{3}] activeOnPrior={4}" -f `
+  $previewV2.drift.hasDrift, `
+  (($previewV2.drift.addedKeys) -join ","), `
+  (($previewV2.drift.changedKeys) -join ","), `
+  (($previewV2.drift.staleWorkLinkKeys) -join ","), `
+  @($previewV2.drift.activeCampaignIdsOnPriorBaselines).Count)
+
+if (-not $previewV2.canLock) {
+  throw "Cannot lock plan v2: $($previewV2.blockers | ConvertTo-Json -Compress)"
+}
+
+$baselineV2 = Invoke-Json -Method Post -Url "$coord/baselines" -Headers $H -Body @{
+  goal = "A signed-in user can create and list their own tasks; unauthenticated requests are rejected"
+  approvedRevisions = @($previewV2.items | ForEach-Object {
+    @{ id = $_.itemId; revisionId = $_.revisionId }
+  })
+  dependencies = @($tb1.id, $tb2.id, $tb3.id)
+  acceptanceCriteria = @(
+    "Valid create-task and empty-title rejection (K-02)",
+    "User-scoped list isolation (K-03)",
+    "Unauthenticated create/list → 401 (K-06)",
+    "No source blobs in DevWeave (K-05)",
+    "Exclusive leases across runtimes"
+  )
+  expectedPlanVersion = [int]$previewV2.nextPlanVersion
+}
+Write-Host "Locked PlanBaseline v$($previewV2.nextPlanVersion) ($($baselineV2.id)); prior campaign suspended for rebase"
+
+$campaignV2 = Invoke-Json -Method Post -Url "$coord/campaigns" -Headers $H -Body @{
+  baselineId = $baselineV2.id
+  codebaseTargetIds = @($target.id)
+  objective = "Coordinate W-01/W-02/W-03 on taskboard-lite (plan v2)"
+  executionMode = "Mediated"
+  idempotencyKey = "pilot-campaign-2"
+}
+$null = Invoke-Json -Method Post -Url "$coord/campaigns/$($campaignV2.id)/transition" -Headers $H -Body @{
+  targetState = "Active"
+  reason = "start pilot on plan v2"
+  expectedVersion = 1
+  idempotencyKey = "pilot-activate-2"
+}
+$pkg1 = Invoke-Json -Method Post -Url "$coord/packages" -Headers $H -Body @{
+  campaignId = $campaignV2.id
+  baselineId = $baselineV2.id
+  objective = "W-01 create-task API"
+  dependsOn = @()
+  allowedScopes = @("paths:/src/api/create-task")
+  acceptanceCriteria = @("valid title creates task", "empty title rejected")
+}
+$pkg2 = Invoke-Json -Method Post -Url "$coord/packages" -Headers $H -Body @{
+  campaignId = $campaignV2.id
+  baselineId = $baselineV2.id
+  objective = "W-02 user-scoped list-tasks API"
+  dependsOn = @($pkg1.id)
+  allowedScopes = @("paths:/src/api/list-tasks")
+  acceptanceCriteria = @("owner-only list", "cross-user isolation")
+}
+$pkg3 = Invoke-Json -Method Post -Url "$coord/packages" -Headers $H -Body @{
+  campaignId = $campaignV2.id
+  baselineId = $baselineV2.id
+  objective = "W-03 JWT auth gate on create/list"
+  dependsOn = @($pkg1.id, $pkg2.id)
+  allowedScopes = @("paths:/src/api")
+  acceptanceCriteria = @("missing/invalid bearer → 401", "valid token reaches owner-scoped handlers")
+}
+$channelV2 = Invoke-Json -Method Post -Url "$coord/channels" -Headers $H -Body @{
+  channelType = "Campaign"
+  campaignId = $campaignV2.id
+  workPackageId = $null
+}
+Write-Host "Active campaign on baseline v2; packages W-01/W-02/W-03 ready"
+Write-Host "Final outline: K-01 → K-API → {K-02,K-03,K-04,K-05} + K-AUTH → {K-06,K-07}; K-DRAFT unplaced"
+
 $session = [ordered]@{
   apiBase = $ApiBase
   tenantId = $tenantId
@@ -408,6 +602,7 @@ $session = [ordered]@{
   milestoneId = $milestone.id
   workItemTb1Id = $tb1.id
   workItemTb2Id = $tb2.id
+  workItemTb3Id = $tb3.id
   knowledgeItemId = $k04.itemId
   revisionId = $k04.revisionId
   knowledge = @{
@@ -415,20 +610,42 @@ $session = [ordered]@{
     kApi = $kApi
     k02 = $k02
     k03 = $k03
+    k03PriorRevisionId = $k03PriorRevisionId
     k04 = $k04
     k05 = $k05
+    kAuth = $kAuth
+    k06 = $k06
+    k07 = $k07
+    kDraft = $kDraft
     supportsRelationId = $relation.id
-    workLinks = @($linkW01.id, $linkW02a.id, $linkW02b.id)
+    supportsRelationAuthId = $relationAuth.id
+    workLinks = @($linkW01.id, $linkW02a.id, $linkW02b.id, $linkW02c.id, $linkW03.id, $linkW03b.id)
+    outlineFinal = "K-01 → K-API → {K-02,K-03,K-04,K-05} + K-AUTH → {K-06,K-07}; K-DRAFT unplaced"
+  }
+  planEvolution = @{
+    moved = @(@{ key = "K-05"; from = "K-01"; to = "K-API" })
+    detached = @("K-DRAFT")
+    addedKeys = @("K-AUTH", "K-06", "K-07")
+    driftBeforeV2 = $previewV2.drift
   }
   repositoryId = $RepositoryId
   sandboxPath = $SandboxPath
   baseCommitSha = $baseSha
-  baselineId = $baseline.id
+  baselineId = $baselineV2.id
+  baselineV1Id = $baselineV1Id
+  baselineV2Id = $baselineV2.id
+  planVersion = [int]$previewV2.nextPlanVersion
   codebaseTargetId = $target.id
-  campaignId = $campaign.id
+  campaignId = $campaignV2.id
+  campaignV1Id = $campaignV1Id
+  campaignV2Id = $campaignV2.id
   packageTb1Id = $pkg1.id
   packageTb2Id = $pkg2.id
-  channelId = $channel.id
+  packageTb3Id = $pkg3.id
+  packageTb1V1Id = $pkg1V1Id
+  packageTb2V1Id = $pkg2V1Id
+  channelId = $channelV2.id
+  channelV1Id = $channel.id
   agentA = $agentA
   agentB = $agentB
   createdAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -449,4 +666,5 @@ Write-Host ""
 Write-Host "Wrote $sessionPath" -ForegroundColor Green
 Write-Host "Wrote $studioEnvPath (restart Vite to pick up token)" -ForegroundColor Green
 Write-Host "Canonical target: github:$RepositoryId@$Branch#$baseSha"
+Write-Host "Plan versions: v1=$baselineV1Id → v2=$($baselineV2.id) (active campaign $($campaignV2.id))" -ForegroundColor Green
 $sessionPath

@@ -9,7 +9,8 @@ namespace DevWeave.Application.Tests.Knowledge;
 
 /// <summary>
 /// Review decisions are bound to one revision and leave a traceable record of who decided, on which
-/// revision, when and why (KNW-012, PRO-005, GOV-007).
+/// revision, when and why (KNW-012, PRO-005, GOV-007). Only an Owner or Admin of the item's project may
+/// decide a review (GOV-007); a single owner approving their own content is a valid, intended flow.
 /// </summary>
 public sealed class ReviewKnowledgeTests
 {
@@ -17,13 +18,15 @@ public sealed class ReviewKnowledgeTests
     private static readonly ProjectId Project = ProjectId.New();
     private static readonly PrincipalId Author = PrincipalId.New();
     private static readonly PrincipalId Reviewer = PrincipalId.New();
+    private static readonly PrincipalId Editor = PrincipalId.New();
+    private static readonly PrincipalId Outsider = PrincipalId.New();
 
     [Fact]
     public async Task Approving_a_revision_records_reviewer_revision_and_comment()
     {
-        var (items, audit, uow, item) = Arrange();
+        var (items, audit, uow, item, members) = Arrange();
         var revision = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
-        var review = new ReviewKnowledge(items, audit, uow);
+        var review = new ReviewKnowledge(items, members, audit, uow);
 
         var approved = await review.ApproveAsync(Tenant, item.Id, revision.Id, Reviewer, "  Looks right  ");
 
@@ -39,12 +42,25 @@ public sealed class ReviewKnowledgeTests
     }
 
     [Fact]
+    public async Task A_project_owner_may_approve_their_own_revision()
+    {
+        var (items, audit, uow, item, members) = Arrange();
+        members.Store.Add(ProjectMembership.Grant(Tenant, Project, Author, ProjectRole.Owner));
+        var revision = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
+        var review = new ReviewKnowledge(items, members, audit, uow);
+
+        var approved = await review.ApproveAsync(Tenant, item.Id, revision.Id, Author, "Looks right");
+
+        Assert.Equal(InfoState.Approved, approved.State);
+    }
+
+    [Fact]
     public async Task Approving_a_superseded_revision_is_refused_and_records_nothing()
     {
-        var (items, audit, uow, item) = Arrange();
+        var (items, audit, uow, item, members) = Arrange();
         var first = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
         item.AddRevision("1", "{\"changed\":true}", Author, "edited during review", null, null, 1);
-        var review = new ReviewKnowledge(items, audit, uow);
+        var review = new ReviewKnowledge(items, members, audit, uow);
 
         await Assert.ThrowsAsync<StaleReviewException>(() =>
             review.ApproveAsync(Tenant, item.Id, first.Id, Reviewer, null));
@@ -57,9 +73,9 @@ public sealed class ReviewKnowledgeTests
     [Fact]
     public async Task Rejecting_requires_a_reason_and_records_it()
     {
-        var (items, audit, uow, item) = Arrange();
+        var (items, audit, uow, item, members) = Arrange();
         var revision = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
-        var review = new ReviewKnowledge(items, audit, uow);
+        var review = new ReviewKnowledge(items, members, audit, uow);
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             review.RejectAsync(Tenant, item.Id, revision.Id, Reviewer, "   "));
@@ -76,9 +92,9 @@ public sealed class ReviewKnowledgeTests
     [Fact]
     public async Task Overlong_comments_are_refused()
     {
-        var (items, audit, uow, item) = Arrange();
+        var (items, audit, uow, item, members) = Arrange();
         var revision = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
-        var review = new ReviewKnowledge(items, audit, uow);
+        var review = new ReviewKnowledge(items, members, audit, uow);
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             review.ApproveAsync(Tenant, item.Id, revision.Id, Reviewer, new string('x', KnowledgeReviewAudit.MaxCommentLength + 1)));
@@ -87,21 +103,62 @@ public sealed class ReviewKnowledgeTests
     [Fact]
     public async Task Unknown_items_are_not_found()
     {
-        var (items, audit, uow, _) = Arrange();
-        var review = new ReviewKnowledge(items, audit, uow);
+        var (items, audit, uow, _, members) = Arrange();
+        var review = new ReviewKnowledge(items, members, audit, uow);
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             review.ApproveAsync(Tenant, KnowledgeItemId.New(), KnowledgeRevisionId.New(), Reviewer, null));
     }
 
-    private static (InMemoryItems Items, InMemoryAudit Audit, CountingUnitOfWork Uow, KnowledgeItem Item) Arrange()
+    [Fact]
+    public async Task Only_project_owners_and_admins_can_decide_a_review()
+    {
+        var (items, audit, uow, item, members) = Arrange();
+        var revision = item.AddRevision("1", "{}", Author, "draft", null, null, 0);
+        var review = new ReviewKnowledge(items, members, audit, uow);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            review.ApproveAsync(Tenant, item.Id, revision.Id, Editor, null));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            review.ApproveAsync(Tenant, item.Id, revision.Id, Outsider, null));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            review.RejectAsync(Tenant, item.Id, revision.Id, Editor, "No"));
+
+        Assert.Equal(InfoState.Proposed, item.State);
+        Assert.Empty(audit.Records);
+    }
+
+    private static (InMemoryItems Items, InMemoryAudit Audit, CountingUnitOfWork Uow, KnowledgeItem Item, InMemoryMembers Members) Arrange()
     {
         var item = KnowledgeItem.Create(
             Tenant, Project, "req-1", "A requirement", Classification.Internal,
             RepresentationKind.Text, "doc.note", "1", Author);
         var items = new InMemoryItems();
         items.Store.Add(item);
-        return (items, new InMemoryAudit(), new CountingUnitOfWork(), item);
+        var members = new InMemoryMembers();
+        members.Store.Add(ProjectMembership.Grant(Tenant, Project, Reviewer, ProjectRole.Admin));
+        members.Store.Add(ProjectMembership.Grant(Tenant, Project, Editor, ProjectRole.Member));
+        return (items, new InMemoryAudit(), new CountingUnitOfWork(), item, members);
+    }
+
+    private sealed class InMemoryMembers : IProjectMembershipRepository
+    {
+        public List<ProjectMembership> Store { get; } = [];
+
+        public Task AddAsync(ProjectMembership membership, CancellationToken ct = default)
+        {
+            Store.Add(membership);
+            return Task.CompletedTask;
+        }
+
+        public Task<ProjectMembership?> GetByIdAsync(TenantId tenantId, ProjectMembershipId id, CancellationToken ct = default) =>
+            Task.FromResult(Store.FirstOrDefault(m => m.TenantId == tenantId && m.Id == id));
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>(Store.Where(m => m.TenantId == tenantId && m.ProjectId == projectId).ToList());
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>(Store.Where(m => m.TenantId == tenantId && m.PrincipalId == principalId).ToList());
     }
 
     private sealed class InMemoryItems : IKnowledgeItemRepository

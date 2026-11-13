@@ -34,7 +34,7 @@ Invoke-RestMethod http://localhost:5080/auth/pilot/bootstrap -Method Post -Conte
 pwsh -File scripts/pilot/bootstrap.ps1
 ```
 
-Creates tenant owner; publishes schemas `plan.goal`, `plan.module`, `plan.requirement`, `plan.constraint`, `design.decision@1.1`; registers `supports`; seeds the redesigned TaskBoard Lite plan (outline `K-01→K-API→{K-02,K-03,K-04}` plus `K-05`, semantic `K-04 supports K-03`, milestone M-01, work W-01/W-02, revision-pinned Plan Work links); then agents, credentials, grants, and coordination baseline/target/campaign/packages/channel. Writes `docs/pilot/session.json`.
+Creates tenant owner; publishes schemas `plan.goal`, `plan.module`, `plan.requirement`, `plan.constraint`, `design.decision@1.1`; registers `supports`; seeds TaskBoard Lite **plan v1** (outline `K-01→K-API→{K-02,K-03,K-04}` plus `K-05`, semantic `K-04 supports K-03`, milestone M-01, work W-01/W-02, revision-pinned Plan Work links, baseline + campaign); then **evolves to plan v2**: add `K-AUTH`/`K-06`/`K-07`, move `K-05` under `K-API`, detach `K-DRAFT`, revise `K-03`, add W-03 + links, lock baseline v2 (suspends the v1 campaign), and activate a new campaign with packages for W-01/W-02/W-03. Writes `docs/pilot/session.json` (includes both baseline IDs and drift captured before v2).
 
 Canonical lock: `github:devweave-pilot/taskboard-lite@main#<baseSha>`
 
@@ -65,7 +65,7 @@ $env:TASKBOARD_CONNECTION = "Host=localhost;Port=5433;Database=taskboard_lite;Us
 dotnet run --project "..\taskboard-lite" --urls http://localhost:5090
 ```
 
-Smoke: `POST/GET /tasks` with `X-Owner-Id` header. Plan map remains `6` outline nodes / `3` Work links.
+Smoke: `POST/GET /tasks` with `X-Owner-Id` header. After bootstrap, Plan outline/map show **8** outline nodes (`K-DRAFT` unplaced), **2** `supports` relations, and **6** Plan Work links (including the historical K-03 r1 link). Coordination lists baselines **v1** and **v2**; the active campaign is on v2.
 
 ## Phase 3 — Adversarial
 

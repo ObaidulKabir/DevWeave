@@ -9,7 +9,8 @@ public sealed record CreateKnowledgeItemRequest(
     RepresentationKind RepresentationKind,
     string TypeId,
     string SchemaVersion,
-    Guid CreatedBy);
+    Guid CreatedBy,
+    string? Description = null);
 
 public sealed record AddRevisionRequest(
     int ExpectedCurrentRevisionNumber,

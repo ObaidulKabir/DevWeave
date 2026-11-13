@@ -8,6 +8,7 @@ public sealed record KnowledgeItemResponse(
     Guid ProjectId,
     string Key,
     string Title,
+    string Description,
     Classification Classification,
     RepresentationKind RepresentationKind,
     InfoState State,

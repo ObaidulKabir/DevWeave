@@ -133,12 +133,13 @@ function New-KnowledgeEntry {
   param(
     [string]$Key,
     [string]$Title,
+    [string]$Description = "",
     [string]$TypeId,
     [string]$SchemaVersion,
     [string]$Content,
     [string]$Reason
   )
-  $item = Invoke-Json -Method Post -Url "$route/knowledge" -Headers $H -Body @{
+  $body = @{
     key = $Key
     title = $Title
     classification = "Internal"
@@ -147,6 +148,8 @@ function New-KnowledgeEntry {
     schemaVersion = $SchemaVersion
     createdBy = $ownerId
   }
+  if ($Description) { $body.description = $Description }
+  $item = Invoke-Json -Method Post -Url "$route/knowledge" -Headers $H -Body $body
   $rev = Invoke-Json -Method Post -Url "$ApiBase/tenants/$tenantId/knowledge/$($item.id)/revisions" -Headers $H -Body @{
     expectedCurrentRevisionNumber = 0
     schemaVersion = $SchemaVersion
@@ -171,26 +174,32 @@ function New-KnowledgeEntry {
 
 # TaskBoard Lite sample redesigned for Plan outline + semantic Relations + Plan Work links
 $k01 = New-KnowledgeEntry -Key "K-01" -Title "Users manage personal tasks" `
+  -Description "Application outcome for TaskBoard Lite: signed-in owners create and list only their own tasks." `
   -TypeId "plan.goal" -SchemaVersion "1.0" `
   -Content '{"statement":"A signed-in user can create and list their own tasks.","users":"Authenticated task owners","source":"Product outcome for TaskBoard Lite MVP"}' `
   -Reason "Capture application outcome as outline root"
 $kApi = New-KnowledgeEntry -Key "K-API" -Title "Personal tasks API module" `
+  -Description "HTTP module that owns create-task and list-tasks with owner filtering; UI and sharing stay out of scope." `
   -TypeId "plan.module" -SchemaVersion "1.0" `
   -Content '{"name":"Personal tasks API","purpose":"HTTP create and list endpoints for owner-scoped tasks","inScope":["POST create-task","GET list-tasks","owner filtering"],"outOfScope":["UI shell","sharing","notifications"],"source":"MVP module decomposition"}' `
   -Reason "Define module under the application goal"
 $k02 = New-KnowledgeEntry -Key "K-02" -Title "Create a task with a non-empty title" `
+  -Description "Create path must require a non-empty title so every task is identifiable in the owner list." `
   -TypeId "plan.requirement" -SchemaVersion "1.0" `
   -Content '{"statement":"Create a task with a title; reject an empty title.","acceptance":"A valid task appears in the owner list and an empty title is rejected.","rationale":"Titles are the minimum identifiable task attribute.","source":"MVP acceptance"}' `
   -Reason "Capture create-task requirement"
 $k03 = New-KnowledgeEntry -Key "K-03" -Title "List only the authenticated user tasks" `
+  -Description "List path must enforce per-user isolation so one owner never sees another owner's tasks." `
   -TypeId "plan.requirement" -SchemaVersion "1.0" `
   -Content '{"statement":"List only the authenticated user tasks.","acceptance":"User A cannot read user B tasks.","rationale":"Per-user isolation is required for personal task boards.","source":"MVP acceptance"}' `
   -Reason "Capture list-isolation requirement"
 $k04 = New-KnowledgeEntry -Key "K-04" -Title "Persist tasks in PostgreSQL with owner identity" `
+  -Description "Store each task with owner identity in Postgres so list isolation is durable and indexable." `
   -TypeId "design.decision" -SchemaVersion "1.1" `
   -Content '{"summary":"Durable per-user task storage","decision":"Persist tasks in PostgreSQL with owner identity on each row.","rationale":"Durable storage and indexed owner filtering for list isolation; avoids ephemeral in-memory loss.","alternatives":["In-memory store","Shared flat file"],"source":"Architecture choice for MVP"}' `
   -Reason "Record storage decision that supports isolation"
 $k05 = New-KnowledgeEntry -Key "K-05" -Title "No source code or secrets in DevWeave" `
+  -Description "TaskBoard code stays in the external repo; DevWeave keeps only planning evidence and change-set refs." `
   -TypeId "plan.constraint" -SchemaVersion "1.0" `
   -Content '{"statement":"TaskBoard implementation stays in the external repository; DevWeave stores refs and planning evidence only.","impact":"Change-sets and messages must carry branch/PR/commit refs and path metadata, never diffs or credentials.","source":"DevWeave source-exclusion policy"}' `
   -Reason "Record control-plane constraint"

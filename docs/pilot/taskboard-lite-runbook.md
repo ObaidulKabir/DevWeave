@@ -50,6 +50,23 @@ pwsh -File scripts/pilot/run-two-agents.ps1
 
 Result: `docs/pilot/two-agents-result.json`
 
+## Working sample (aligned to Plan design)
+
+The sandbox at `taskboard-lite` implements the governed design (not in-memory):
+
+| Work | Branch / ref | Acceptance |
+| --- | --- | --- |
+| W-01 | `feature/w01-create-task` · `github:pr/101` · `08ce390…` | Empty title → 400; valid title → 201 with `owner_id` |
+| W-02 | `feature/w02-list-tasks` · `github:pr/102` · `7bf08d8…` | `GET /tasks` returns only that owner’s rows |
+
+```powershell
+$env:TASKBOARD_CONNECTION = "Host=localhost;Port=5433;Database=taskboard_lite;Username=devweave;Password=change-me-locally"
+# CREATE DATABASE taskboard_lite;  -- once
+dotnet run --project "..\taskboard-lite" --urls http://localhost:5090
+```
+
+Smoke: `POST/GET /tasks` with `X-Owner-Id` header. Plan map remains `6` outline nodes / `3` Work links.
+
 ## Phase 3 — Adversarial
 
 ```powershell

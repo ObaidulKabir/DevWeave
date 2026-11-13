@@ -57,7 +57,8 @@ public static class KnowledgeEndpoints
                 request.TypeId,
                 request.SchemaVersion,
                 AuthenticatedPrincipal.GetId(http),
-                ct);
+                ct,
+                request.Description);
 
             return Results.Created(
                 $"/tenants/{tenantId}/knowledge-items/{item.Id}",
@@ -319,6 +320,7 @@ public static class KnowledgeEndpoints
             item.ProjectId.Value,
             item.Key,
             item.Title,
+            item.Description,
             item.Classification,
             item.RepresentationKind,
             item.State,

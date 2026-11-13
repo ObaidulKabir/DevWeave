@@ -40,6 +40,10 @@ internal sealed class KnowledgeItemConfiguration : IEntityTypeConfiguration<Know
             .IsRequired()
             .HasMaxLength(200);
 
+        builder.Property(i => i.Description)
+            .IsRequired()
+            .HasMaxLength(4000);
+
         builder.Property(i => i.Classification)
             .HasConversion<int>()
             .IsRequired();

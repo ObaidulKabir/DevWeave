@@ -46,7 +46,7 @@ export function KnowledgePage() {
   const [search, setSearch] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [schemas, setSchemas] = useState<SchemaChoice[]>([]);
-  const [form, setForm] = useState({ key: '', title: '', typeId: 'plan.requirement', schemaVersion: '1.0' });
+  const [form, setForm] = useState({ key: '', title: '', description: '', typeId: 'plan.requirement', schemaVersion: '1.0' });
   const [editorContent, setEditorContent] = useState(EMPTY_CONTENT);
   const [editorReason, setEditorReason] = useState('');
   const [editorOpen, setEditorOpen] = useState(false);
@@ -157,6 +157,7 @@ export function KnowledgePage() {
         body: JSON.stringify({
           key: form.key,
           title: form.title,
+          description: form.description.trim() || null,
           classification: 'Internal',
           representationKind: 'StructuredData',
           typeId: form.typeId,
@@ -170,7 +171,7 @@ export function KnowledgePage() {
       setFilter('all');
       select(created.id);
       setEditorOpen(true);
-      setForm((value) => ({ ...value, key: '', title: '' }));
+      setForm((value) => ({ ...value, key: '', title: '', description: '' }));
       setNotice('Item created. Add its first revision below.');
     }
   }
@@ -326,6 +327,9 @@ export function KnowledgePage() {
                         <StateBadge value={item.state} />
                       </div>
                       <p className="mt-1 text-sm font-semibold leading-snug">{item.title}</p>
+                      {item.description ? (
+                        <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--muted)]">{item.description}</p>
+                      ) : null}
                       <p className="mt-0.5 text-[11px] text-[var(--muted)]">{item.typeId}</p>
                     </button>
                   </li>
@@ -344,6 +348,16 @@ export function KnowledgePage() {
               <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-title">
                 <span>Title <span className="font-normal text-[var(--muted)]">(a claim a person can approve)</span></span>
                 <input id="knowledge-title" required className="field" placeholder="A task must have a non-empty title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+              </label>
+              <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-description">
+                <span>Details <span className="font-normal text-[var(--muted)]">(optional context for reviewers)</span></span>
+                <textarea
+                  id="knowledge-description"
+                  className="field min-h-20"
+                  placeholder="Why this item exists, who it serves, and what a reviewer should look for."
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
               </label>
               {schemas.length > 0 ? (
                 <label className="block space-y-1 text-xs font-semibold" htmlFor="knowledge-type">
@@ -409,6 +423,14 @@ export function KnowledgePage() {
                   <StateBadge label="review" value={selected.reviewState} />
                   <StateBadge label="verify" value={selected.verificationState} />
                 </div>
+                <section className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--paper)] px-4 py-3" aria-labelledby="item-details-title">
+                  <h4 id="item-details-title" className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Details</h4>
+                  {selected.description?.trim() ? (
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-[var(--ink)]">{selected.description}</p>
+                  ) : (
+                    <p className="mt-2 text-sm italic text-[var(--muted)]">No details yet. Add a description when creating the item so reviewers know the context without opening revision content.</p>
+                  )}
+                </section>
 
                 {revisions.length > 0 ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">

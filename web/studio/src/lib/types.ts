@@ -12,6 +12,7 @@ export interface KnowledgeItem {
   id: string;
   key: string;
   title: string;
+  description?: string | null;
   state: string;
   reviewState: string;
   verificationState: string;

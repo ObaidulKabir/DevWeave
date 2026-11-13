@@ -1366,6 +1366,11 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<int>("CurrentRevisionNumber")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
                     b.Property<string>("Key")
                         .IsRequired()
                         .HasMaxLength(100)

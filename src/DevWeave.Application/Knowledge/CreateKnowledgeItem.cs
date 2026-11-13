@@ -37,7 +37,8 @@ public sealed class CreateKnowledgeItem
         string typeId,
         string schemaVersion,
         PrincipalId createdBy,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? description = null)
     {
         // Deny-by-default: a project from another tenant is indistinguishable from a missing one.
         _ = await _projects.GetByIdAsync(tenantId, projectId, ct)
@@ -66,7 +67,8 @@ public sealed class CreateKnowledgeItem
             representationKind,
             typeId,
             schemaVersion,
-            createdBy);
+            createdBy,
+            description);
 
         await _items.AddAsync(item, ct);
         await _unitOfWork.SaveChangesAsync(ct);

@@ -23,6 +23,8 @@ public sealed class KnowledgeItem
     public ProjectId ProjectId { get; }
     public string Key { get; }
     public string Title { get; }
+    /// <summary>Optional human-readable details for the item identity (not revision content).</summary>
+    public string Description { get; private set; }
     public Classification Classification { get; }
     public RepresentationKind RepresentationKind { get; }
     public InfoState State { get; private set; }
@@ -42,6 +44,7 @@ public sealed class KnowledgeItem
         ProjectId projectId,
         string key,
         string title,
+        string description,
         Classification classification,
         RepresentationKind representationKind,
         InfoState state,
@@ -60,6 +63,7 @@ public sealed class KnowledgeItem
         ProjectId = projectId;
         Key = key;
         Title = title;
+        Description = description;
         Classification = classification;
         RepresentationKind = representationKind;
         State = state;
@@ -83,7 +87,8 @@ public sealed class KnowledgeItem
         RepresentationKind representationKind,
         string typeId,
         string schemaVersion,
-        PrincipalId createdBy)
+        PrincipalId createdBy,
+        string? description = null)
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Knowledge item key is required.", nameof(key));
@@ -103,6 +108,7 @@ public sealed class KnowledgeItem
             projectId,
             key,
             title,
+            description?.Trim() ?? string.Empty,
             classification,
             representationKind,
             InfoState.Proposed,
@@ -115,6 +121,12 @@ public sealed class KnowledgeItem
             currentRevisionNumber: 0,
             createdBy,
             DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Updates the item-level details text without creating a content revision.</summary>
+    public void SetDescription(string? description)
+    {
+        Description = description?.Trim() ?? string.Empty;
     }
 
     /// <summary>

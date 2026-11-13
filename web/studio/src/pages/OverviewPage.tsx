@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { EmptyState, Panel, Row } from '../components/Panel';
+import { PlanVersionStatusCard } from '../components/PlanVersionStatusCard';
 import { SpecStatusCard } from '../components/SpecStatusCard';
 import { StateBadge } from '../components/StateBadge';
 import { formatWhen } from '../lib/format';
@@ -65,6 +66,7 @@ export function OverviewPage() {
         <div className="mt-6 flex flex-wrap gap-2">
           <Link className="btn btn-primary" to="/knowledge">Browse knowledge</Link>
           <Link className="btn btn-ghost" to="/work">Open work board</Link>
+          <Link className="btn btn-ghost" to="/plan-versions">Plan versions</Link>
           <Link className="btn btn-ghost" to="/coordination">Coordination</Link>
         </div>
       </section>
@@ -99,7 +101,10 @@ export function OverviewPage() {
         </p>
       </section>
 
-      <SpecStatusCard />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <PlanVersionStatusCard />
+        <SpecStatusCard />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((metric) => (

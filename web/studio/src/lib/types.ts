@@ -193,6 +193,39 @@ export interface Campaign {
   createdAt: string;
 }
 
+export interface PlanStatusCampaign {
+  id: string;
+  baselineId: string;
+  planVersion: number;
+  onCurrentPlan: boolean;
+  status: string;
+  objective: string;
+}
+
+export interface PlanStatus {
+  currentPlanVersion: number;
+  currentBaselineId: string | null;
+  lockedAt: string | null;
+  campaigns: PlanStatusCampaign[];
+}
+
+export interface WorkPackageStatus {
+  id: string;
+  campaignId: string;
+  baselineId: string;
+  planVersion: number;
+  onCurrentPlan: boolean;
+  key: string;
+  objective: string;
+  status: string;
+  canProgress: boolean;
+  blockedReason: string | null;
+  implementsRevisionIds: string[];
+  workItemIds: string[];
+  specTopics: string[];
+  unscoped: boolean;
+}
+
 export interface Runtime {
   id: string;
   principalId: string;

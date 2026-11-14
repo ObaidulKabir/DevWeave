@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../lib/api';
 import { formatWhen } from '../lib/format';
+import { campaignsStillOnOlderPlan } from '../lib/plan';
 import type { PlanStatus } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -23,9 +24,7 @@ export function PlanVersionStatusCard() {
     };
   }, [live, tenantId, project]);
 
-  const offCurrentPlan = (status?.campaigns ?? []).filter(
-    (c) => !c.onCurrentPlan && (c.status === 'Active' || c.status === 'Proposed'),
-  );
+  const offCurrentPlan = campaignsStillOnOlderPlan(status?.campaigns);
 
   return (
     <section className="panel rounded-2xl p-5" aria-labelledby="plan-version-status-title">

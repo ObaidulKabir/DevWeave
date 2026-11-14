@@ -4,6 +4,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { campaignsStillOnOlderPlan } from '../lib/plan';
 import type { Campaign, PlanBaselineSummary, PlanStatus } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -48,7 +49,7 @@ export function CoordinationPage() {
   }, [load]);
 
   const chosenBaseline = baselines.find((b) => b.id === form.baselineId);
-  const offCurrentPlan = (planStatus?.campaigns ?? []).filter((c) => !c.onCurrentPlan && c.status !== 'Completed');
+  const offCurrentPlan = campaignsStillOnOlderPlan(planStatus?.campaigns);
 
   async function startCampaign() {
     if (!base || !form.baselineId) return;

@@ -67,6 +67,7 @@ export function OverviewPage() {
           <Link className="btn btn-primary" to="/knowledge">Browse knowledge</Link>
           <Link className="btn btn-ghost" to="/work">Open work board</Link>
           <Link className="btn btn-ghost" to="/plan-versions">Plan versions</Link>
+          <Link className="btn btn-ghost" to="/live">Live operations</Link>
           <Link className="btn btn-ghost" to="/coordination">Coordination</Link>
         </div>
       </section>

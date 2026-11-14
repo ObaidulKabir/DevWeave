@@ -5,6 +5,7 @@ import { EmptyState, Panel } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
+import { campaignsStillOnOlderPlan } from '../lib/plan';
 import type { PlanBaselineSummary, PlanLockPreview, PlanStatus, PlanStatusCampaign, WorkPackageStatus } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -70,6 +71,27 @@ function WorkPackagesPanel({ campaignId, base }: { campaignId: string; base: str
               </>
             )}
           </p>
+          {pkg.latestWorkthrough ? (
+            <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${pkg.latestWorkthrough.kind === 'Blocked' ? 'border-amber-200 bg-amber-50/80' : 'border-[var(--line)] bg-white/70'}`}>
+              <p className="font-semibold text-[var(--ink)]">
+                Agent workthrough · {pkg.latestWorkthrough.kind === 'Blocked' ? 'Blocked' : 'Succeeded'} · {pkg.latestWorkthrough.outcome}
+              </p>
+              {pkg.latestWorkthrough.kind === 'Blocked' && pkg.latestWorkthrough.blockedReason ? (
+                <p className="mt-1 whitespace-pre-wrap leading-relaxed text-amber-950" role="status">
+                  Blocked: {pkg.latestWorkthrough.blockedReason}
+                </p>
+              ) : null}
+              {pkg.latestWorkthrough.whatSucceeded ? (
+                <p className="mt-1 whitespace-pre-wrap leading-relaxed text-[var(--muted)]">{pkg.latestWorkthrough.whatSucceeded}</p>
+              ) : null}
+              {pkg.latestWorkthrough.steps?.length ? (
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--muted)]">
+                  {pkg.latestWorkthrough.steps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}
+                </ul>
+              ) : null}
+              <p className="mt-1 text-[10px] text-[var(--muted)]">Recorded {formatWhen(pkg.latestWorkthrough.recordedAt)} · claim only, not acceptance</p>
+            </div>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -91,7 +113,7 @@ export function PlanVersionsPage() {
   const base = tenantId && project ? `/tenants/${tenantId}/projects/${project.id}/coordination` : undefined;
 
   const load = useCallback(async () => {
-    if (!base) {
+    if (!live || !base) {
       setLockPreview(null);
       setBaselines([]);
       setPlanStatus(null);
@@ -111,7 +133,7 @@ export function PlanVersionsPage() {
       setBaselines([]);
       setPlanStatus(null);
     }
-  }, [base]);
+  }, [live, base]);
 
   useEffect(() => {
     void load();
@@ -125,9 +147,7 @@ export function PlanVersionsPage() {
     return map;
   }, [planStatus]);
 
-  const offCurrentPlan = (planStatus?.campaigns ?? []).filter(
-    (c) => !c.onCurrentPlan && (c.status === 'Active' || c.status === 'Proposed'),
-  );
+  const offCurrentPlan = campaignsStillOnOlderPlan(planStatus?.campaigns);
   const drift = lockPreview?.drift;
 
   async function lockVersion() {

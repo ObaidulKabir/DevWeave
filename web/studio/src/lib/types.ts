@@ -209,6 +209,19 @@ export interface PlanStatus {
   campaigns: PlanStatusCampaign[];
 }
 
+export interface Workthrough {
+  id: string;
+  workPackageId: string;
+  recordedBy: string;
+  kind: 'Succeeded' | 'Blocked' | string;
+  outcome: string;
+  whatSucceeded: string;
+  blockedReason: string | null;
+  steps: string[];
+  changeSetId: string | null;
+  recordedAt: string;
+}
+
 export interface WorkPackageStatus {
   id: string;
   campaignId: string;
@@ -224,6 +237,7 @@ export interface WorkPackageStatus {
   workItemIds: string[];
   specTopics: string[];
   unscoped: boolean;
+  latestWorkthrough?: Workthrough | null;
 }
 
 export interface Runtime {
@@ -232,6 +246,40 @@ export interface Runtime {
   runtimeClass: string;
   status: string;
   lastHeartbeatAt?: string | null;
+}
+
+/** Active exclusive hold on a work-package path scope. */
+export interface Lease {
+  id: string;
+  workPackageId: string;
+  runtimeId: string;
+  resourceScope: string;
+  fence: number;
+  expiresAt: string;
+  state: string;
+  createdAt?: string;
+}
+
+export interface CoordinationChannel {
+  id: string;
+  campaignId?: string | null;
+  workPackageId?: string | null;
+  channelType: string;
+  visibility: string;
+  sequenceHighWatermark: number;
+  createdAt: string;
+}
+
+export interface CoordinationMessage {
+  id: string;
+  channelId: string;
+  sequence: number;
+  senderId: string;
+  runtimeId: string;
+  messageType: string;
+  schemaVersion: string;
+  allowedMetadataJson: string;
+  createdAt: string;
 }
 
 export interface McpDirectory {

@@ -7,6 +7,7 @@ import { CoordinationPage } from './pages/CoordinationPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { EvidencePage } from './pages/EvidencePage';
 import { KnowledgePage } from './pages/KnowledgePage';
+import { LiveOperationsPage } from './pages/LiveOperationsPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlanMapPage } from './pages/PlanMapPage';
 import { PlanOutlinePage } from './pages/PlanOutlinePage';
@@ -26,7 +27,7 @@ export default function App() {
           <Route element={<Shell />}>
             <Route index element={<OverviewPage />} />
             <Route path="plan-map" element={<PlanMapPage />} />
-          <Route path="plan-outline" element={<PlanOutlinePage />} />
+            <Route path="plan-outline" element={<PlanOutlinePage />} />
             <Route path="plan-versions" element={<PlanVersionsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="documents" element={<DocumentsPage />} />
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="activity" element={<ActivityPage />} />
             <Route path="evidence" element={<EvidencePage />} />
             <Route path="access" element={<AccessPage />} />
+            <Route path="live" element={<LiveOperationsPage />} />
             <Route path="coordination" element={<CoordinationPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="settings" element={<SettingsPage />} />

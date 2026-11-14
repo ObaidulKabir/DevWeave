@@ -125,6 +125,27 @@ public sealed class CoordinationRepository : ICoordinationRepository
             .ToListAsync(ct);
     }
 
+    public async Task AddWorkthroughAsync(WorkPackageWorkthrough workthrough, CancellationToken ct = default)
+    {
+        await _context.WorkPackageWorkthroughs.AddAsync(workthrough, ct);
+    }
+
+    public async Task<WorkPackageWorkthrough?> GetLatestWorkthroughAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default)
+    {
+        return await _context.WorkPackageWorkthroughs
+            .Where(w => w.TenantId == tenantId && w.WorkPackageId == workPackageId)
+            .OrderByDescending(w => w.RecordedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<List<WorkPackageWorkthrough>> ListWorkthroughsAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default)
+    {
+        return await _context.WorkPackageWorkthroughs
+            .Where(w => w.TenantId == tenantId && w.WorkPackageId == workPackageId)
+            .OrderByDescending(w => w.RecordedAt)
+            .ToListAsync(ct);
+    }
+
     public async Task AddLeaseAsync(TaskLease lease, CancellationToken ct = default)
     {
         await _context.TaskLeases.AddAsync(lease, ct);
@@ -146,10 +167,31 @@ public sealed class CoordinationRepository : ICoordinationRepository
                                      l.ExpiresAt > DateTimeOffset.UtcNow, ct);
     }
 
+    public async Task<List<TaskLease>> ListLeasesByWorkPackageAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default)
+    {
+        return await _context.TaskLeases
+            .AsNoTracking()
+            .Where(l => l.TenantId == tenantId && l.WorkPackageId == workPackageId)
+            .ToListAsync(ct);
+    }
+
     public async Task<List<TaskLease>> ListActiveLeasesByRuntimeAsync(TenantId tenantId, RuntimeId runtimeId, CancellationToken ct = default)
     {
         return await _context.TaskLeases
             .Where(l => l.TenantId == tenantId && l.RuntimeId == runtimeId && l.Status == LeaseStatus.Active)
+            .ToListAsync(ct);
+    }
+
+    public async Task<List<TaskLease>> ListActiveLeasesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return await _context.TaskLeases
+            .AsNoTracking()
+            .Where(l => l.TenantId == tenantId
+                        && l.ProjectId == projectId
+                        && l.Status == LeaseStatus.Active
+                        && l.ExpiresAt > now)
+            .OrderBy(l => l.ExpiresAt)
             .ToListAsync(ct);
     }
 

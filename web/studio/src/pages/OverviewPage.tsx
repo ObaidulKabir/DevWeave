@@ -60,13 +60,14 @@ export function OverviewPage() {
         </p>
         {!live ? (
           <p className="mt-4 text-sm text-amber-800">
-            Configure <code className="font-mono">VITE_TENANT_ID</code> and <code className="font-mono">VITE_API_TOKEN</code> to load live data.
+            Sign in at <code className="font-mono">/login</code> with your pilot tenant and Owner principal to load live data.
           </p>
         ) : null}
         <div className="mt-6 flex flex-wrap gap-2">
           <Link className="btn btn-primary" to="/knowledge">Browse knowledge</Link>
           <Link className="btn btn-ghost" to="/work">Open work board</Link>
           <Link className="btn btn-ghost" to="/plan-versions">Plan versions</Link>
+          <Link className="btn btn-ghost" to="/live">Live operations</Link>
           <Link className="btn btn-ghost" to="/coordination">Coordination</Link>
         </div>
       </section>

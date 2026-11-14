@@ -45,6 +45,11 @@ public record ChangeSetId(Guid Value)
     public static ChangeSetId New() => new(Guid.NewGuid());
 }
 
+public record WorkthroughId(Guid Value)
+{
+    public static WorkthroughId New() => new(Guid.NewGuid());
+}
+
 public record ParticipationOfferId(Guid Value)
 {
     public static ParticipationOfferId New() => new(Guid.NewGuid());

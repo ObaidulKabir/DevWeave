@@ -156,7 +156,9 @@ function MapCard({
 }
 
 export function PlanMapPage() {
-  const { project, live, knowledge, relationships, workItems, milestones, outline } = useWorkspace();
+  const { project, live, knowledge, relationships, workItems, milestones, outline, outlineError } = useWorkspace();
+  const outlineNodes = outline?.nodes ?? [];
+  const outlineLinks = outline?.links ?? [];
   const [showRevoked, setShowRevoked] = useState(false);
   const [showMentions, setShowMentions] = useState(true);
   const [selection, setSelection] = useState<Selection>(null);
@@ -203,7 +205,7 @@ export function PlanMapPage() {
     const visibleRelations = relationships.filter((item) => showRevoked || item.status.toLowerCase() !== 'revoked');
     const knowledgeById = new Map(knowledge.map((item) => [item.id, item]));
     const children = new Map<string, string[]>();
-    outline.nodes.forEach((node) => {
+    outlineNodes.forEach((node) => {
       const parent = node.parentItemId ?? '';
       children.set(parent, [...(children.get(parent) ?? []), node.itemId]);
     });
@@ -277,7 +279,7 @@ export function PlanMapPage() {
     const relationNodeById = new Map(relationNodes.map((node) => [node.id, node]));
 
     const linkedKnowledgeY = (workId: string) => {
-      const pinned = outline.links
+      const pinned = outlineLinks
         .filter((link) => link.workItemId === workId)
         .map((link) => knowledgeNodeById.get(link.knowledgeItemId)?.y)
         .filter((y): y is number => typeof y === 'number');
@@ -350,7 +352,7 @@ export function PlanMapPage() {
       knowledgeLaneWidth,
       maxDepth,
     };
-  }, [knowledge, relationships, workItems, milestones, outline, showRevoked]);
+  }, [knowledge, relationships, workItems, milestones, outlineNodes, outlineLinks, showRevoked]);
 
   useEffect(() => {
     if (fitted || layout.mapWidth < 100) return;
@@ -446,7 +448,7 @@ export function PlanMapPage() {
     if (!selection) return ids;
     ids.add(selection.id);
     if (selection.kind === 'knowledge') {
-      outline.nodes.forEach((node) => {
+      outlineNodes.forEach((node) => {
         if (node.itemId === selection.id && node.parentItemId) ids.add(node.parentItemId);
         if (node.parentItemId === selection.id) ids.add(node.itemId);
       });
@@ -457,7 +459,7 @@ export function PlanMapPage() {
           ids.add(relation.targetItemId);
         }
       });
-      outline.links.forEach((link) => {
+      outlineLinks.forEach((link) => {
         if (link.knowledgeItemId === selection.id) ids.add(link.workItemId);
       });
       workItems.forEach((work) => {
@@ -473,7 +475,7 @@ export function PlanMapPage() {
       }
     }
     if (selection.kind === 'work') {
-      outline.links.forEach((link) => {
+      outlineLinks.forEach((link) => {
         if (link.workItemId === selection.id) ids.add(link.knowledgeItemId);
       });
       const work = workItems.find((item) => item.id === selection.id);
@@ -486,7 +488,7 @@ export function PlanMapPage() {
       });
     }
     return ids;
-  }, [selection, outline, layout.visibleRelations, workItems, knowledge]);
+  }, [selection, outlineNodes, outlineLinks, layout.visibleRelations, workItems, knowledge]);
 
   const selectedRecord = selection?.kind === 'knowledge'
     ? knowledge.find((item) => item.id === selection.id)
@@ -496,7 +498,7 @@ export function PlanMapPage() {
   const activeSelection = selectedRecord ? selection : null;
   const knowledgeParent = selection?.kind === 'knowledge'
     ? (() => {
-        const parentId = outline.nodes.find((node) => node.itemId === selection.id)?.parentItemId;
+        const parentId = outlineNodes.find((node) => node.itemId === selection.id)?.parentItemId;
         return parentId ? knowledge.find((item) => item.id === parentId) ?? null : null;
       })()
     : null;
@@ -517,7 +519,7 @@ export function PlanMapPage() {
           .filter(
             (item) =>
               mentionsKey(work.description, item.key) &&
-              !outline.links.some((link) => link.workItemId === work.id && link.knowledgeItemId === item.id),
+              !outlineLinks.some((link) => link.workItemId === work.id && link.knowledgeItemId === item.id),
           )
           .map((item) => ({
             source: placed.knowledgeNodeById.get(item.id),
@@ -527,6 +529,7 @@ export function PlanMapPage() {
       )
     : [];
   const hasCustomLayout = Object.keys(positions).length > 0;
+  const mapEmpty = knowledge.length === 0 && workItems.length === 0 && milestones.length === 0;
 
   return (
     <div className="space-y-6">
@@ -538,6 +541,23 @@ export function PlanMapPage() {
           Drag cards to clear crossings. Layout changes stay in this browser session only.
         </p>
         {!live && <p className="mt-3 text-xs text-amber-800">Preview mode has no persisted plan. Connect a live tenant to display its records.</p>}
+        {outlineError ? (
+          <p className="mt-3 text-sm text-rose-800" role="alert">
+            Could not load the plan outline for this project. Check API auth and project access, or switch to a project that has an outline (e.g. TaskBoard Lite).
+          </p>
+        ) : null}
+        {live && !outlineError && mapEmpty ? (
+          <p className="mt-3 text-sm text-amber-900">
+            No knowledge, milestones, or work items yet for <span className="font-semibold">{project?.name ?? 'this project'}</span>.
+            Switch project in the header, or seed an outline on Plan outline.
+          </p>
+        ) : null}
+        {live && !outlineError && !mapEmpty && outlineNodes.length === 0 ? (
+          <p className="mt-3 text-sm text-amber-900">
+            This project has records, but no outline tree yet — knowledge cards still appear; attach parents on{' '}
+            <Link className="font-semibold text-[var(--signal)] hover:underline" to="/plan-outline">Plan outline</Link>.
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--muted)]" aria-label="Diagram legend">
           <span><span className="font-semibold text-violet-700">Violet</span> pinned Work link</span>
           <span><span className="font-semibold text-sky-700">Blue</span> outline parent → child</span>
@@ -678,7 +698,7 @@ export function PlanMapPage() {
               />
             ))}
 
-            {outline.nodes.filter((node) => node.parentItemId).map((node) => {
+            {outlineNodes.filter((node) => node.parentItemId).map((node) => {
               const parent = placed.knowledgeNodeById.get(node.parentItemId!);
               const child = placed.knowledgeNodeById.get(node.itemId);
               if (!parent || !child) return null;
@@ -694,7 +714,7 @@ export function PlanMapPage() {
               );
             })}
 
-            {outline.links.map((link) => {
+            {outlineLinks.map((link) => {
               const source = placed.knowledgeNodeById.get(link.knowledgeItemId);
               const target = placed.workNodeById.get(link.workItemId);
               const older = knowledge.find((item) => item.id === link.knowledgeItemId)?.currentRevisionId !== link.revisionId;

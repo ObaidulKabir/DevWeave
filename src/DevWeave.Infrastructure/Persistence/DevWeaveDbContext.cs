@@ -67,6 +67,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<UsageObservation> UsageObservations => Set<UsageObservation>();
     public DbSet<TenantPlanAssignment> TenantPlanAssignments => Set<TenantPlanAssignment>();
     public DbSet<WorkPackage> WorkPackages => Set<WorkPackage>();
+    public DbSet<WorkPackageWorkthrough> WorkPackageWorkthroughs => Set<WorkPackageWorkthrough>();
     public DbSet<TaskLease> TaskLeases => Set<TaskLease>();
     public DbSet<AgentRuntimeInstance> AgentRuntimeInstances => Set<AgentRuntimeInstance>();
     public DbSet<Evidence> Evidence => Set<Evidence>();

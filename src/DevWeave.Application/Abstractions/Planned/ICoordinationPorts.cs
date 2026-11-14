@@ -152,6 +152,20 @@ public interface IWorkStatusReader
         CancellationToken ct = default);
     Task<WorkPackageStatusView> GetWorkStatusAsync(AuthorizedScope scope, Guid workPackageId,
         CancellationToken ct = default);
+    /// <summary>
+    /// Agent writes a workthrough: success (outcome + whatSucceeded) or blockage (outcome + blockedReason).
+    /// Append-only claim; never verification or approval. Allowed even when canProgress is false.
+    /// </summary>
+    Task<WorkthroughView> ReportWorkthroughAsync(
+        AuthorizedScope scope,
+        Guid workPackageId,
+        string kind,
+        string outcome,
+        string? whatSucceeded = null,
+        string? blockedReason = null,
+        Guid? changeSetId = null,
+        IReadOnlyList<string>? steps = null,
+        CancellationToken ct = default);
 }
 
 public sealed record PlanStatusView(
@@ -182,4 +196,17 @@ public sealed record WorkPackageStatusView(
     IReadOnlyList<Guid> ImplementsRevisionIds,
     IReadOnlyList<Guid> WorkItemIds,
     IReadOnlyList<string> SpecTopics,
-    bool Unscoped);
+    bool Unscoped,
+    WorkthroughView? LatestWorkthrough = null);
+
+public sealed record WorkthroughView(
+    Guid Id,
+    Guid WorkPackageId,
+    Guid RecordedBy,
+    string Kind,
+    string Outcome,
+    string WhatSucceeded,
+    string? BlockedReason,
+    IReadOnlyList<string> Steps,
+    Guid? ChangeSetId,
+    DateTimeOffset RecordedAt);

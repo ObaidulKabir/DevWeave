@@ -30,7 +30,9 @@ public interface ICoordinationRepository
     Task AddLeaseAsync(TaskLease lease, CancellationToken ct = default);
     Task<TaskLease?> GetLeaseByIdAsync(TenantId tenantId, LeaseId id, CancellationToken ct = default);
     Task<TaskLease?> GetActiveLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default);
+    Task<List<TaskLease>> ListLeasesByWorkPackageAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default);
     Task<List<TaskLease>> ListActiveLeasesByRuntimeAsync(TenantId tenantId, RuntimeId runtimeId, CancellationToken ct = default);
+    Task<List<TaskLease>> ListActiveLeasesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
 
     // Runtimes
     Task AddRuntimeAsync(AgentRuntimeInstance runtime, CancellationToken ct = default);
@@ -71,6 +73,11 @@ public interface ICoordinationRepository
 
     // Work packages by campaign
     Task<List<WorkPackage>> ListWorkPackagesByCampaignAsync(TenantId tenantId, CampaignId campaignId, CancellationToken ct = default);
+
+    // Agent workthroughs (outcome narratives; not acceptance)
+    Task AddWorkthroughAsync(WorkPackageWorkthrough workthrough, CancellationToken ct = default);
+    Task<WorkPackageWorkthrough?> GetLatestWorkthroughAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default);
+    Task<List<WorkPackageWorkthrough>> ListWorkthroughsAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default);
 
     // Runtimes by project
     Task<List<AgentRuntimeInstance>> ListRuntimesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);

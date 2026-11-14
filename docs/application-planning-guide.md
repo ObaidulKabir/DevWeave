@@ -57,6 +57,27 @@ Goal (v2): same outcome plus "unauthenticated requests are rejected."
 
 The table is a **planning example**. The pilot bootstrap (`scripts/pilot/bootstrap.ps1`) materializes this shape after registering/publishing the schemas and the `supports` relation type.
 
+### Example: Online Cake Shop
+
+Second pilot project for capability testing. Goal (v1): "A signed-in customer can place a cake order and list only their own orders." Goal (v2): same plus unauthenticated rejection.
+
+| Element | Illustrative plan entry |
+| --- | --- |
+| Knowledge K-01 | Goal root: customers manage cake orders. |
+| Knowledge K-ORD | Module under K-01: Orders API (place/list; no storefront/payments). |
+| Knowledge K-02 | Requirement under K-ORD: place order with cake type + quantity ≥ 1. |
+| Knowledge K-03 | Requirement under K-ORD: list only authenticated customer's orders (r2 ties to auth). |
+| Knowledge K-04 | Decision under K-ORD: persist orders in PostgreSQL with customer identity. |
+| Knowledge K-05 | Constraint: no source/secrets in DevWeave; **moved** under K-ORD in v2. |
+| Knowledge K-AUTH / K-06 / K-07 | Auth gate module, 401 requirement, JWT decision (v2). |
+| Knowledge K-DRAFT | Shared wedding-registry idea: attached then **detached**. |
+| Outline (v2) | `K-01 → K-ORD → {K-02, K-03, K-04, K-05}` and `K-01 → K-AUTH → {K-06, K-07}`. |
+| Relation | K-04 `supports` K-03; K-07 `supports` K-06. |
+| Work | W-01 place-order → K-02; W-02 list-orders → K-03/K-04; W-03 JWT → K-06/K-07. |
+| PlanBaseline | Bootstrap locks v1 then v2; packages declare `implementsRevisionIds` + `workItemIds`. |
+
+Materialized by `scripts/pilot/bootstrap-online-cake-shop.ps1` against sandbox `online-cake-shop`. See `docs/pilot/online-cake-shop-runbook.md`.
+
 ## For Owner Studio users
 
 Use a live tenant with a human bearer token. Preview mode is not a persisted planning workspace.

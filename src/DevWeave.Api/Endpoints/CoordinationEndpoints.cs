@@ -57,12 +57,16 @@ public static class CoordinationEndpoints
 
         group.MapPost("/leases", AcquireLeaseAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        group.MapGet("/leases", ListActiveLeasesAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/leases/{leaseId:guid}/renew", RenewLeaseAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapPost("/leases/{leaseId:guid}/release", ReleaseLeaseAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/channels", OpenChannelAsync);
+        group.MapGet("/channels", ListChannelsAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/channels/{channelId:guid}/messages", SendMessageAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/channels/{channelId:guid}/messages", ReplayMessagesAsync);
@@ -284,6 +288,19 @@ public static class CoordinationEndpoints
         workItemIds = p.WorkItemIds,
         specTopics = p.SpecTopics,
         unscoped = p.Unscoped,
+        latestWorkthrough = p.LatestWorkthrough is null ? null : new
+        {
+            id = p.LatestWorkthrough.Id,
+            workPackageId = p.LatestWorkthrough.WorkPackageId,
+            recordedBy = p.LatestWorkthrough.RecordedBy,
+            kind = p.LatestWorkthrough.Kind,
+            outcome = p.LatestWorkthrough.Outcome,
+            whatSucceeded = p.LatestWorkthrough.WhatSucceeded,
+            blockedReason = p.LatestWorkthrough.BlockedReason,
+            steps = p.LatestWorkthrough.Steps,
+            changeSetId = p.LatestWorkthrough.ChangeSetId,
+            recordedAt = p.LatestWorkthrough.RecordedAt,
+        },
     };
 
     private static async Task<IResult> ListRuntimesAsync(
@@ -391,6 +408,43 @@ public static class CoordinationEndpoints
             return Results.Ok(decision);
         }
         catch (NotFoundException) { return Results.NotFound(); }
+    }
+
+    private static async Task<IResult> ListActiveLeasesAsync(
+        Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)
+    {
+        var leases = await repository.ListActiveLeasesByProjectAsync(
+            new TenantId(tenantId), new ProjectId(projectId), ct);
+        return Results.Ok(leases.Select(l => new
+        {
+            id = l.Id.Value,
+            workPackageId = l.WorkPackageId.Value,
+            runtimeId = l.RuntimeId.Value,
+            resourceScope = l.ResourceScope,
+            fence = l.Fence,
+            expiresAt = l.ExpiresAt,
+            state = l.Status.ToString(),
+            createdAt = l.CreatedAt,
+        }));
+    }
+
+    private static async Task<IResult> ListChannelsAsync(
+        Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)
+    {
+        var channels = await repository.ListChannelsByProjectAsync(
+            new TenantId(tenantId), new ProjectId(projectId), ct);
+        return Results.Ok(channels
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                id = c.Id.Value,
+                campaignId = c.CampaignId?.Value,
+                workPackageId = c.WorkPackageId?.Value,
+                channelType = c.ChannelType,
+                visibility = c.Visibility,
+                sequenceHighWatermark = c.SequenceHighWatermark,
+                createdAt = c.CreatedAt,
+            }));
     }
 
     private static async Task<IResult> AcquireLeaseAsync(

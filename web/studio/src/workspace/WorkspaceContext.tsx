@@ -9,7 +9,9 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { useAuth } from '../auth/AuthContext';
 import { ApiError, apiFetch, hasLiveConfig } from '../lib/api';
+import { getActiveTenantId } from '../lib/session';
 import type {
   Activity,
   Campaign,
@@ -49,6 +51,7 @@ interface WorkspaceValue {
   error: string | null;
   busy: boolean;
   refresh: () => Promise<void>;
+  refreshProjects: () => Promise<Project[]>;
   run: <T>(action: () => Promise<T>) => Promise<T | undefined>;
   setKnowledge: Dispatch<SetStateAction<KnowledgeItem[]>>;
   setWorkItems: Dispatch<SetStateAction<WorkItem[]>>;
@@ -72,17 +75,58 @@ const DEMO_PROJECTS: Project[] = [
   },
 ];
 
+const PROJECT_STORAGE_KEY = 'devweave.studio.projectId';
+const EMPTY_OUTLINE: PlanOutline = { nodes: [], links: [], proposals: [] };
+const AUTH_HELP =
+  'Owner token was rejected (401/403). Sign out and sign in again from /login to mint a fresh pilot Owner token.';
+
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
+}
+
+function asList<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (payload && typeof payload === 'object') {
+    const record = payload as { items?: T[]; Items?: T[] };
+    return record.items ?? record.Items ?? [];
+  }
+  return [];
+}
+
+function normalizeOutline(payload: unknown): PlanOutline {
+  if (!payload || typeof payload !== 'object') return EMPTY_OUTLINE;
+  const record = payload as Partial<PlanOutline>;
+  return {
+    nodes: Array.isArray(record.nodes) ? record.nodes : [],
+    links: Array.isArray(record.links) ? record.links : [],
+    proposals: Array.isArray(record.proposals) ? record.proposals : [],
+  };
+}
+
+function pickPreferredProjectId(liveProjects: Project[]): string {
+  const preferred =
+    (import.meta.env.VITE_PROJECT_ID as string | undefined)?.trim() ||
+    (typeof window !== 'undefined' ? window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? undefined : undefined);
+  if (preferred) {
+    const match = liveProjects.find((item) => item.id === preferred || item.key === preferred);
+    if (match) return match.id;
+  }
+  const taskboard = liveProjects.find((item) => item.key === 'taskboard-lite');
+  return taskboard?.id ?? liveProjects[0].id;
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const tenantId = import.meta.env.VITE_TENANT_ID as string | undefined;
+  const { authenticated, tenantId: authTenantId } = useAuth();
+  const tenantId = authTenantId ?? getActiveTenantId();
   const [connection, setConnection] = useState<'checking' | 'online' | 'unreachable'>('checking');
   const [projects, setProjects] = useState<Project[]>(DEMO_PROJECTS);
-  const [projectId, setProjectId] = useState(DEMO_PROJECTS[0].id);
+  const [projectId, setProjectIdState] = useState(DEMO_PROJECTS[0].id);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeItem[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [outline, setOutline] = useState<PlanOutline>({ nodes: [], links: [], proposals: [] });
+  const [outline, setOutline] = useState<PlanOutline>(EMPTY_OUTLINE);
   const [outlineError, setOutlineError] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
@@ -93,20 +137,40 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const setProjectId = useCallback((id: string) => {
+    setProjectIdState(id);
+    if (typeof window !== 'undefined' && id && !id.startsWith('demo-')) {
+      window.localStorage.setItem(PROJECT_STORAGE_KEY, id);
+    }
+  }, []);
+
   const project = useMemo(
     () => projects.find((item) => item.id === projectId) ?? projects[0],
     [projects, projectId],
   );
-  const live = Boolean(tenantId) && hasLiveConfig() && !project?.id.startsWith('demo-');
+  const live = Boolean(authenticated && tenantId) && hasLiveConfig() && !project?.id.startsWith('demo-');
+
+  const refreshProjects = useCallback(async () => {
+    if (!authenticated || !tenantId || !hasLiveConfig()) return [] as Project[];
+    const liveProjects = asList<Project>(await apiFetch<Project[]>(`/tenants/${tenantId}/projects`));
+    if (liveProjects.length) {
+      setProjects(liveProjects);
+      setProjectIdState((current) => {
+        if (liveProjects.some((item) => item.id === current)) return current;
+        return pickPreferredProjectId(liveProjects);
+      });
+    }
+    return liveProjects;
+  }, [authenticated, tenantId]);
 
   const refresh = useCallback(async () => {
-    if (!tenantId || !project || project.id.startsWith('demo-')) {
+    if (!authenticated || !tenantId || !project || project.id.startsWith('demo-')) {
       setMetrics([]);
       setKnowledge([]);
       setRelationships([]);
       setWorkItems([]);
       setMilestones([]);
-      setOutline({ nodes: [], links: [], proposals: [] });
+      setOutline(EMPTY_OUTLINE);
       setOutlineError(false);
       setActivities([]);
       setEvidence([]);
@@ -119,6 +183,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     const base = `/tenants/${tenantId}/projects/${project.id}`;
     setOutlineError(false);
+    let authFailed = false;
+    const soft = async <T,>(path: string, fallback: T, onError?: () => void): Promise<T> => {
+      try {
+        return await apiFetch<T>(path);
+      } catch (err) {
+        if (isAuthFailure(err)) authFailed = true;
+        onError?.();
+        return fallback;
+      }
+    };
+
     const [
       nextMetrics,
       nextKnowledge,
@@ -133,21 +208,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       nextMcp,
       nextOutline,
     ] = await Promise.all([
-      apiFetch<Metric[]>(`${base}/metrics`).catch(() => []),
-      apiFetch<KnowledgeItem[]>(`${base}/knowledge`).catch(() => []),
-      apiFetch<Relationship[]>(`${base}/relationships`).catch(() => []),
-      apiFetch<WorkItem[]>(`${base}/work-items`).catch(() => []),
-      apiFetch<Milestone[]>(`${base}/milestones`).catch(() => []),
-      apiFetch<Activity[]>(`${base}/activities`).catch(() => []),
-      apiFetch<EvidenceItem[]>(`${base}/evidence`).catch(() => []),
-      apiFetch<Membership[]>(`/tenants/${tenantId}/members`).catch(() => []),
-      apiFetch<Campaign[]>(`${base}/coordination/campaigns`).catch(() => []),
-      apiFetch<Runtime[]>(`${base}/coordination/runtimes`).catch(() => []),
-      apiFetch<McpDirectory>(`${base}/coordination/mcp`).catch(() => null),
-      apiFetch<PlanOutline>(`${base}/plan/`).catch(() => {
-        setOutlineError(true);
-        return { nodes: [], links: [], proposals: [] };
-      }),
+      soft(`${base}/metrics`, [] as Metric[]).then(asList<Metric>),
+      soft(`${base}/knowledge`, [] as KnowledgeItem[]).then(asList<KnowledgeItem>),
+      soft(`${base}/relationships`, [] as Relationship[]).then(asList<Relationship>),
+      soft(`${base}/work-items`, [] as WorkItem[]).then(asList<WorkItem>),
+      soft(`${base}/milestones`, [] as Milestone[]).then(asList<Milestone>),
+      soft(`${base}/activities`, [] as Activity[]).then(asList<Activity>),
+      soft(`${base}/evidence`, [] as EvidenceItem[]).then(asList<EvidenceItem>),
+      soft(`/tenants/${tenantId}/members`, [] as Membership[]).then(asList<Membership>),
+      soft(`${base}/coordination/campaigns`, [] as Campaign[]).then(asList<Campaign>),
+      soft(`${base}/coordination/runtimes`, [] as Runtime[]).then(asList<Runtime>),
+      soft<McpDirectory | null>(`${base}/coordination/mcp`, null),
+      soft(`${base}/plan/`, EMPTY_OUTLINE, () => setOutlineError(true)).then(normalizeOutline),
     ]);
 
     setMetrics(nextMetrics);
@@ -162,8 +234,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setRuntimes(nextRuntimes);
     setMcp(nextMcp);
     setOutline(nextOutline);
-    setError(null);
-  }, [tenantId, project]);
+    setError(authFailed ? AUTH_HELP : null);
+  }, [authenticated, tenantId, project]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,11 +243,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .then(async () => {
         if (cancelled) return;
         setConnection('online');
-        if (!tenantId || !hasLiveConfig()) return;
-        const liveProjects = await apiFetch<Project[]>(`/tenants/${tenantId}/projects`);
-        if (!cancelled && liveProjects.length) {
-          setProjects(liveProjects);
-          setProjectId(liveProjects[0].id);
+        if (!authenticated || !tenantId || !hasLiveConfig()) return;
+        try {
+          const liveProjects = await refreshProjects();
+          if (!cancelled && liveProjects.length) {
+            setProjectId(pickPreferredProjectId(liveProjects));
+          }
+        } catch (err) {
+          if (cancelled) return;
+          setError(isAuthFailure(err) ? AUTH_HELP : err instanceof ApiError ? err.message : 'Failed to load projects');
         }
       })
       .catch(() => {
@@ -184,13 +260,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [authenticated, tenantId, setProjectId, refreshProjects]);
 
   useEffect(() => {
+    if (!authenticated) return;
     refresh().catch((err: unknown) => {
-      setError(err instanceof ApiError ? err.message : 'Failed to load workspace');
+      setError(isAuthFailure(err) ? AUTH_HELP : err instanceof ApiError ? err.message : 'Failed to load workspace');
     });
-  }, [refresh]);
+  }, [authenticated, refresh]);
 
   const run = useCallback(async <T,>(action: () => Promise<T>) => {
     setBusy(true);
@@ -198,7 +275,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       return await action();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.message}${err.body ? ` — ${err.body}` : ''}` : 'Request failed');
+      setError(
+        isAuthFailure(err)
+          ? AUTH_HELP
+          : err instanceof ApiError
+            ? `${err.message}${err.body ? ` — ${err.body}` : ''}`
+            : 'Request failed',
+      );
       return undefined;
     } finally {
       setBusy(false);
@@ -226,6 +309,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     error,
     busy,
     refresh,
+    refreshProjects,
     run,
     setKnowledge,
     setWorkItems,

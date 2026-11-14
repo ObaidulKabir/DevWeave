@@ -1,5 +1,6 @@
+import { getAccessToken, getActiveTenantId } from './session';
+
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
-const authToken = import.meta.env.VITE_API_TOKEN ?? '';
 
 export class ApiError extends Error {
   constructor(
@@ -13,10 +14,15 @@ export class ApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...authHeaders(),
   };
 
   if (init?.body && !(init.body instanceof FormData)) {
@@ -49,7 +55,8 @@ export function apiUpload<T>(path: string, form: FormData, onProgress?: (fractio
     const request = new XMLHttpRequest();
     request.open('POST', `${baseUrl}${path}`);
     request.setRequestHeader('Accept', 'application/json');
-    if (authToken) request.setRequestHeader('Authorization', `Bearer ${authToken}`);
+    const token = getAccessToken();
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(event.loaded / event.total);
     };
@@ -71,5 +78,5 @@ export function apiUpload<T>(path: string, form: FormData, onProgress?: (fractio
 }
 
 export function hasLiveConfig(): boolean {
-  return Boolean(import.meta.env.VITE_TENANT_ID && import.meta.env.VITE_API_TOKEN);
+  return Boolean(getActiveTenantId() && getAccessToken());
 }

@@ -37,6 +37,7 @@ public sealed class CoordinationService :
     private readonly IKnowledgeRevisionRepository _revisions;
     private readonly IWorkPlanningRepository _work;
     private readonly SpecCatalogService _specCatalog;
+    private readonly IContentInspector _inspector;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -49,7 +50,8 @@ public sealed class CoordinationService :
         IProjectMembershipRepository memberships,
         IKnowledgeRevisionRepository revisions,
         IWorkPlanningRepository work,
-        SpecCatalogService specCatalog)
+        SpecCatalogService specCatalog,
+        IContentInspector inspector)
     {
         _repository = repository;
         _uow = uow;
@@ -62,6 +64,7 @@ public sealed class CoordinationService :
         _revisions = revisions;
         _work = work;
         _specCatalog = specCatalog;
+        _inspector = inspector;
     }
 
     // --- IRuntimeRegistry ---
@@ -824,12 +827,93 @@ public sealed class CoordinationService :
         return await DescribeWorkAsync(scope, package, ct);
     }
 
+    public async Task<WorkthroughView> ReportWorkthroughAsync(
+        AuthorizedScope scope,
+        Guid workPackageId,
+        string kind,
+        string outcome,
+        string? whatSucceeded = null,
+        string? blockedReason = null,
+        Guid? changeSetId = null,
+        IReadOnlyList<string>? steps = null,
+        CancellationToken ct = default)
+    {
+        var package = await _repository.GetWorkPackageByIdAsync(scope.TenantId, new WorkPackageId(workPackageId), ct);
+        if (package is null || package.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Work package was not found within this project.");
+
+        if (!Enum.TryParse<WorkthroughKind>(kind, ignoreCase: true, out var parsedKind))
+            throw new ArgumentException("kind must be Succeeded or Blocked.", nameof(kind));
+
+        // Only an agent that actually held a lease on this package may report on it. The lease may have
+        // expired, been released, or been stopped by a plan change: a final claim is still allowed, but one
+        // agent cannot overwrite what another reports about work it never touched.
+        if (!await ActorHeldLeaseAsync(scope, package.Id, ct))
+            throw new UnauthorizedTenantException(
+                "Only an agent that held a lease on this work package can report a workthrough for it.");
+
+        // The same content policy as every other free-text ingress: no secrets and no source code.
+        var text = string.Join("\n", new[] { outcome, whatSucceeded, blockedReason }
+            .Concat(steps ?? Array.Empty<string>())
+            .Where(t => !string.IsNullOrWhiteSpace(t)));
+        var inspection = await _inspector.InspectAsync(
+            string.Empty, "text/plain", System.Text.Encoding.UTF8.GetBytes(text), ct);
+        if (inspection.Verdict != ContentVerdict.Allow)
+            throw new ProhibitedContentException(
+                "The workthrough was rejected by the content policy. Describe what happened; do not paste source code or secrets.",
+                inspection.Reasons);
+
+        if (changeSetId is { } csId)
+        {
+            var changeSet = await _repository.GetChangeSetByIdAsync(scope.TenantId, new ChangeSetId(csId), ct);
+            if (changeSet is null || changeSet.ProjectId != scope.ProjectId || changeSet.WorkPackageId != package.Id)
+                throw new NotFoundException("Change set was not found for this work package.");
+        }
+
+        var workthrough = WorkPackageWorkthrough.Record(
+            scope.TenantId,
+            scope.ProjectId!,
+            package.Id,
+            scope.ActorId,
+            parsedKind,
+            outcome,
+            whatSucceeded,
+            blockedReason,
+            steps,
+            changeSetId);
+
+        await _repository.AddWorkthroughAsync(workthrough, ct);
+        await _audit.AddAsync(
+            AuditRecord.Record(
+                scope.TenantId,
+                scope.ActorId,
+                "work.package.workthrough_recorded",
+                "WorkPackageWorkthrough",
+                workthrough.Id.Value.ToString(),
+                JsonSerializer.Serialize(new
+                {
+                    projectId = scope.ProjectId!.Value,
+                    workPackageId = package.Id.Value,
+                    kind = workthrough.Kind.ToString(),
+                    outcome = workthrough.Outcome,
+                    blockedReason = workthrough.BlockedReason,
+                    changeSetId = workthrough.ChangeSetId,
+                    stepCount = workthrough.Steps.Count,
+                }),
+                scope.CorrelationId),
+            ct);
+        await _uow.SaveChangesAsync(ct);
+
+        return MapWorkthrough(workthrough);
+    }
+
     private async Task<WorkPackageStatusView> DescribeWorkAsync(AuthorizedScope scope, WorkPackage package, CancellationToken ct)
     {
         var baselines = await _repository.ListBaselinesByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
         var current = baselines.FirstOrDefault();
         var version = baselines.FirstOrDefault(b => b.Id.Value == package.BaselineId)?.ExpectedPlanVersion ?? 0;
         var blocked = await DescribeBlockedPackageAsync(scope, package, ct);
+        var latest = await _repository.GetLatestWorkthroughAsync(scope.TenantId, package.Id, ct);
         return new WorkPackageStatusView(
             package.Id.Value,
             package.CampaignId.Value,
@@ -844,8 +928,33 @@ public sealed class CoordinationService :
             package.ScopeRevisionIds,
             package.ScopeWorkItemIds,
             package.ScopeSpecTopics,
-            package.IsUnscoped);
+            package.IsUnscoped,
+            latest is null ? null : MapWorkthrough(latest));
     }
+
+    private async Task<bool> ActorHeldLeaseAsync(AuthorizedScope scope, WorkPackageId packageId, CancellationToken ct)
+    {
+        foreach (var lease in await _repository.ListLeasesByWorkPackageAsync(scope.TenantId, packageId, ct))
+        {
+            var runtime = await _repository.GetRuntimeByIdAsync(scope.TenantId, lease.RuntimeId, ct);
+            if (runtime is not null && runtime.PrincipalId == scope.ActorId)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static WorkthroughView MapWorkthrough(WorkPackageWorkthrough w) => new(
+        w.Id.Value,
+        w.WorkPackageId.Value,
+        w.RecordedBy.Value,
+        w.Kind.ToString(),
+        w.Outcome,
+        w.WhatSucceeded,
+        w.BlockedReason,
+        w.Steps,
+        w.ChangeSetId,
+        w.RecordedAt);
 
     // --- Plan-change enforcement ---
 

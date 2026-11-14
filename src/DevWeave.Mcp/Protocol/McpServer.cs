@@ -156,6 +156,18 @@ public sealed class McpServer
                     commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
                 },
                 new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
+            Tool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false",
+                new
+                {
+                    workPackageId = UuidProp(),
+                    kind = StringProp(),
+                    outcome = StringProp(),
+                    whatSucceeded = StringProp(),
+                    blockedReason = StringProp(),
+                    changeSetId = UuidProp(),
+                    steps = new { type = "array", items = StringProp() },
+                },
+                new[] { "workPackageId", "kind", "outcome" }),
             Tool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged",
                 new { changeSetId = UuidProp(), idempotencyKey = StringProp() },
                 new[] { "changeSetId", "idempotencyKey" }),
@@ -211,7 +223,14 @@ public sealed class McpServer
         var root = doc.RootElement;
         if (!root.TryGetProperty("name", out var nameEl) || nameEl.GetString() is not { Length: > 0 } name)
             throw new ArgumentException("tools/call requires name.");
-        var args = root.TryGetProperty("arguments", out var argsEl) ? argsEl : default;
+        var args = root.TryGetProperty("arguments", out var rawArgs) ? rawArgs : default;
+
+        // Arguments are always a JSON object (or absent). Anything else is a client bug and is refused
+        // with a clear message instead of being guessed at.
+        if (args.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined or JsonValueKind.Null))
+            throw new ArgumentException(
+                "tools/call 'arguments' must be a JSON object, for example {\"workPackageId\": \"...\"}. " +
+                "Arrays and other shapes are not accepted.");
 
         return name switch
         {
@@ -228,6 +247,7 @@ public sealed class McpServer
             "get_work_status" => await _status.GetWorkStatusAsync(scope, args.GetProperty("workPackageId").GetGuid(), ct),
             "release_lease" => await ReleaseLeaseFromArgsAsync(scope, args, ct),
             "submit_change_set" => await SubmitChangeSetFromArgsAsync(scope, args, ct),
+            "report_workthrough" => await ReportWorkthroughFromArgsAsync(scope, args, ct),
             "request_integration" => new
             {
                 queueItemId = await _integration.EnqueueAsync(scope, args.GetProperty("changeSetId").GetGuid(),
@@ -405,6 +425,35 @@ public sealed class McpServer
             args.GetProperty("commitSha").GetString()!,
             paths), ct);
         return new { changeSetId = id };
+    }
+
+    private async Task<object> ReportWorkthroughFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        if (args.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("report_workthrough arguments must be a JSON object.");
+
+        Guid? changeSetId = args.TryGetProperty("changeSetId", out var cs) && cs.ValueKind == JsonValueKind.String
+            ? cs.GetGuid()
+            : null;
+        var steps = args.TryGetProperty("steps", out var s) && s.ValueKind == JsonValueKind.Array
+            ? s.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToArray()
+            : null;
+        var whatSucceeded = args.TryGetProperty("whatSucceeded", out var ws) && ws.ValueKind == JsonValueKind.String
+            ? ws.GetString()
+            : null;
+        var blockedReason = args.TryGetProperty("blockedReason", out var br) && br.ValueKind == JsonValueKind.String
+            ? br.GetString()
+            : null;
+        return await _status.ReportWorkthroughAsync(
+            scope,
+            args.GetProperty("workPackageId").GetGuid(),
+            args.GetProperty("kind").GetString()!,
+            args.GetProperty("outcome").GetString()!,
+            whatSucceeded,
+            blockedReason,
+            changeSetId,
+            steps,
+            ct);
     }
 
     /// <summary>

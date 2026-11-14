@@ -14,7 +14,7 @@ const NAV = [
   ['/work', 'Work'],
   ['/activity', 'Activity'],
   ['/evidence', 'Evidence'],
-  ['/access', 'Access'],
+  ['/access', 'Access / Apps'],
   ['/live', 'Live'],
   ['/coordination', 'Coordination'],
   ['/reports', 'Reports'],

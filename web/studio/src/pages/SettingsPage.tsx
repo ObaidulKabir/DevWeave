@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Panel } from '../components/Panel';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -40,6 +41,8 @@ export function SettingsPage() {
         <p className="px-5 py-5 text-sm leading-relaxed text-[var(--muted)]">
           Hidden or disabled controls are presentation only. The API re-checks tenant membership, project grants and
           principal type on every request. Configure a human bearer token in <code className="font-mono">VITE_API_TOKEN</code>.
+          Create applications and MCP agent API keys on the{' '}
+          <Link className="font-semibold text-[var(--signal)] hover:underline" to="/access">Access</Link> page.
         </p>
       </Panel>
     </div>

@@ -24,4 +24,13 @@ internal sealed class PrincipalRepository : IPrincipalRepository
     // another tenant is indistinguishable from a missing one.
     public Task<Principal?> GetByIdAsync(TenantId tenantId, PrincipalId id, CancellationToken ct = default) =>
         _db.Principals.SingleOrDefaultAsync(p => p.TenantId == tenantId && p.Id == id, ct);
+
+    public async Task<IReadOnlyList<Principal>> ListByTenantAndTypeAsync(
+        TenantId tenantId,
+        PrincipalType type,
+        CancellationToken ct = default) =>
+        await _db.Principals
+            .Where(p => p.TenantId == tenantId && p.Type == type)
+            .OrderBy(p => p.Email)
+            .ToListAsync(ct);
 }

@@ -23,6 +23,7 @@ public static class AgentEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/agents", RegisterAgentAsync);
+        group.MapGet("/agents", ListAgentsAsync);
         group.MapPost("/agents/{agentId:guid}/credentials", IssueCredentialAsync);
         group.MapGet("/agents/{agentId:guid}/credentials", ListCredentialsAsync);
         group.MapPost("/agents/{agentId:guid}/credentials/{credentialId:guid}/revoke", RevokeCredentialAsync);
@@ -55,6 +56,15 @@ public static class AgentEndpoints
         return Results.Created(
             $"/tenants/{tenantId}/agents/{agent.Id}",
             MapAgent(agent));
+    }
+
+    private static async Task<IResult> ListAgentsAsync(
+        Guid tenantId,
+        ListAgents useCase,
+        CancellationToken ct)
+    {
+        var agents = await useCase.ExecuteAsync(new TenantId(tenantId), ct);
+        return Results.Ok(agents.Select(MapAgent).ToList());
     }
 
     private static async Task<IResult> IssueCredentialAsync(

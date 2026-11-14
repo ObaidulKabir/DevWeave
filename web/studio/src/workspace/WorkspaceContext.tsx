@@ -49,6 +49,7 @@ interface WorkspaceValue {
   error: string | null;
   busy: boolean;
   refresh: () => Promise<void>;
+  refreshProjects: () => Promise<Project[]>;
   run: <T>(action: () => Promise<T>) => Promise<T | undefined>;
   setKnowledge: Dispatch<SetStateAction<KnowledgeItem[]>>;
   setWorkItems: Dispatch<SetStateAction<WorkItem[]>>;
@@ -146,6 +147,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
   const live = Boolean(tenantId) && hasLiveConfig() && !project?.id.startsWith('demo-');
 
+  const refreshProjects = useCallback(async () => {
+    if (!tenantId || !hasLiveConfig()) return [] as Project[];
+    const liveProjects = asList<Project>(await apiFetch<Project[]>(`/tenants/${tenantId}/projects`));
+    if (liveProjects.length) {
+      setProjects(liveProjects);
+      setProjectIdState((current) => {
+        if (liveProjects.some((item) => item.id === current)) return current;
+        return pickPreferredProjectId(liveProjects);
+      });
+    }
+    return liveProjects;
+  }, [tenantId]);
+
   const refresh = useCallback(async () => {
     if (!tenantId || !project || project.id.startsWith('demo-')) {
       setMetrics([]);
@@ -228,9 +242,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setConnection('online');
         if (!tenantId || !hasLiveConfig()) return;
         try {
-          const liveProjects = asList<Project>(await apiFetch<Project[]>(`/tenants/${tenantId}/projects`));
+          const liveProjects = await refreshProjects();
           if (!cancelled && liveProjects.length) {
-            setProjects(liveProjects);
             setProjectId(pickPreferredProjectId(liveProjects));
           }
         } catch (err) {
@@ -244,7 +257,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, setProjectId]);
+  }, [tenantId, setProjectId, refreshProjects]);
 
   useEffect(() => {
     refresh().catch((err: unknown) => {
@@ -292,6 +305,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     error,
     busy,
     refresh,
+    refreshProjects,
     run,
     setKnowledge,
     setWorkItems,

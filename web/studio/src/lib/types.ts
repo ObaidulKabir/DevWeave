@@ -184,6 +184,45 @@ export interface Membership {
   status: string;
 }
 
+export interface AgentPrincipal {
+  id: string;
+  tenantId: string;
+  email: string;
+  type: string;
+  isActive: boolean;
+}
+
+export interface AgentCredential {
+  id: string;
+  tenantId: string;
+  agentId: string;
+  label: string;
+  status: string;
+  createdAt: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+}
+
+/** Returned once when a credential is issued or rotated. */
+export interface AgentCredentialIssued extends AgentCredential {
+  plainTextSecret: string;
+}
+
+export interface LifecycleProfile {
+  id: string;
+  tenantId: string;
+  key: string;
+  name: string;
+  version: string;
+  createdAt: string;
+}
+
+export interface WhoAmI {
+  tenantId?: string;
+  principalId?: string;
+  principalType?: string;
+}
+
 export interface Campaign {
   id: string;
   objective: string;

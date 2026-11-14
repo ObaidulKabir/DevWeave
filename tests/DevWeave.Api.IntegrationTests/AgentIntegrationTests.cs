@@ -76,6 +76,32 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
     }
 
     [Fact]
+    public async Task AGT_013_owner_lists_every_grant_of_an_agent_across_its_lifecycle()
+    {
+        var tenant = await CreateTenantAsync("Alpha Corp");
+        var owner = await CreateOwnerAsync(tenant.Id, "owner@alphacorp.com");
+        var agent = await RegisterAgentAsync(tenant.Id, "agent-1@alphacorp.com");
+
+        Assert.Empty(await ListGrantsAsync(tenant.Id, agent.Id));
+
+        var read = await GrantCapabilityAsync(tenant.Id, agent.Id, projectId: null, AgentCapability.ReadKnowledge);
+        var write = await GrantCapabilityAsync(tenant.Id, agent.Id, projectId: null, AgentCapability.WriteKnowledge);
+        await ApproveGrantAsync(tenant.Id, read.Id, owner.Id);
+        await RevokeGrantAsync(tenant.Id, read.Id, owner.Id);
+
+        // Proposed and revoked grants stay visible so Owners can review history, not only effective access.
+        var listed = await ListGrantsAsync(tenant.Id, agent.Id);
+        Assert.Equal(2, listed.Count);
+        Assert.Equal(AgentGrantStatus.Revoked, listed.Single(g => g.Id == read.Id).Status);
+        Assert.Equal(AgentGrantStatus.Proposed, listed.Single(g => g.Id == write.Id).Status);
+
+        // Another tenant's agent is indistinguishable from a missing one.
+        var beta = await CreateTenantAsync("Beta Corp");
+        using var crossTenant = await _client.GetAsync($"/tenants/{beta.Id}/agents/{agent.Id}/grants");
+        Assert.Equal(HttpStatusCode.NotFound, crossTenant.StatusCode);
+    }
+
+    [Fact]
     public async Task AGT_002_credential_lifecycle_disable_enable_rotate_revoke_end_to_end()
     {
         var tenant = await CreateTenantAsync("Alpha Corp");
@@ -471,6 +497,13 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AccessTokenResponse>(JsonOptions))!;
+    }
+
+    private async Task<List<AgentGrantResponse>> ListGrantsAsync(Guid tenantId, Guid agentId)
+    {
+        using var response = await _client.GetAsync($"/tenants/{tenantId}/agents/{agentId}/grants");
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<List<AgentGrantResponse>>(JsonOptions))!;
     }
 
     private async Task<List<AgentCredentialResponse>> ListCredentialsAsync(Guid tenantId, Guid agentId)

@@ -30,6 +30,7 @@ public static class AgentEndpoints
         group.MapPost("/agents/{agentId:guid}/credentials/{credentialId:guid}/disable", DisableCredentialAsync);
         group.MapPost("/agents/{agentId:guid}/credentials/{credentialId:guid}/enable", EnableCredentialAsync);
         group.MapPost("/agents/{agentId:guid}/credentials/{credentialId:guid}/rotate", RotateCredentialAsync);
+        group.MapGet("/agents/{agentId:guid}/grants", ListGrantsAsync);
         group.MapPost("/agent-grants", GrantCapabilityAsync);
         group.MapPost("/agent-grants/{grantId:guid}/approve", ApproveGrantAsync);
         group.MapPost("/agent-grants/{grantId:guid}/revoke", RevokeGrantAsync);
@@ -250,6 +251,23 @@ public static class AgentEndpoints
                 ct);
 
             return Results.Ok(credentials.Select(MapCredentialView).ToList());
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static async Task<IResult> ListGrantsAsync(
+        Guid tenantId,
+        Guid agentId,
+        ListAgentGrants useCase,
+        CancellationToken ct)
+    {
+        try
+        {
+            var grants = await useCase.ExecuteAsync(new TenantId(tenantId), new PrincipalId(agentId), ct);
+            return Results.Ok(grants.Select(MapGrant).ToList());
         }
         catch (NotFoundException)
         {

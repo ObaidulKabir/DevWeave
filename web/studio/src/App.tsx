@@ -3,6 +3,7 @@ import { AuthProvider } from './auth/AuthContext';
 import { RequireAuth } from './components/RequireAuth';
 import { Shell } from './components/Shell';
 import { AccessPage } from './pages/AccessPage';
+import { AgentsPage } from './pages/AgentsPage';
 import { CatalogPage } from './pages/CatalogPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { CoordinationPage } from './pages/CoordinationPage';
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="activity" element={<ActivityPage />} />
               <Route path="evidence" element={<EvidencePage />} />
               <Route path="access" element={<AccessPage />} />
+              <Route path="agents" element={<AgentsPage />} />
               <Route path="live" element={<LiveOperationsPage />} />
               <Route path="coordination" element={<CoordinationPage />} />
               <Route path="reports" element={<ReportsPage />} />

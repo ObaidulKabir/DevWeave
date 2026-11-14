@@ -9,7 +9,9 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { useAuth } from '../auth/AuthContext';
 import { ApiError, apiFetch, hasLiveConfig } from '../lib/api';
+import { getActiveTenantId } from '../lib/session';
 import type {
   Activity,
   Campaign,
@@ -76,7 +78,7 @@ const DEMO_PROJECTS: Project[] = [
 const PROJECT_STORAGE_KEY = 'devweave.studio.projectId';
 const EMPTY_OUTLINE: PlanOutline = { nodes: [], links: [], proposals: [] };
 const AUTH_HELP =
-  'Owner token was rejected (401/403). Remint with POST /auth/pilot/token, update web/studio/.env.local VITE_API_TOKEN, then restart Vite.';
+  'Owner token was rejected (401/403). Sign out and sign in again from /login to mint a fresh pilot Owner token.';
 
 function isAuthFailure(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 401 || err.status === 403);
@@ -114,7 +116,8 @@ function pickPreferredProjectId(liveProjects: Project[]): string {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const tenantId = import.meta.env.VITE_TENANT_ID as string | undefined;
+  const { authenticated, tenantId: authTenantId } = useAuth();
+  const tenantId = authTenantId ?? getActiveTenantId();
   const [connection, setConnection] = useState<'checking' | 'online' | 'unreachable'>('checking');
   const [projects, setProjects] = useState<Project[]>(DEMO_PROJECTS);
   const [projectId, setProjectIdState] = useState(DEMO_PROJECTS[0].id);
@@ -145,10 +148,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => projects.find((item) => item.id === projectId) ?? projects[0],
     [projects, projectId],
   );
-  const live = Boolean(tenantId) && hasLiveConfig() && !project?.id.startsWith('demo-');
+  const live = Boolean(authenticated && tenantId) && hasLiveConfig() && !project?.id.startsWith('demo-');
 
   const refreshProjects = useCallback(async () => {
-    if (!tenantId || !hasLiveConfig()) return [] as Project[];
+    if (!authenticated || !tenantId || !hasLiveConfig()) return [] as Project[];
     const liveProjects = asList<Project>(await apiFetch<Project[]>(`/tenants/${tenantId}/projects`));
     if (liveProjects.length) {
       setProjects(liveProjects);
@@ -158,10 +161,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       });
     }
     return liveProjects;
-  }, [tenantId]);
+  }, [authenticated, tenantId]);
 
   const refresh = useCallback(async () => {
-    if (!tenantId || !project || project.id.startsWith('demo-')) {
+    if (!authenticated || !tenantId || !project || project.id.startsWith('demo-')) {
       setMetrics([]);
       setKnowledge([]);
       setRelationships([]);
@@ -232,7 +235,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setMcp(nextMcp);
     setOutline(nextOutline);
     setError(authFailed ? AUTH_HELP : null);
-  }, [tenantId, project]);
+  }, [authenticated, tenantId, project]);
 
   useEffect(() => {
     let cancelled = false;
@@ -240,7 +243,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .then(async () => {
         if (cancelled) return;
         setConnection('online');
-        if (!tenantId || !hasLiveConfig()) return;
+        if (!authenticated || !tenantId || !hasLiveConfig()) return;
         try {
           const liveProjects = await refreshProjects();
           if (!cancelled && liveProjects.length) {
@@ -257,13 +260,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, setProjectId, refreshProjects]);
+  }, [authenticated, tenantId, setProjectId, refreshProjects]);
 
   useEffect(() => {
+    if (!authenticated) return;
     refresh().catch((err: unknown) => {
       setError(isAuthFailure(err) ? AUTH_HELP : err instanceof ApiError ? err.message : 'Failed to load workspace');
     });
-  }, [refresh]);
+  }, [authenticated, refresh]);
 
   const run = useCallback(async <T,>(action: () => Promise<T>) => {
     setBusy(true);

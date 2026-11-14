@@ -29,7 +29,7 @@ import { useWorkspace } from '../workspace/WorkspaceContext';
 const POLL_MS = 4000;
 const MESSAGE_TAIL = 24;
 const AUTH_HELP =
-  'Owner token was rejected (401/403). Remint with POST /auth/pilot/token, update VITE_API_TOKEN in web/studio/.env.local, then restart Vite.';
+  'Owner token was rejected (401/403). Sign out and sign in again from /login to mint a fresh pilot Owner token.';
 
 type FeedKind = 'message' | 'workthrough' | 'lease' | 'runtime';
 
@@ -266,9 +266,7 @@ export function LiveOperationsPage() {
 
         {!live ? (
           <p className="relative mt-4 text-sm text-amber-900">
-            Connect a live API (<code className="font-mono">VITE_TENANT_ID</code> /{' '}
-            <code className="font-mono">VITE_API_TOKEN</code>) to stream pilot coordination. Diagram and feed stay
-            empty until then.
+            Sign in with a live Owner session to stream pilot coordination. Diagram and feed stay empty until then.
           </p>
         ) : null}
         {error ? (

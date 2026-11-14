@@ -1,7 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const NAV = [
+  ['/access', 'Access / Apps'],
   ['/', 'Overview'],
   ['/plan-map', 'Plan map'],
   ['/plan-outline', 'Plan outline'],
@@ -14,7 +16,6 @@ const NAV = [
   ['/work', 'Work'],
   ['/activity', 'Activity'],
   ['/evidence', 'Evidence'],
-  ['/access', 'Access / Apps'],
   ['/live', 'Live'],
   ['/coordination', 'Coordination'],
   ['/reports', 'Reports'],
@@ -22,7 +23,14 @@ const NAV = [
 ] as const;
 
 export function Shell() {
+  const navigate = useNavigate();
+  const { logout, principalId, source } = useAuth();
   const { tenantId, project, projects, setProjectId, connection, live, error } = useWorkspace();
+
+  function onLogout() {
+    logout();
+    navigate('/login', { replace: true });
+  }
 
   return (
     <div className="studio-shell flex min-h-screen">
@@ -41,20 +49,35 @@ export function Shell() {
           ))}
         </nav>
 
-        <div className="mt-auto rounded-xl border border-white/10 bg-white/5 p-4 text-xs text-slate-300">
-          <p className="font-semibold text-teal-100">Control plane</p>
-          <p className="mt-2 flex items-center gap-2">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                connection === 'online' ? 'bg-emerald-400' : connection === 'checking' ? 'bg-amber-300' : 'bg-rose-400'
-              }`}
-              aria-hidden="true"
-            />
-            <span>{connection}</span>
-          </p>
-          <p className="mt-3 leading-relaxed text-slate-400">
-            Plan, document, verify and coordinate multi-agent delivery without storing source code.
-          </p>
+        <div className="mt-auto space-y-3">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-xs text-slate-300">
+            <p className="font-semibold text-teal-100">Control plane</p>
+            <p className="mt-2 flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  connection === 'online' ? 'bg-emerald-400' : connection === 'checking' ? 'bg-amber-300' : 'bg-rose-400'
+                }`}
+                aria-hidden="true"
+              />
+              <span>{connection}</span>
+            </p>
+            {principalId ? (
+              <p className="mt-2 font-mono text-[10px] text-slate-400">
+                Owner {principalId.slice(0, 8)}…
+                {source === 'env' ? ' · env' : ''}
+              </p>
+            ) : null}
+            <p className="mt-3 leading-relaxed text-slate-400">
+              Plan, document, verify and coordinate multi-agent delivery without storing source code.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-2.5 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/5 hover:text-white"
+            onClick={onLogout}
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 

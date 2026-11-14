@@ -12,6 +12,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': { target: 'http://localhost:5080', changeOrigin: true },
+      '/auth': { target: 'http://localhost:5080', changeOrigin: true },
       '/health': { target: 'http://localhost:5080', changeOrigin: true },
       '/tenants': { target: 'http://localhost:5080', changeOrigin: true },
       '/schemas': { target: 'http://localhost:5080', changeOrigin: true },

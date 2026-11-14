@@ -309,8 +309,7 @@ export function AccessPage() {
         </p>
         {!live ? (
           <p className="mt-4 text-sm text-amber-800">
-            Live mode needs <code className="font-mono">VITE_TENANT_ID</code> and{' '}
-            <code className="font-mono">VITE_API_TOKEN</code>.
+            Live mode needs a signed-in Owner session (or local env token fallback).
           </p>
         ) : null}
         {localNote ? <p className="mt-4 text-sm text-[var(--ink)]">{localNote}</p> : null}

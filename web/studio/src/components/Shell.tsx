@@ -4,6 +4,7 @@ import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const NAV = [
   ['/access', 'Access / Apps'],
+  ['/agents', 'Agents'],
   ['/', 'Overview'],
   ['/plan-map', 'Plan map'],
   ['/plan-outline', 'Plan outline'],

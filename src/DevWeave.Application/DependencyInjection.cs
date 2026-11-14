@@ -113,6 +113,7 @@ public static class DependencyInjection
 
         services.AddScoped<RegisterAgent>();
         services.AddScoped<ListAgents>();
+        services.AddScoped<ListAgentGrants>();
         services.AddScoped<IssueAgentCredential>();
         services.AddScoped<RevokeAgentCredential>();
         services.AddScoped<DisableAgentCredential>();

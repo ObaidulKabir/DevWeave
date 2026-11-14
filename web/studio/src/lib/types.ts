@@ -203,6 +203,23 @@ export interface AgentCredential {
   revokedAt?: string | null;
 }
 
+/** Capability grant: Proposed until a human approves it; Revoked is terminal (AGT-013). */
+export interface AgentGrant {
+  id: string;
+  tenantId: string;
+  projectId?: string | null;
+  agentId: string;
+  capability: string;
+  classificationCeiling: string;
+  status: string;
+  grantedAt: string;
+  expiresAt?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  revokedBy?: string | null;
+  revokedAt?: string | null;
+}
+
 /** Returned once when a credential is issued or rotated. */
 export interface AgentCredentialIssued extends AgentCredential {
   plainTextSecret: string;

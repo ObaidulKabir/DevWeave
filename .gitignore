@@ -70,3 +70,6 @@ $RECYCLE.BIN/
 
 # CodeGraph index
 .codegraph/
+
+# Nested project repo (not part of DevWeave)
+dhopa-service/

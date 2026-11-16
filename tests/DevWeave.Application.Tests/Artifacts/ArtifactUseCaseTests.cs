@@ -339,6 +339,9 @@ public sealed class ArtifactUseCaseTests
 
         public Task<Principal?> GetByIdAsync(TenantId tenantId, PrincipalId id, CancellationToken ct = default) =>
             Task.FromResult(Principals.FirstOrDefault(p => p.TenantId == tenantId && p.Id == id));
+
+        public Task<IReadOnlyList<Principal>> ListByTenantAndTypeAsync(TenantId tenantId, PrincipalType type, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Principal>>(Principals.Where(p => p.TenantId == tenantId && p.Type == type).ToList());
     }
 
     private sealed class InMemoryObjectStorage : IObjectStorage

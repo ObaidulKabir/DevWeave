@@ -1,15 +1,18 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
+import {
+  createTenantApplication,
+  ensureProjectMembership,
+  ensureTenantMembership,
+  slugifyKey,
+} from '../lib/apps';
 import { apiFetch } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
 import type {
   AgentCredential,
   AgentCredentialIssued,
   AgentPrincipal,
-  LifecycleProfile,
-  Membership,
-  Project,
   WhoAmI,
 } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
@@ -20,58 +23,6 @@ const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.re
 function maskSecret(id: string): string {
   const compact = id.replace(/-/g, '');
   return `••••${compact.slice(-4) || '----'}`;
-}
-
-function slugifyKey(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
-}
-
-async function ensureLifecycleProfile(tenantId: string): Promise<LifecycleProfile> {
-  const existing = await apiFetch<LifecycleProfile[]>(`/tenants/${tenantId}/lifecycle-profiles`);
-  const list = Array.isArray(existing) ? existing : [];
-  if (list[0]) return list[0];
-  return apiFetch<LifecycleProfile>(`/tenants/${tenantId}/lifecycle-profiles`, {
-    method: 'POST',
-    body: JSON.stringify({
-      key: 'default',
-      name: 'Default lifecycle',
-      version: '1.0',
-    }),
-  });
-}
-
-async function ensureTenantMembership(tenantId: string, principalId: string): Promise<void> {
-  const members = await apiFetch<Membership[]>(`/tenants/${tenantId}/members`);
-  const list = Array.isArray(members) ? members : [];
-  const existing = list.find((item) => item.principalId === principalId);
-  if (existing?.status === 'Active') return;
-  if (existing) {
-    await apiFetch(`/tenants/${tenantId}/members/${existing.id}/activate`, { method: 'POST' });
-    return;
-  }
-  const invited = await apiFetch<Membership>(`/tenants/${tenantId}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ principalId, role: 'Member' }),
-  });
-  if (invited.status !== 'Active') {
-    await apiFetch(`/tenants/${tenantId}/members/${invited.id}/activate`, { method: 'POST' });
-  }
-}
-
-async function ensureProjectMembership(tenantId: string, projectId: string, principalId: string): Promise<void> {
-  try {
-    await apiFetch(`/tenants/${tenantId}/projects/${projectId}/members`, {
-      method: 'POST',
-      body: JSON.stringify({ principalId, role: 'Member' }),
-    });
-  } catch {
-    // Already a member (or soft conflict) — continue; grants still apply.
-  }
 }
 
 async function grantAndApprove(
@@ -194,17 +145,11 @@ export function AccessPage() {
       const who = actorId ?? (await apiFetch<WhoAmI>('/auth/whoami')).principalId;
       if (!who) throw new Error('Could not resolve your Owner principal. Remint the pilot token.');
       setActorId(who);
-      const profile = await ensureLifecycleProfile(tenantId);
-      return apiFetch<Project>(`/tenants/${tenantId}/projects`, {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          key,
-          description: appForm.description.trim() || null,
-          lifecycleProfileId: profile.id,
-          createdBy: who,
-        }),
-      });
+      return createTenantApplication(
+        tenantId,
+        { name, key, description: appForm.description },
+        who,
+      );
     });
 
     if (!created) return;

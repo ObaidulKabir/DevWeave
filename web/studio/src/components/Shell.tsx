@@ -3,9 +3,10 @@ import { useAuth } from '../auth/AuthContext';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const NAV = [
-  ['/access', 'Access / Apps'],
+  ['/apps', 'Applications'],
   ['/agents', 'Agents'],
-  ['/', 'Overview'],
+  ['/access', 'Access / MCP'],
+  ['/overview', 'Overview'],
   ['/plan-map', 'Plan map'],
   ['/plan-outline', 'Plan outline'],
   ['/plan-versions', 'Plan versions'],
@@ -30,7 +31,7 @@ export function Shell() {
 
   function onLogout() {
     logout();
-    navigate('/login', { replace: true });
+    navigate('/', { replace: true });
   }
 
   return (
@@ -43,7 +44,7 @@ export function Shell() {
 
         <nav className="mt-10 space-y-1" aria-label="Primary">
           {NAV.map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === '/'} className="studio-nav-link">
+            <NavLink key={to} to={to} end={to === '/apps'} className="studio-nav-link">
               <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
               {label}
             </NavLink>
@@ -125,7 +126,7 @@ export function Shell() {
               <NavLink
                 key={to}
                 to={to}
-                end={to === '/'}
+                end={to === '/apps'}
                 className={({ isActive }) =>
                   `shrink-0 rounded-lg px-3 py-2 text-sm font-semibold ${
                     isActive ? 'bg-teal-50 text-[var(--signal)]' : 'text-[var(--muted)]'

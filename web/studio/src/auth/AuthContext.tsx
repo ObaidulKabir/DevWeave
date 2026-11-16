@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import {
+  bootstrapPilotTenant,
   clearSession,
   getActiveTenantId,
   getEnvAccessToken,
@@ -27,6 +28,7 @@ interface AuthValue {
   principalId?: string;
   source: 'session' | 'env' | null;
   login: (tenantId: string, principalId: string) => Promise<void>;
+  register: (tenantName: string, ownerEmail: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -43,13 +45,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<StudioSession | null>(() => getSession());
   const [source, setSource] = useState<'session' | 'env' | null>(() => resolveSource());
 
-  const login = useCallback(async (tenantId: string, principalId: string) => {
-    const next = await mintPilotOwnerToken(tenantId.trim(), principalId.trim());
+  const applySession = useCallback((next: StudioSession) => {
     saveSession(next);
     setSession(next);
     setSource('session');
     setRevision((n) => n + 1);
   }, []);
+
+  const login = useCallback(async (tenantId: string, principalId: string) => {
+    const next = await mintPilotOwnerToken(tenantId.trim(), principalId.trim());
+    applySession(next);
+  }, [applySession]);
+
+  const register = useCallback(async (tenantName: string, ownerEmail: string) => {
+    const next = await bootstrapPilotTenant(tenantName, ownerEmail);
+    applySession(next);
+  }, [applySession]);
 
   const logout = useCallback(() => {
     clearSession();
@@ -68,9 +79,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       principalId: activeSession?.principalId,
       source,
       login,
+      register,
       logout,
     };
-  }, [session, source, login, logout, revision]);
+  }, [session, source, login, register, logout, revision]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

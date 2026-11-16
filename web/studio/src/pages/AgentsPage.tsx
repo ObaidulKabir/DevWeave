@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel } from '../components/Panel';
@@ -108,7 +108,8 @@ function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactN
 
 export function AgentsPage() {
   const { principalId } = useAuth();
-  const { tenantId, live, projects, project, members, runtimes, refresh } = useWorkspace();
+  const { tenantId, live, projects, project, setProjectId, members, runtimes, refresh } = useWorkspace();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [records, setRecords] = useState<AgentRecord[]>([]);
   const [leases, setLeases] = useState<Lease[]>([]);
@@ -135,6 +136,21 @@ export function AgentsPage() {
   });
 
   const base = tenantId ? `/tenants/${tenantId}` : '';
+
+  useEffect(() => {
+    const requested = searchParams.get('projectId');
+    if (!requested || projects.length === 0) return;
+    if (!projects.some((item) => item.id === requested)) return;
+    if (project?.id === requested) return;
+    setProjectId(requested);
+  }, [searchParams, projects, project?.id, setProjectId]);
+
+  function onProjectChange(nextId: string) {
+    setProjectId(nextId);
+    const next = new URLSearchParams(searchParams);
+    next.set('projectId', nextId);
+    setSearchParams(next, { replace: true });
+  }
 
   const loadAll = useCallback(async () => {
     if (!tenantId || !live) {
@@ -480,12 +496,37 @@ export function AgentsPage() {
       <section className="panel rounded-2xl px-6 py-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">Tenant · Agents</p>
-            <h2 className="font-display mt-2 text-3xl font-bold tracking-tight">Agent management</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">
-              Every AI agent in this tenant: what it may do (grants), how it signs in (API keys), and where it is running
-              right now. Agents only propose; grants take effect after a person approves them.
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">
+              <Link to="/apps" className="hover:underline">Applications</Link>
+              {' · '}
+              Agents
             </p>
+            <h2 className="font-display mt-2 text-3xl font-bold tracking-tight">
+              {project ? `Agents for ${project.name}` : 'Agent management'}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">
+              Manage agents for the selected application: grants, API keys, and live runtimes. Agents only propose;
+              grants take effect after a person approves them.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]" htmlFor="agents-project">
+                Application
+              </label>
+              <select
+                id="agents-project"
+                className="field max-w-xs"
+                value={project?.id ?? ''}
+                onChange={(event) => onProjectChange(event.target.value)}
+                disabled={!live || projects.length === 0}
+              >
+                {projects.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+              <Link to="/apps" className="text-sm font-semibold text-[var(--signal)] hover:underline">
+                All applications
+              </Link>
+            </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={() => void loadAll()} disabled={!live || loading}>
             {loading ? 'Refreshing…' : 'Refresh'}

@@ -108,6 +108,75 @@ export interface PilotTokenResponse {
   expiresInSeconds: number;
 }
 
+export interface PilotBootstrapResponse extends PilotTokenResponse {
+  email?: string;
+  note?: string;
+}
+
+const LAST_IDENTITY_KEY = 'devweave.studio.lastIdentity';
+
+export interface LastIdentity {
+  tenantId: string;
+  principalId: string;
+  email?: string;
+  tenantName?: string;
+}
+
+export function getLastIdentity(): LastIdentity | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastIdentity>;
+    if (typeof parsed.tenantId !== 'string' || typeof parsed.principalId !== 'string') return null;
+    return {
+      tenantId: parsed.tenantId,
+      principalId: parsed.principalId,
+      email: typeof parsed.email === 'string' ? parsed.email : undefined,
+      tenantName: typeof parsed.tenantName === 'string' ? parsed.tenantName : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastIdentity(identity: LastIdentity): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(LAST_IDENTITY_KEY, JSON.stringify(identity));
+}
+
+function sessionFromPilotPayload(payload: PilotTokenResponse): StudioSession {
+  if (!payload.accessToken || !payload.tenantId || !payload.principalId) {
+    throw new Error('Pilot token response was incomplete.');
+  }
+  const expiresInSeconds = payload.expiresInSeconds > 0 ? payload.expiresInSeconds : 8 * 60 * 60;
+  return {
+    accessToken: payload.accessToken,
+    tenantId: payload.tenantId,
+    principalId: payload.principalId,
+    expiresAt: Date.now() + expiresInSeconds * 1000,
+  };
+}
+
+async function readPilotError(response: Response, fallback: string): Promise<never> {
+  const body = await response.text().catch(() => undefined);
+  if (response.status === 404) {
+    throw new Error(
+      body?.includes('Not Found') || !body
+        ? 'Pilot auth is unavailable (API not in Development, or identity not found).'
+        : body,
+    );
+  }
+  if (response.status === 400) {
+    throw new Error(body || 'Invalid registration or login details.');
+  }
+  throw new Error(
+    response.status === 0
+      ? 'Could not reach the API. Is the control plane running?'
+      : `${fallback} (${response.status}).`,
+  );
+}
+
 export async function mintPilotOwnerToken(
   tenantId: string,
   principalId: string,
@@ -127,34 +196,44 @@ export async function mintPilotOwnerToken(
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => undefined);
-    if (response.status === 404) {
-      throw new Error(
-        body?.includes('Not Found') || !body
-          ? 'Owner not found for that tenant, or pilot auth is disabled.'
-          : body,
-      );
-    }
-    if (response.status === 400) {
-      throw new Error(body || 'Invalid tenant or owner identity.');
-    }
-    throw new Error(
-      response.status === 0
-        ? 'Could not reach the API. Is the control plane running?'
-        : `Login failed (${response.status}). Check tenant and owner IDs.`,
-    );
+    await readPilotError(response, 'Login failed');
   }
 
   const payload = (await response.json()) as PilotTokenResponse;
-  if (!payload.accessToken || !payload.tenantId || !payload.principalId) {
-    throw new Error('Pilot token response was incomplete.');
+  const session = sessionFromPilotPayload(payload);
+  saveLastIdentity({ tenantId: session.tenantId, principalId: session.principalId });
+  return session;
+}
+
+/** Registers a new tenant + Owner human principal and returns a pilot session (Development only). */
+export async function bootstrapPilotTenant(
+  tenantName: string,
+  ownerEmail: string,
+): Promise<StudioSession & { email?: string }> {
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  const response = await fetch(`${baseUrl}/auth/pilot/bootstrap`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      tenantName: tenantName.trim(),
+      ownerEmail: ownerEmail.trim(),
+    }),
+  });
+
+  if (!response.ok) {
+    await readPilotError(response, 'Registration failed');
   }
 
-  const expiresInSeconds = payload.expiresInSeconds > 0 ? payload.expiresInSeconds : 8 * 60 * 60;
-  return {
-    accessToken: payload.accessToken,
-    tenantId: payload.tenantId,
-    principalId: payload.principalId,
-    expiresAt: Date.now() + expiresInSeconds * 1000,
-  };
+  const payload = (await response.json()) as PilotBootstrapResponse;
+  const session = sessionFromPilotPayload(payload);
+  saveLastIdentity({
+    tenantId: session.tenantId,
+    principalId: session.principalId,
+    email: payload.email,
+    tenantName: tenantName.trim(),
+  });
+  return { ...session, email: payload.email };
 }

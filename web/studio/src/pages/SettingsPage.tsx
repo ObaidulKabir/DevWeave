@@ -10,7 +10,7 @@ export function SettingsPage() {
 
   function onLogout() {
     logout();
-    navigate('/login', { replace: true });
+    navigate('/', { replace: true });
   }
 
   return (

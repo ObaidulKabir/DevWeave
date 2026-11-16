@@ -60,7 +60,7 @@ export function OverviewPage() {
         </p>
         {!live ? (
           <p className="mt-4 text-sm text-amber-800">
-            Sign in at <code className="font-mono">/login</code> with your pilot tenant and Owner principal to load live data.
+            Open the <Link className="font-semibold text-[var(--signal)] hover:underline" to="/">landing page</Link> to register a tenant or sign in, then manage applications from the dashboard.
           </p>
         ) : null}
         <div className="mt-6 flex flex-wrap gap-2">

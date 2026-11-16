@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/node_modules/
+web/studio/dist/
+.git/
+.github/
+.claude/
+.env
+.env.*
+!.env.example
+docs/
+**/*.md

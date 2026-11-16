@@ -1,6 +1,7 @@
-# Local development dependencies for DevWeave.
-# Start with: docker compose up -d
-# These services are development scaffolding only; production topology is defined in infra/.
+# Local DevWeave stack.
+#   Dependencies only:   docker compose up -d postgres object-storage
+#   Full stack:          docker compose --profile app up -d --build   (Studio on :8081, API on :5080)
+# Development scaffolding only; production topology is defined in infra/.
 
 name: devweave
 
@@ -43,6 +44,54 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: src/DevWeave.Api/Dockerfile
+    container_name: devweave-api
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      object-storage: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      ObjectStorage__Endpoint: http://object-storage:9000
+      ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
+      Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}
+      Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
+      Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
+    ports:
+      - "5080:8080"
+
+  workers:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: src/DevWeave.Workers/Dockerfile
+    container_name: devweave-workers
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      object-storage: { condition: service_healthy }
+    environment:
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      ObjectStorage__Endpoint: http://object-storage:9000
+      ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
+      Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}
+
+  studio:
+    profiles: ["app"]
+    build:
+      context: web/studio
+    container_name: devweave-studio
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8081:80"
 
 volumes:
   devweave-postgres-data:

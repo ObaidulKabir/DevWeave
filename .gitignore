@@ -67,3 +67,6 @@ ehthumbs.db
 Desktop.ini
 .DS_Store
 $RECYCLE.BIN/
+
+# CodeGraph index
+.codegraph/

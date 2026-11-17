@@ -1,6 +1,6 @@
 # Local DevWeave stack.
 #   Dependencies only:   docker compose up -d postgres object-storage
-#   Full stack:          docker compose --profile app up -d --build   (Studio on :8081, API on :5080)
+#   Full stack:          docker compose --profile app up -d --build   (Studio on :8081, API on :5080; override host ports via .env)
 # Development scaffolding only; production topology is defined in infra/.
 
 name: devweave
@@ -27,7 +27,7 @@ services:
 
   # S3-compatible object storage stand-in for artifact binaries (SRS 3.1, 7.1).
   object-storage:
-    image: minio/minio:latest
+    image: ${OBJECT_STORAGE_IMAGE:-quay.io/minio/aistor/minio:latest}
     container_name: devweave-object-storage
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -35,8 +35,8 @@ services:
       MINIO_ROOT_USER: ${OBJECT_STORAGE__ACCESSKEY:-devweave}
       MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE__SECRETKEY:-change-me-locally}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${OBJECT_STORAGE_PORT:-9000}:9000"
+      - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
     volumes:
       - devweave-object-storage-data:/data
     healthcheck:
@@ -64,7 +64,7 @@ services:
       Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
       Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
     ports:
-      - "5080:8080"
+      - "${API_PORT:-5080}:8080"
 
   workers:
     profiles: ["app"]
@@ -91,7 +91,7 @@ services:
     depends_on:
       - api
     ports:
-      - "8081:80"
+      - "${STUDIO_PORT:-8081}:80"
 
 volumes:
   devweave-postgres-data:

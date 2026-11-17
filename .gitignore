@@ -67,3 +67,9 @@ ehthumbs.db
 Desktop.ini
 .DS_Store
 $RECYCLE.BIN/
+
+# CodeGraph index
+.codegraph/
+
+# Nested project repo (not part of DevWeave)
+dhopa-service/

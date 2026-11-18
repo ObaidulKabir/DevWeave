@@ -25,6 +25,7 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddScoped<CreateTenant>();
+        services.AddScoped<RegisterTenant>();
         services.AddScoped<GetTenant>();
         services.AddScoped<CreatePrincipal>();
         services.AddScoped<InviteMember>();

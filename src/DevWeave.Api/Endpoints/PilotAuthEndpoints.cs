@@ -23,11 +23,8 @@ public static class PilotAuthEndpoints
     }
 
     private static async Task<IResult> BootstrapAsync(
-        [FromBody] PilotBootstrapRequest request,
-        CreateTenant createTenant,
-        CreatePrincipal createPrincipal,
-        InviteMember inviteMember,
-        ActivateMember activateMember,
+        [FromBody] PilotBootstrapRequest? request,
+        RegisterTenant registerTenant,
         PilotHumanTokenService tokens,
         IHostEnvironment environment,
         IConfiguration configuration,
@@ -36,28 +33,29 @@ public static class PilotAuthEndpoints
         if (!IsPilotEnabled(environment, configuration))
             return Results.NotFound();
 
-        if (string.IsNullOrWhiteSpace(request.TenantName) || string.IsNullOrWhiteSpace(request.OwnerEmail))
+        if (request is null)
             return Results.BadRequest(new { error = "tenantName and ownerEmail are required." });
 
-        var tenant = await createTenant.ExecuteAsync(request.TenantName.Trim(), ct);
-        var owner = await createPrincipal.ExecuteAsync(
-            tenant.Id, request.OwnerEmail.Trim(), PrincipalType.Human, ct);
-        var membership = await inviteMember.ExecuteAsync(
-            tenant.Id, owner.Id, MembershipRole.Owner, ct);
-        await activateMember.ExecuteAsync(tenant.Id, membership.Id, ct);
-
-        var accessToken = tokens.Issue(tenant.Id, owner.Id, platformAdmin: true);
-
-        return Results.Ok(new
+        try
         {
-            tenantId = tenant.Id.Value,
-            principalId = owner.Id.Value,
-            email = owner.Email,
-            accessToken,
-            tokenType = "Bearer",
-            expiresInSeconds = 8 * 60 * 60,
-            note = "Development pilot token. Do not use in production.",
-        });
+            var registered = await registerTenant.ExecuteAsync(request.TenantName, request.OwnerEmail, ct);
+            var accessToken = tokens.Issue(registered.Tenant.Id, registered.Owner.Id, platformAdmin: true);
+
+            return Results.Ok(new
+            {
+                tenantId = registered.Tenant.Id.Value,
+                principalId = registered.Owner.Id.Value,
+                email = registered.Owner.Email,
+                accessToken,
+                tokenType = "Bearer",
+                expiresInSeconds = 8 * 60 * 60,
+                note = "Development pilot token. Do not use in production.",
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> MintTokenAsync(

@@ -205,13 +205,21 @@ export async function mintPilotOwnerToken(
   return session;
 }
 
-/** Registers a new tenant + Owner human principal and returns a pilot session (Development only). */
-export async function bootstrapPilotTenant(
+export interface TenantRegistrationResult {
+  tenantId: string;
+  principalId: string;
+  email?: string;
+  /** Present only when the API is issuing development pilot sessions. */
+  session: StudioSession | null;
+}
+
+/** Creates a tenant and an active Owner. No verification email is sent. */
+export async function registerTenant(
   tenantName: string,
   ownerEmail: string,
-): Promise<StudioSession & { email?: string }> {
+): Promise<TenantRegistrationResult> {
   const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
-  const response = await fetch(`${baseUrl}/auth/pilot/bootstrap`, {
+  const response = await fetch(`${baseUrl}/auth/register`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -228,12 +236,17 @@ export async function bootstrapPilotTenant(
   }
 
   const payload = (await response.json()) as PilotBootstrapResponse;
-  const session = sessionFromPilotPayload(payload);
+  const session = payload.accessToken ? sessionFromPilotPayload(payload) : null;
   saveLastIdentity({
-    tenantId: session.tenantId,
-    principalId: session.principalId,
+    tenantId: payload.tenantId,
+    principalId: payload.principalId,
     email: payload.email,
     tenantName: tenantName.trim(),
   });
-  return { ...session, email: payload.email };
+  return {
+    tenantId: payload.tenantId,
+    principalId: payload.principalId,
+    email: payload.email,
+    session,
+  };
 }

@@ -46,6 +46,7 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
     private readonly string _databaseName;
     private readonly string _adminConnectionString;
     private readonly bool _enforceTenantMembership;
+    private readonly bool _configureOidcAuthority;
     private bool _prepared;
 
     public IdentityTestFactory()
@@ -53,9 +54,10 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
     {
     }
 
-    internal IdentityTestFactory(bool enforceTenantMembership)
+    internal IdentityTestFactory(bool enforceTenantMembership, bool configureOidcAuthority = false)
     {
         _enforceTenantMembership = enforceTenantMembership;
+        _configureOidcAuthority = configureOidcAuthority;
         _databaseName = $"devweave_it_{Guid.NewGuid():N}";
         _adminConnectionString = BuildConnectionString("postgres");
         ConnectionString = BuildConnectionString(_databaseName);
@@ -108,7 +110,7 @@ public sealed class IdentityTestFactory : WebApplicationFactory<Program>
             configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DevWeave"] = ConnectionString,
-                ["Auth:Oidc:Authority"] = "",
+                ["Auth:Oidc:Authority"] = _configureOidcAuthority ? TestOidcIssuer : "",
                 ["Auth:Oidc:Audience"] = TestOidcAudience,
                 ["Auth:SigningKey"] = TestAgentSigningKey,
                 ["Authorization:RequireTenantMembership"] = _enforceTenantMembership.ToString(),

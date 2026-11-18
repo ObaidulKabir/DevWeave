@@ -72,6 +72,73 @@ public sealed class TenantIdentityUseCaseTests
     }
 
     [Fact]
+    public async Task Register_tenant_creates_an_active_human_owner_without_waiting_for_email()
+    {
+        var fakes = CreateFakes();
+        var useCase = new RegisterTenant(fakes.Tenants, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
+
+        var registered = await useCase.ExecuteAsync("  Acme Delivery  ", "  owner@acme.example  ");
+
+        Assert.Equal("Acme Delivery", registered.Tenant.Name);
+        Assert.Equal("owner@acme.example", registered.Owner.Email);
+        Assert.Equal(PrincipalType.Human, registered.Owner.Type);
+        Assert.True(registered.Owner.IsActive);
+        Assert.Equal(registered.Tenant.Id, registered.Owner.TenantId);
+        Assert.Equal(MembershipRole.Owner, registered.Membership.Role);
+        Assert.Equal(MembershipStatus.Active, registered.Membership.Status);
+        Assert.NotNull(registered.Membership.ActivatedAt);
+        Assert.Equal(1, fakes.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task Register_tenant_allows_the_same_owner_email_on_another_tenant()
+    {
+        var fakes = CreateFakes();
+        var useCase = new RegisterTenant(fakes.Tenants, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
+
+        var first = await useCase.ExecuteAsync("Acme Delivery", "owner@acme.example");
+        var second = await useCase.ExecuteAsync("Other Delivery", "owner@acme.example");
+
+        Assert.NotEqual(first.Tenant.Id, second.Tenant.Id);
+        Assert.Equal(2, fakes.Tenants.Tenants.Count);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("A")]
+    public async Task Register_tenant_rejects_a_name_shorter_than_two_characters(string name)
+    {
+        var fakes = CreateFakes();
+        var useCase = new RegisterTenant(fakes.Tenants, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            useCase.ExecuteAsync(name, "owner@acme.example"));
+
+        Assert.Contains("Tenant name", error.Message, StringComparison.Ordinal);
+        Assert.Empty(fakes.Tenants.Tenants);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("owner")]
+    [InlineData("owner@")]
+    [InlineData("@acme.example")]
+    [InlineData("own er@acme.example")]
+    [InlineData("owner@acme.example extra")]
+    public async Task Register_tenant_rejects_an_email_that_is_not_a_single_address(string email)
+    {
+        var fakes = CreateFakes();
+        var useCase = new RegisterTenant(fakes.Tenants, fakes.Principals, fakes.Memberships, fakes.UnitOfWork);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            useCase.ExecuteAsync("Acme Delivery", email));
+
+        Assert.Contains("Owner email", error.Message, StringComparison.Ordinal);
+        Assert.Empty(fakes.Tenants.Tenants);
+    }
+
+    [Fact]
     public async Task TEN_002_list_members_is_scoped_to_the_owning_tenant()
     {
         var fakes = CreateFakes();
@@ -158,6 +225,12 @@ public sealed class TenantIdentityUseCaseTests
 
     private sealed class InMemoryUnitOfWork : IUnitOfWork
     {
-        public Task<int> SaveChangesAsync(CancellationToken ct = default) => Task.FromResult(0);
+        public int Saves { get; private set; }
+
+        public Task<int> SaveChangesAsync(CancellationToken ct = default)
+        {
+            Saves++;
+            return Task.FromResult(0);
+        }
     }
 }

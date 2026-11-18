@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 import {
-  bootstrapPilotTenant,
+  registerTenant,
   clearSession,
   getActiveTenantId,
   getEnvAccessToken,
@@ -28,7 +28,7 @@ interface AuthValue {
   principalId?: string;
   source: 'session' | 'env' | null;
   login: (tenantId: string, principalId: string) => Promise<void>;
-  register: (tenantName: string, ownerEmail: string) => Promise<void>;
+  register: (tenantName: string, ownerEmail: string) => Promise<'signed-in' | 'created'>;
   logout: () => void;
 }
 
@@ -58,8 +58,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applySession]);
 
   const register = useCallback(async (tenantName: string, ownerEmail: string) => {
-    const next = await bootstrapPilotTenant(tenantName, ownerEmail);
-    applySession(next);
+    const result = await registerTenant(tenantName, ownerEmail);
+    if (!result.session) return 'created' as const;
+    applySession(result.session);
+    return 'signed-in' as const;
   }, [applySession]);
 
   const logout = useCallback(() => {

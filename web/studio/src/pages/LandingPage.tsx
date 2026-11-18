@@ -40,9 +40,7 @@ export function LandingPage() {
           </Link>
         </div>
         <p className="mt-8 max-w-md text-xs leading-relaxed text-[var(--muted)]">
-          Pilot registration uses Development bootstrap (
-          <code className="font-mono text-[var(--ink)]">POST /auth/pilot/bootstrap</code>
-          ). Production OIDC remains out of scope for this path.
+          Registration creates the tenant and Owner immediately. Email confirmation is not part of this step.
         </p>
       </main>
     </div>

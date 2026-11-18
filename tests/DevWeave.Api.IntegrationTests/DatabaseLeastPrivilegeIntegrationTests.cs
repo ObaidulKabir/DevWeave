@@ -119,6 +119,35 @@ public sealed class DatabaseLeastPrivilegeIntegrationTests : IClassFixture<Ident
     }
 
     [Fact]
+    public async Task Registration_owner_insert_is_rejected_until_the_session_tenant_is_the_new_tenant()
+    {
+        var tenantId = Guid.NewGuid();
+        var principalId = Guid.NewGuid();
+        var membershipId = Guid.NewGuid();
+
+        await using var blocked = OpenOwnerConnection();
+        await ExecuteAsync(blocked, $"SET ROLE {ApplicationRole};");
+        await ExecuteAsync(blocked,
+            $"INSERT INTO tenants (\"Id\", \"Name\", \"CreatedAt\") VALUES ('{tenantId}', 'RLS Registration', now());");
+
+        var denied = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            blocked,
+            "INSERT INTO principals (\"Id\", \"TenantId\", \"Email\", \"Type\", \"IsActive\") "
+            + $"VALUES ('{principalId}', '{tenantId}', 'owner@rls.example', 1, true);"));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, denied.SqlState);
+
+        await using var allowed = OpenOwnerConnection();
+        await ExecuteAsync(allowed, $"SET ROLE {ApplicationRole};");
+        await ExecuteAsync(allowed, $"SET app.tenant_id = '{tenantId}';");
+        await ExecuteAsync(allowed,
+            "INSERT INTO principals (\"Id\", \"TenantId\", \"Email\", \"Type\", \"IsActive\") "
+            + $"VALUES ('{principalId}', '{tenantId}', 'owner@rls.example', 1, true);");
+        await ExecuteAsync(allowed,
+            "INSERT INTO memberships (\"Id\", \"TenantId\", \"PrincipalId\", \"Role\", \"Status\", \"CreatedAt\", \"ActivatedAt\") "
+            + $"VALUES ('{membershipId}', '{tenantId}', '{principalId}', 1, 2, now(), now());");
+    }
+
+    [Fact]
     public async Task DATA_03_composite_ownership_rejects_a_parent_owned_by_another_tenant()
     {
         var tenantA = Guid.NewGuid();

@@ -13,17 +13,20 @@ public sealed class RegisterTenant
     private readonly IPrincipalRepository _principals;
     private readonly IMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ITenantContext _tenantContext;
 
     public RegisterTenant(
         ITenantRepository tenants,
         IPrincipalRepository principals,
         IMembershipRepository memberships,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ITenantContext tenantContext)
     {
         _tenants = tenants;
         _principals = principals;
         _memberships = memberships;
         _unitOfWork = unitOfWork;
+        _tenantContext = tenantContext;
     }
 
     public async Task<RegisteredTenant> ExecuteAsync(string tenantName, string ownerEmail, CancellationToken ct = default)
@@ -38,6 +41,9 @@ public sealed class RegisterTenant
             throw new ArgumentException("Owner email must be a single address of at most 256 characters.", nameof(ownerEmail));
 
         var tenant = Tenant.Create(name);
+        // Principals and memberships are behind row-level security. The session tenant must be
+        // this new tenant before the connection opens, or the application role's insert is rejected.
+        _tenantContext.TenantId = tenant.Id.Value;
         var owner = Principal.Create(tenant.Id, email, PrincipalType.Human);
         var membership = Membership.Invite(tenant.Id, owner.Id, MembershipRole.Owner);
         membership.Activate();

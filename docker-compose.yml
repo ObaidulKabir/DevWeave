@@ -39,11 +39,23 @@ services:
       - "9001:9001"
     volumes:
       - devweave-object-storage-data:/data
+    # `mc ready local` blocks until cluster write quorum and never exits on failure.
+    # Docker then times the check out and marks a serving single-node MinIO unhealthy,
+    # which holds api and workers on `condition: service_healthy`. Probe the S3
+    # readiness endpoint instead. curl ships in minio/minio; AIStor images omit it.
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test:
+        - CMD-SHELL
+        - |
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/ready
+          else
+            bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000 || exit 1; printf "GET /minio/health/ready HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; IFS= read -r status <&3; case "$$status" in *200*) exit 0;; *) exit 1;; esac'
+          fi
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   api:
     profiles: ["app"]

@@ -86,7 +86,7 @@ jobs:
     name: Deploy to production
     runs-on: ubuntu-latest
     environment: production
-    needs: [backend, frontend, docker]
+    needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:

@@ -39,6 +39,12 @@ services:
       - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
     volumes:
       - devweave-object-storage-data:/data 
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 
   api:
     profiles: ["app"]
@@ -48,7 +54,8 @@ services:
     container_name: devweave-api
     restart: unless-stopped
     depends_on:
-      postgres: { condition: service_healthy } 
+      postgres: { condition: service_healthy }
+      object-storage: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
@@ -68,7 +75,8 @@ services:
     container_name: devweave-workers
     restart: unless-stopped
     depends_on:
-      postgres: { condition: service_healthy } 
+      postgres: { condition: service_healthy }
+      object-storage: { condition: service_healthy }
     environment:
       ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
       ObjectStorage__Endpoint: http://object-storage:9000

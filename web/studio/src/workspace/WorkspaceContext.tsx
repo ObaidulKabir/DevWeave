@@ -159,6 +159,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (liveProjects.some((item) => item.id === current)) return current;
         return pickPreferredProjectId(liveProjects);
       });
+    } else {
+      setProjects([]);
+      setProjectIdState('');
     }
     return liveProjects;
   }, [authenticated, tenantId]);

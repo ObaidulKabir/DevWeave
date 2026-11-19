@@ -23,16 +23,30 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             // 1. Roles: a privileged migration/owner role and a least-privilege application role.
-            //    Roles are cluster-scoped, so creation is guarded to stay idempotent across the many
-            //    databases one server hosts in development and CI.
+            //    Roles are cluster-scoped. IF NOT EXISTS is not atomic: CI migrates many databases
+            //    on one server at once, and two sessions can both observe the role as missing.
+            //    The transaction lock makes the second session wait until the first commit is visible.
             migrationBuilder.Sql("""
                 DO $$
                 BEGIN
+                    PERFORM pg_advisory_xact_lock(hashtext('devweave.roles'));
+
                     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devweave_migrator') THEN
-                        CREATE ROLE devweave_migrator NOLOGIN;
+                        BEGIN
+                            CREATE ROLE devweave_migrator NOLOGIN;
+                        EXCEPTION
+                            WHEN unique_violation OR duplicate_object THEN
+                                NULL;
+                        END;
                     END IF;
+
                     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'devweave_app') THEN
-                        CREATE ROLE devweave_app NOLOGIN;
+                        BEGIN
+                            CREATE ROLE devweave_app NOLOGIN;
+                        EXCEPTION
+                            WHEN unique_violation OR duplicate_object THEN
+                                NULL;
+                        END;
                     END IF;
                 END $$;
                 """);

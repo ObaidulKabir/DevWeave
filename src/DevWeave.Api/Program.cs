@@ -225,6 +225,9 @@ app.MapMcpEndpoints();
 // Credential-to-token exchange and verified-identity surface (SRS TEN-007).
 app.MapAuthenticationEndpoints();
 
+// Tenant registration provisions an Owner immediately. Email verification is not part of this step.
+app.MapRegistrationEndpoints();
+
 // Development pilot human JWT bootstrap (disabled when OIDC authority is configured or in Production).
 if (PilotAuthEndpoints.IsPilotEnabled(app.Environment, app.Configuration))
 {

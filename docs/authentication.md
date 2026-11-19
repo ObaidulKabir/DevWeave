@@ -29,16 +29,27 @@ The OIDC provider must map these DevWeave identity claims into its access token:
 Issuer, signature, lifetime, and audience are validated by the OIDC bearer handler. Tokens missing
 valid DevWeave identity claims are rejected.
 
+## Tenant registration
+
+`POST /auth/register` with `{ "tenantName", "ownerEmail" }` creates the tenant, an active human Owner
+principal, and an active Owner membership in one step. It does not send email and does not wait for
+address confirmation. The same owner email may register more than one tenant.
+
+When development pilot auth is enabled, the response also includes a bearer `accessToken`. When an OIDC
+authority is configured, the response still returns `tenantId` and `principalId` and leaves `accessToken`
+null; the owner then signs in through the identity provider.
+
 ## Development pilot auth
 
 When `ASPNETCORE_ENVIRONMENT=Development` and `Auth:Oidc:Authority` is empty, the API accepts
 symmetrically signed human JWTs minted by the pilot endpoints (same claim shape as production OIDC):
 
-- `POST /auth/pilot/bootstrap` — create tenant + human owner membership and return a bearer token
+- `POST /auth/register` — the registration path above, including a development bearer token
+- `POST /auth/pilot/bootstrap` — the same provisioning as registration, plus a development bearer token
 - `POST /auth/pilot/token` — mint a bearer token for an existing active human principal
 
-These routes return 404 outside Development or when an OIDC authority is configured. Agents still use
-`POST /tenants/{tenantId}/agents/{agentId}/authenticate`.
+Pilot routes return 404 outside Development or when an OIDC authority is configured. `POST /auth/register`
+stays available. Agents still use `POST /tenants/{tenantId}/agents/{agentId}/authenticate`.
 
 ## Current Boundary
 

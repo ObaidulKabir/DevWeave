@@ -1,6 +1,8 @@
 using DevWeave.Api.Security;
 using DevWeave.Application.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace DevWeave.Api.Endpoints;
 
@@ -22,6 +24,7 @@ public static class RegistrationEndpoints
         IServiceProvider services,
         IHostEnvironment environment,
         IConfiguration configuration,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         if (request is null)
@@ -51,6 +54,36 @@ public static class RegistrationEndpoints
         {
             return Results.BadRequest(new { error = ex.Message });
         }
+        catch (DbUpdateException ex)
+        {
+            loggerFactory.CreateLogger("DevWeave.Api.Registration")
+                .LogError(ex, "Tenant registration failed while saving to the database.");
+            return Results.Json(
+                new { error = DescribePersistenceFailure(ex, environment) },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static string DescribePersistenceFailure(DbUpdateException exception, IHostEnvironment environment)
+    {
+        if (exception.InnerException is PostgresException postgres)
+        {
+            return postgres.SqlState switch
+            {
+                PostgresErrorCodes.UndefinedTable =>
+                    "Database schema is not applied. Enable Database:MigrateOnStartup or run migrations before registration.",
+                PostgresErrorCodes.InsufficientPrivilege =>
+                    "Database role cannot write the new tenant. Confirm the app role grants and that the session tenant is set.",
+                _ when environment.IsDevelopment() =>
+                    postgres.MessageText,
+                _ =>
+                    "Registration could not be saved. Check API database connectivity and schema.",
+            };
+        }
+
+        return environment.IsDevelopment()
+            ? exception.GetBaseException().Message
+            : "Registration could not be saved. Check API database connectivity and schema.";
     }
 
     public sealed record RegisterTenantRequest(string TenantName, string OwnerEmail);

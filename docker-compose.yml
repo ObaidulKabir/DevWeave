@@ -28,22 +28,28 @@ services:
   # S3-compatible object storage stand-in for artifact binaries (SRS 3.1, 7.1).
   object-storage:
     image: ${OBJECT_STORAGE_IMAGE:-rustfs/rustfs:latest}
-    container_name: devweave-object-storage
+    container_name: rustfs
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${OBJECT_STORAGE__ACCESSKEY:-devweave}
-      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE__SECRETKEY:-change-me-locally}
+    user: "10001:10001"
     ports:
-      - "${OBJECT_STORAGE_PORT:-9000}:9000"
-      - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
+      - "${OBJECT_STORAGE_PORT:-9000}:9000"           # S3 API
+      - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"   # Web Console
+    environment:
+      RUSTFS_VOLUMES: "/data"
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_ACCESS_KEY: ${OBJECT_STORAGE__ACCESSKEY:-devweave}
+      RUSTFS_SECRET_KEY: ${OBJECT_STORAGE__SECRETKEY:-change-me-locally}
+      RUSTFS_CORS_ALLOWED_ORIGINS: "*"
     volumes:
-      - devweave-object-storage-data:/data
+      - ./minio_data:/data   # existing MinIO data directory
+      - ./rustfs_logs:/logs
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   api:
     profiles: ["app"]

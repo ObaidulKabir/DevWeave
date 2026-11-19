@@ -27,6 +27,20 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     [Fact]
+    public async Task Readiness_endpoint_reports_database_connectivity()
+    {
+        using var factory = new IdentityTestFactory();
+        factory.PrepareDatabase();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(new Uri("/health/ready", UriKind.Relative));
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("ready", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Root_endpoint_identifies_the_product()
     {
         using var client = _factory.CreateClient();

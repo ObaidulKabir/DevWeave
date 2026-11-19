@@ -6,10 +6,12 @@ using DevWeave.Api.Endpoints.Archives;
 using DevWeave.Api.Endpoints.Integrations;
 using DevWeave.Application;
 using DevWeave.Infrastructure;
+using DevWeave.Infrastructure.Persistence;
 using DevWeave.Mcp.Protocol;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -157,6 +159,25 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
+var connectionString = app.Configuration.GetConnectionString("DevWeave");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DevWeave is required. Set it in the environment or appsettings for this host.");
+}
+
+// Compose and CI deploy rebuild containers but do not run `dotnet ef`. When enabled, the API applies
+// pending migrations before it accepts traffic so registration can write tenants on a fresh volume.
+var migrateOnStartup = app.Configuration.GetValue(
+    "Database:MigrateOnStartup",
+    defaultValue: false);
+if (migrateOnStartup)
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+    db.Database.Migrate();
+}
+
 app.UseExceptionHandler();
 
 app.UseAuthentication();
@@ -175,6 +196,20 @@ app.MapGet("/", () => Results.Ok(new
 
 // Probe surface consumed by deployment checks and synthetic availability monitoring (SRS 12.2).
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
+app.MapGet("/health/ready", async (DevWeaveDbContext db, CancellationToken ct) =>
+{
+    try
+    {
+        if (!await db.Database.CanConnectAsync(ct))
+            return Results.Json(new { status = "not_ready", reason = "database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        return Results.Ok(new { status = "ready" });
+    }
+    catch (Exception)
+    {
+        return Results.Json(new { status = "not_ready", reason = "database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+}).AllowAnonymous();
 
 // Tenant and principal surface (SRS TEN-001..TEN-004).
 app.MapIdentityEndpoints();

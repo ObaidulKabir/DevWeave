@@ -1,13 +1,17 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { PlanVersionStatusCard } from '../components/PlanVersionStatusCard';
 import { SpecStatusCard } from '../components/SpecStatusCard';
 import { StateBadge } from '../components/StateBadge';
+import { apiFetch } from '../lib/api';
 import { formatWhen } from '../lib/format';
+import type { PlanImportProposalSummary } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function OverviewPage() {
-  const { metrics, knowledge, workItems, evidence, activities, campaigns, live } = useWorkspace();
+  const { tenantId, project, metrics, knowledge, workItems, evidence, activities, campaigns, live } = useWorkspace();
+  const [pendingPlanImports, setPendingPlanImports] = useState(0);
   const planningSteps = [
     {
       number: '01',
@@ -47,6 +51,30 @@ export function OverviewPage() {
         { key: 'Campaigns', value: campaigns.length, unit: 'active set', includedPopulation: 'Coordination plane' },
       ];
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!live || !tenantId || !project) {
+      setPendingPlanImports(0);
+      return;
+    }
+    apiFetch<PlanImportProposalSummary[]>(
+      `/tenants/${tenantId}/projects/${project.id}/plan-import-proposals/`,
+    )
+      .then((rows) => {
+        if (!cancelled) {
+          setPendingPlanImports(
+            (Array.isArray(rows) ? rows : []).filter((row) => row.status === 'Proposed').length,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPlanImports(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, project]);
+
   return (
     <div className="space-y-6">
       <section className="panel rounded-2xl px-6 py-8">
@@ -71,6 +99,19 @@ export function OverviewPage() {
           <Link className="btn btn-ghost" to="/coordination">Coordination</Link>
         </div>
       </section>
+
+      {pendingPlanImports > 0 ? (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
+          <p className="font-semibold">
+            {pendingPlanImports} desktop-agent plan import {pendingPlanImports === 1 ? 'needs' : 'need'} review.
+          </p>
+          <p className="mt-1 leading-relaxed">
+            Imported Knowledge, Relations, and Work stay unpublished until an Owner approves the immutable bundle in{' '}
+            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>. Coordination channels do
+            not display planning records.
+          </p>
+        </section>
+      ) : null}
 
       <section aria-labelledby="planning-flow-title" className="space-y-4">
         <div>

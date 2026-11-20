@@ -29,6 +29,9 @@ public sealed class McpServer
     private readonly PlanImportService _planImport;
     private readonly SpecificationService _specs;
     private readonly IAgentGrantRepository _grants;
+    private readonly ICoordinationRepository _coordination;
+    private readonly ISchemaDefinitionRepository _schemas;
+    private readonly IRelationTypeRepository _relationTypes;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
 
@@ -47,6 +50,9 @@ public sealed class McpServer
         PlanImportService planImport,
         SpecificationService specs,
         IAgentGrantRepository grants,
+        ICoordinationRepository coordination,
+        ISchemaDefinitionRepository schemas,
+        IRelationTypeRepository relationTypes,
         ILogger<McpServer> logger)
     {
         _channels = channels;
@@ -61,6 +67,9 @@ public sealed class McpServer
         _planImport = planImport;
         _specs = specs;
         _grants = grants;
+        _coordination = coordination;
+        _schemas = schemas;
+        _relationTypes = relationTypes;
         _logger = logger;
         _options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
     }
@@ -78,6 +87,10 @@ public sealed class McpServer
                 McpMethods.Initialize => HandleInitialize(),
                 McpMethods.ListTools => await HandleListToolsAsync(scope, ct),
                 McpMethods.CallTool => await HandleCallToolAsync(scope, runtimeId, request, ct),
+                McpMethods.ListResources => HandleListResources(),
+                McpMethods.ReadResource => throw new NotFoundException("No MCP resources are published by this server."),
+                McpMethods.ListPrompts => HandleListPrompts(),
+                McpMethods.GetPrompt => throw new NotFoundException("No MCP prompts are published by this server."),
                 McpMethods.SendMessage => await HandleSendMessageAsync(scope, runtimeId, request, ct),
                 McpMethods.ReplayMessages => await HandleReplayAsync(scope, request, ct),
                 _ => throw new InvalidOperationException($"Method not found: {request.Method}")
@@ -102,9 +115,9 @@ public sealed class McpServer
         protocolVersion = ProtocolVersion,
         capabilities = new
         {
-            tools = new { },
-            resources = new { },
-            prompts = new { }
+            tools = new { listChanged = false },
+            resources = new { subscribe = false, listChanged = false },
+            prompts = new { listChanged = false }
         },
         serverInfo = new
         {
@@ -125,6 +138,24 @@ public sealed class McpServer
             "Use a Planning agent (ReadKnowledge/WriteKnowledge) for propose_initial_plan and design tools; " +
             "use an Execution agent (ExecuteWorkflow) for leases and change sets. " +
             "Platform support access to tenant data requires a time-bounded TEN-009 grant (no standing access)."
+    };
+
+    // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
+    // prevents strict 2026-07-28 client models from treating optional discovery metadata as absent.
+    private static object HandleListResources() => new
+    {
+        resources = Array.Empty<object>(),
+        cacheScope = "public",
+        resultType = "complete",
+        ttlMs = 0,
+    };
+
+    private static object HandleListPrompts() => new
+    {
+        prompts = Array.Empty<object>(),
+        cacheScope = "public",
+        resultType = "complete",
+        ttlMs = 0,
     };
 
     private async Task<object> HandleListToolsAsync(AuthorizedScope scope, CancellationToken ct)
@@ -155,6 +186,8 @@ public sealed class McpServer
         NamedTool("open_channel", "Open a project coordination channel",
             new { channelType = StringProp(), campaignId = UuidProp(), workPackageId = UuidProp() },
             new[] { "channelType" }),
+        NamedTool("list_channels", "List coordination channels in this project so execution clients can discover channel ids",
+            new { }, Array.Empty<string>()),
         NamedTool("register_runtime", "Register this agent runtime instance for the project",
             new { runtimeClass = StringProp(), protocolVersion = StringProp(), capabilities = new { type = "array", items = new { type = "string" } }, attestationRef = StringProp() },
             new[] { "runtimeClass", "protocolVersion", "attestationRef" }),
@@ -234,6 +267,10 @@ public sealed class McpServer
                 workLinks = new { type = "array", items = new { type = "object" } },
             },
             new[] { "idempotencyKey", "knowledge", "outline" }),
+        NamedTool("list_schemas", "List active published Knowledge schemas available to this planning agent. Use namespace as typeId and version as schemaVersion",
+            new { }, Array.Empty<string>()),
+        NamedTool("list_relation_types", "List active relation types and endpoint constraints for plan-import relations",
+            new { }, Array.Empty<string>()),
         NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
             new { topic = StringProp() }, new[] { "topic" }),
         NamedTool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
@@ -288,6 +325,7 @@ public sealed class McpServer
             "read_messages_after_cursor" => await ReplayFromArgsAsync(scope, args, ct),
             "acknowledge_messages" => await AckFromArgsAsync(scope, args, ct),
             "open_channel" => await OpenChannelFromArgsAsync(scope, args, ct),
+            "list_channels" => await ListChannelsAsync(scope, ct),
             "register_runtime" => await RegisterRuntimeFromArgsAsync(scope, args, ct),
             "heartbeat_lease" => await RenewLeaseFromArgsAsync(scope, args, ct),
             "request_assignment" => await AcquireLeaseFromArgsAsync(scope, runtimeId, args, ct),
@@ -312,6 +350,8 @@ public sealed class McpServer
                 args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
                 args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
             "propose_initial_plan" => await ProposeInitialPlanFromArgsAsync(scope, args, ct),
+            "list_schemas" => await ListSchemasAsync(ct),
+            "list_relation_types" => await ListRelationTypesAsync(ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
@@ -331,6 +371,59 @@ public sealed class McpServer
             "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
         };
+    }
+
+    private async Task<object> ListChannelsAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        var channels = await _coordination.ListChannelsByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
+        return channels
+            .OrderByDescending(channel => channel.CreatedAt)
+            .Select(channel => new
+            {
+                id = channel.Id.Value,
+                campaignId = channel.CampaignId?.Value,
+                workPackageId = channel.WorkPackageId?.Value,
+                channelType = channel.ChannelType,
+                visibility = channel.Visibility,
+                sequenceHighWatermark = channel.SequenceHighWatermark,
+                createdAt = channel.CreatedAt,
+            })
+            .ToArray();
+    }
+
+    private async Task<object> ListSchemasAsync(CancellationToken ct)
+    {
+        var schemas = await _schemas.ListAsync(ct);
+        return schemas
+            .Where(schema => schema.IsActive)
+            .OrderBy(schema => schema.Namespace, StringComparer.Ordinal)
+            .ThenBy(schema => schema.Version, StringComparer.Ordinal)
+            .Select(schema => new
+            {
+                id = schema.Id.Value,
+                typeId = schema.Namespace,
+                schemaVersion = schema.Version,
+                schema.Description,
+            })
+            .ToArray();
+    }
+
+    private async Task<object> ListRelationTypesAsync(CancellationToken ct)
+    {
+        var types = await _relationTypes.ListActiveAsync(ct);
+        return types
+            .OrderBy(type => type.Code, StringComparer.Ordinal)
+            .Select(type => new
+            {
+                id = type.Id.Value,
+                type.Code,
+                type.Name,
+                allowedSourceTypeIds = type.AllowedSourceTypeIds,
+                allowedTargetTypeIds = type.AllowedTargetTypeIds,
+                direction = type.Direction.ToString(),
+                cardinality = type.Cardinality.ToString(),
+            })
+            .ToArray();
     }
 
     private async Task<object> ProposeInitialPlanFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
@@ -551,6 +644,8 @@ public sealed class McpServer
         ProhibitedContentException => new JsonRpcError(-32602, ex.Message, new { kind = "prohibited-content" }),
         InvalidOperationException when ex.Message.StartsWith("Unknown tool", StringComparison.Ordinal)
             => new JsonRpcError(-32601, ex.Message, new { kind = "unknown-tool" }),
+        InvalidOperationException when ex.Message.StartsWith("Method not found", StringComparison.Ordinal)
+            => new JsonRpcError(-32601, ex.Message, new { kind = "method-not-found" }),
         ArgumentException or KeyNotFoundException or FormatException => new JsonRpcError(-32602, ex.Message, new { kind = "invalid" }),
         _ => null,
     };

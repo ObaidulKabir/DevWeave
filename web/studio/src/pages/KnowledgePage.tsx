@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ContentEditor } from '../components/ContentEditor';
 import { ContentView } from '../components/ContentView';
@@ -9,7 +9,13 @@ import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
 import { diffContent } from '../lib/content';
 import { formatWhen, shortId } from '../lib/format';
-import type { KnowledgeItem, KnowledgeRevision, ReviewDecision, SearchHit } from '../lib/types';
+import type {
+  KnowledgeItem,
+  KnowledgeRevision,
+  PlanImportProposalSummary,
+  ReviewDecision,
+  SearchHit,
+} from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 type Filter = 'review' | 'approved' | 'rejected' | 'all';
@@ -57,6 +63,7 @@ export function KnowledgePage() {
   const [revisions, setRevisions] = useState<KnowledgeRevision[]>([]);
   const [reviews, setReviews] = useState<ReviewDecision[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingPlanImports, setPendingPlanImports] = useState(0);
 
   const selectedId = params.get('item');
   const selected = knowledge.find((item) => item.id === selectedId) ?? null;
@@ -98,6 +105,30 @@ export function KnowledgePage() {
       .then((list) => setSchemas(Array.isArray(list) ? list : []))
       .catch(() => setSchemas([]));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!live || !tenantId || !project) {
+      setPendingPlanImports(0);
+      return;
+    }
+    apiFetch<PlanImportProposalSummary[]>(
+      `/tenants/${tenantId}/projects/${project.id}/plan-import-proposals/`,
+    )
+      .then((rows) => {
+        if (!cancelled) {
+          setPendingPlanImports(
+            (Array.isArray(rows) ? rows : []).filter((row) => row.status === 'Proposed').length,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPlanImports(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, project]);
 
   useEffect(() => {
     if (!tenantId || !selected) {
@@ -268,6 +299,19 @@ export function KnowledgePage() {
           does not prove the work is done. This space holds planning information, not source code or credentials.
         </p>
       </details>
+
+      {pendingPlanImports > 0 ? (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
+          <p className="font-semibold">
+            {pendingPlanImports} agent plan import {pendingPlanImports === 1 ? 'is' : 'are'} waiting for Owner review.
+          </p>
+          <p className="mt-1 leading-relaxed">
+            A successful <code className="font-mono text-xs">propose_initial_plan</code> call stores a proposal; it
+            does not publish Knowledge or Work until approval. Review it under{' '}
+            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>, not Coordination.
+          </p>
+        </section>
+      ) : null}
 
       {hits.length > 0 ? (
         <Panel title="Search results" subtitle="Only results you are allowed to see.">

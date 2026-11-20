@@ -4,10 +4,12 @@ using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Agents;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Relations;
 using DevWeave.Domain.Schema;
 using DevWeave.Infrastructure.Persistence;
 using DevWeave.Mcp.Protocol;
@@ -102,6 +104,84 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         Assert.Contains("request_assignment", executorTools);
         Assert.DoesNotContain("propose_initial_plan", executorTools);
+    }
+
+    [Fact]
+    public async Task MCP_discovery_lists_schemas_relations_and_channels_with_role_enforcement()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        Guid channelId;
+        var relationCode = $"supports-{Guid.NewGuid():N}";
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var db = setup.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var channel = CoordinationChannel.Open(
+                seed.Tenant.Id, seed.Project.Id, "Campaign", "Internal");
+            var relationType = RelationType.Create(relationCode, "Supports");
+            db.AddRange(channel, relationType);
+            await db.SaveChangesAsync();
+            channelId = channel.Id.Value;
+        }
+
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        var mcpUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        async Task<JsonElement> CallAsync(HttpClient client, int id, string method, object? parameters = null)
+        {
+            using var response = await client.PostAsJsonAsync(
+                mcpUrl, new JsonRpcRequest("2.0", id, method, parameters));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var document = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            return document!.RootElement.Clone();
+        }
+
+        var resources = await CallAsync(planner, 1, McpMethods.ListResources, new { });
+        Assert.Equal(0, resources.GetProperty("result").GetProperty("resources").GetArrayLength());
+        Assert.Equal("public", resources.GetProperty("result").GetProperty("cacheScope").GetString());
+        Assert.Equal("complete", resources.GetProperty("result").GetProperty("resultType").GetString());
+        Assert.Equal(0, resources.GetProperty("result").GetProperty("ttlMs").GetInt32());
+
+        var prompts = await CallAsync(planner, 2, McpMethods.ListPrompts, new { });
+        Assert.Equal(0, prompts.GetProperty("result").GetProperty("prompts").GetArrayLength());
+        Assert.Equal("complete", prompts.GetProperty("result").GetProperty("resultType").GetString());
+
+        var missingResource = await CallAsync(
+            planner, 3, McpMethods.ReadResource, new { uri = "devweave://missing" });
+        Assert.Equal(-32004, missingResource.GetProperty("error").GetProperty("code").GetInt32());
+        var missingPrompt = await CallAsync(
+            planner, 4, McpMethods.GetPrompt, new { name = "missing" });
+        Assert.Equal(-32004, missingPrompt.GetProperty("error").GetProperty("code").GetInt32());
+
+        var schemas = await CallAsync(planner, 5, McpMethods.CallTool,
+            new { name = "list_schemas", arguments = new { } });
+        Assert.Contains(
+            schemas.GetProperty("result").EnumerateArray(),
+            schema => schema.GetProperty("typeId").GetString() == "doc.note" &&
+                      schema.GetProperty("schemaVersion").GetString() == "1.0");
+
+        var relationTypes = await CallAsync(planner, 6, McpMethods.CallTool,
+            new { name = "list_relation_types", arguments = new { } });
+        Assert.Contains(
+            relationTypes.GetProperty("result").EnumerateArray(),
+            relation => relation.GetProperty("code").GetString() == relationCode);
+
+        var channels = await CallAsync(executor, 7, McpMethods.CallTool,
+            new { name = "list_channels", arguments = new { } });
+        Assert.Contains(
+            channels.GetProperty("result").EnumerateArray(),
+            channel => channel.GetProperty("id").GetGuid() == channelId);
+
+        var refused = await CallAsync(planner, 8, McpMethods.CallTool,
+            new { name = "list_channels", arguments = new { } });
+        Assert.Equal(-32003, refused.GetProperty("error").GetProperty("code").GetInt32());
+
+        var restPath =
+            $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination/channels";
+        using var executorRest = await executor.GetAsync(restPath);
+        Assert.Equal(HttpStatusCode.OK, executorRest.StatusCode);
+        using var plannerRest = await planner.GetAsync(restPath);
+        Assert.Equal(HttpStatusCode.Forbidden, plannerRest.StatusCode);
     }
 
     [Fact]

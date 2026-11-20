@@ -2,12 +2,16 @@ using System.Collections;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
 using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Specifications;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Identity;
+using DevWeave.Domain.Lifecycle;
+using DevWeave.Domain.Projects;
 using Microsoft.Extensions.Logging;
 
 namespace DevWeave.Mcp.Protocol;
@@ -28,6 +32,8 @@ public sealed class McpServer
     private readonly IWorkStatusReader _status;
     private readonly PlanDesignService _planning;
     private readonly PlanImportService _planImport;
+    private readonly ListWorkItems _listWorkItems;
+    private readonly TransitionWorkItem _transitionWorkItem;
     private readonly SpecificationService _specs;
     private readonly IAgentGrantRepository _grants;
     private readonly ICoordinationRepository _coordination;
@@ -49,6 +55,8 @@ public sealed class McpServer
         IWorkStatusReader status,
         PlanDesignService planning,
         PlanImportService planImport,
+        ListWorkItems listWorkItems,
+        TransitionWorkItem transitionWorkItem,
         SpecificationService specs,
         IAgentGrantRepository grants,
         ICoordinationRepository coordination,
@@ -66,6 +74,8 @@ public sealed class McpServer
         _status = status;
         _planning = planning;
         _planImport = planImport;
+        _listWorkItems = listWorkItems;
+        _transitionWorkItem = transitionWorkItem;
         _specs = specs;
         _grants = grants;
         _coordination = coordination;
@@ -128,7 +138,7 @@ public sealed class McpServer
         serverInfo = new
         {
             name = "DevWeave-Coordination-Plane",
-            version = "1.3.0"
+            version = "1.4.0"
         },
         // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
         instructions =
@@ -156,7 +166,9 @@ public sealed class McpServer
             "(provider, owner/name or remote URL, branch, commit SHA — never clones, blobs, diffs, or source); " +
             "(5) success returns status Proposed — ask the Owner to Approve and materialize. You cannot approve " +
             "your own proposal. After approval, use propose_plan_expansion for incremental children and " +
-            "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative."
+            "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative. " +
+            "Planning agents update Work item status with list_work_items then report_work_item (reported/done) " +
+            "or update_work_item_plan_state (planned). Verify and approve stay human-only in Studio."
     };
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
@@ -389,6 +401,28 @@ public sealed class McpServer
             new { }, Array.Empty<string>()),
         NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
             new { }, Array.Empty<string>()),
+        NamedTool("list_work_items", "List this project's Work items with independent planned, reported, verification, and approval states. Use after Owner Plan import. ReadKnowledge. Verify and approve are not MCP tools — humans do those in Studio.",
+            new { }, Array.Empty<string>()),
+        NamedTool("report_work_item", "Planning agent claim of Work item progress (reported state). Does not verify or approve. Pass workItemId or key from list_work_items. state: NotStarted, InProgress, Blocked, Completed, Failed; aliases done=Completed and not-done=reopen or leave unfinished. Legal jumps: NotStarted→InProgress|Blocked|Completed|Failed; InProgress/Blocked→Blocked|Completed|Failed|InProgress; Completed/Failed→InProgress only. Optional expectedVersion (defaults to current). Requires WriteKnowledge. Humans still verify and approve in Studio.",
+            new
+            {
+                workItemId = UuidProp(),
+                key = StringProp("Work item key from list_work_items or plan import."),
+                state = StringProp("ReportedExecutionState or done / not-done."),
+                reason = StringProp("Why this report is true. References only — no source or secrets."),
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+            },
+            ["state", "reason"]),
+        NamedTool("update_work_item_plan_state", "Planning agent update of Work item planned state (backlog/workflow, not execution claim). Pass workItemId or key. state: Planned, Ready, InProgress, Blocked, Cancelled. Legal jumps: Planned→Ready|Cancelled; Ready→Planned|InProgress|Cancelled; InProgress→Blocked|Cancelled; Blocked→InProgress|Cancelled; Cancelled→Planned. Optional expectedVersion. Requires WriteKnowledge. Verify and approve stay human-only.",
+            new
+            {
+                workItemId = UuidProp(),
+                key = StringProp("Work item key from list_work_items or plan import."),
+                state = StringProp("PlannedWorkState."),
+                reason = StringProp("Why the planned state is changing."),
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+            },
+            ["state", "reason"]),
         NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
             new { topic = StringProp() }, new[] { "topic" }),
         NamedTool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
@@ -476,6 +510,9 @@ public sealed class McpServer
             "register_codebase_target" => await RegisterCodebaseFromArgsAsync(scope, args, ct),
             "list_schemas" => await ListSchemasAsync(ct),
             "list_relation_types" => await ListRelationTypesAsync(ct),
+            "list_work_items" => await ListWorkItemsFromArgsAsync(scope, ct),
+            "report_work_item" => await ReportWorkItemFromArgsAsync(scope, args, ct),
+            "update_work_item_plan_state" => await UpdateWorkItemPlanStateFromArgsAsync(scope, args, ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
@@ -809,6 +846,7 @@ public sealed class McpServer
     {
         NotFoundException => new JsonRpcError(-32004, ex.Message, new { kind = "not-found" }),
         ConflictException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
+        WorkItemConcurrencyException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
         UnauthorizedTenantException => new JsonRpcError(-32003, ex.Message, new { kind = "forbidden" }),
         SpecDecisionRejectedException rejected => new JsonRpcError(-32602, ex.Message,
             new { kind = "invalid", issues = rejected.Issues.Select(i => new { i.Path, i.Message }) }),
@@ -818,6 +856,7 @@ public sealed class McpServer
             => new JsonRpcError(-32601, ex.Message, new { kind = "unknown-tool" }),
         InvalidOperationException when ex.Message.StartsWith("Method not found", StringComparison.Ordinal)
             => new JsonRpcError(-32601, ex.Message, new { kind = "method-not-found" }),
+        InvalidOperationException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
         ArgumentException or KeyNotFoundException or FormatException => new JsonRpcError(-32602, ex.Message, new { kind = "invalid" }),
         _ => null,
     };
@@ -864,6 +903,176 @@ public sealed class McpServer
         args.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(v => v.GetGuid()).ToArray()
             : Array.Empty<Guid>();
+
+    private async Task<object> ListWorkItemsFromArgsAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        var items = await _listWorkItems.ExecuteAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct);
+        return new { workItems = items.Select(MapWorkItem).ToArray() };
+    }
+
+    private async Task<object> ReportWorkItemFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var details = await ResolveWorkItemFromArgsAsync(scope, args, ct);
+        var reason = RequireString(args, "reason");
+        var expectedVersion = OptionalInt(args, "expectedVersion") ?? details.Item.Version;
+        var target = ResolveReportedTarget(RequireString(args, "state"), details.Item.ReportedState);
+        if (target is null)
+            return MapWorkChange(details.Item, details.DependsOn, Array.Empty<WorkItemTransition>());
+
+        var change = await _transitionWorkItem.ReportAsync(
+            scope.TenantId, scope.ProjectId!, details.Item.Id, target.Value, scope.ActorId, reason, expectedVersion, ct);
+        return MapWorkChange(change);
+    }
+
+    private async Task<object> UpdateWorkItemPlanStateFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var details = await ResolveWorkItemFromArgsAsync(scope, args, ct);
+        var reason = RequireString(args, "reason");
+        var expectedVersion = OptionalInt(args, "expectedVersion") ?? details.Item.Version;
+        var target = ParsePlannedState(RequireString(args, "state"));
+        if (target == details.Item.PlannedState)
+            return MapWorkChange(details.Item, details.DependsOn, Array.Empty<WorkItemTransition>());
+
+        var change = await _transitionWorkItem.ChangePlannedAsync(
+            scope.TenantId, scope.ProjectId!, details.Item.Id, target, scope.ActorId, reason, expectedVersion, ct);
+        return MapWorkChange(change);
+    }
+
+    private async Task<WorkItemDetails> ResolveWorkItemFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var listed = await _listWorkItems.ExecuteAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct);
+        var id = OptionalGuid(args, "workItemId");
+        var key = OptionalString(args, "key");
+        if (id is null && string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Provide workItemId or key from list_work_items.");
+
+        WorkItemDetails? match = null;
+        if (id is Guid itemId)
+            match = listed.FirstOrDefault(row => row.Item.Id.Value == itemId);
+        if (match is null && !string.IsNullOrWhiteSpace(key))
+            match = listed.FirstOrDefault(row =>
+                string.Equals(row.Item.Key, key, StringComparison.OrdinalIgnoreCase));
+        return match ?? throw new NotFoundException(
+            $"Work item '{id?.ToString() ?? key}' was not found within project '{scope.ProjectId}'.");
+    }
+
+    private static ReportedExecutionState? ResolveReportedTarget(string raw, ReportedExecutionState current)
+    {
+        var token = NormalizeStateToken(raw);
+        if (token is "notdone")
+        {
+            return current is ReportedExecutionState.Completed or ReportedExecutionState.Failed
+                ? ReportedExecutionState.InProgress
+                : null;
+        }
+
+        var state = token switch
+        {
+            "completed" or "complete" or "done" => ReportedExecutionState.Completed,
+            "notstarted" or "todo" => ReportedExecutionState.NotStarted,
+            "inprogress" or "wip" or "started" => ReportedExecutionState.InProgress,
+            "blocked" => ReportedExecutionState.Blocked,
+            "failed" or "fail" => ReportedExecutionState.Failed,
+            _ => throw new ArgumentException(
+                $"Unknown reported state '{raw}'. Use NotStarted, InProgress, Blocked, Completed, Failed, done, or not-done."),
+        };
+        return state == current ? null : state;
+    }
+
+    private static PlannedWorkState ParsePlannedState(string raw)
+    {
+        var token = NormalizeStateToken(raw);
+        return token switch
+        {
+            "planned" => PlannedWorkState.Planned,
+            "ready" => PlannedWorkState.Ready,
+            "inprogress" or "wip" or "started" => PlannedWorkState.InProgress,
+            "blocked" => PlannedWorkState.Blocked,
+            "cancelled" or "canceled" => PlannedWorkState.Cancelled,
+            _ => throw new ArgumentException(
+                $"Unknown planned state '{raw}'. Use Planned, Ready, InProgress, Blocked, or Cancelled."),
+        };
+    }
+
+    private static string NormalizeStateToken(string raw) =>
+        raw.Trim().Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal)
+            .Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant();
+
+    private static object MapWorkItem(WorkItemDetails details) => MapWorkItem(details.Item, details.DependsOn);
+
+    private static object MapWorkItem(WorkItem item, IReadOnlyList<WorkItemId> dependsOn) => new
+    {
+        id = item.Id.Value,
+        key = item.Key,
+        title = item.Title,
+        description = item.Description,
+        milestoneId = item.MilestoneId?.Value,
+        ownerId = item.OwnerId?.Value,
+        dueAt = item.DueAt,
+        priority = item.Priority.ToString(),
+        plannedState = item.PlannedState.ToString(),
+        reportedState = item.ReportedState.ToString(),
+        verificationState = item.VerificationState.ToString(),
+        approvalState = item.ApprovalState.ToString(),
+        version = item.Version,
+        dependsOn = dependsOn.Select(d => d.Value).ToArray(),
+        createdAt = item.CreatedAt,
+        updatedAt = item.UpdatedAt,
+    };
+
+    private static object MapWorkChange(WorkItemChange change) =>
+        MapWorkChange(change.Item, change.DependsOn, change.Transitions);
+
+    private static object MapWorkChange(WorkItem item, IReadOnlyList<WorkItemId> dependsOn,
+        IReadOnlyList<WorkItemTransition> transitions) => new
+    {
+        item = MapWorkItem(item, dependsOn),
+        transitions = transitions.Select(t => new
+        {
+            id = t.Id.Value,
+            workItemId = t.WorkItemId.Value,
+            dimension = t.Dimension.ToString(),
+            fromState = t.FromState,
+            toState = t.ToState,
+            actorId = t.ActorId.Value,
+            reason = t.Reason,
+            recordedAt = t.RecordedAt,
+            version = t.Version,
+        }).ToArray(),
+    };
+
+    private static string RequireString(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(value.GetString()))
+            throw new ArgumentException($"{name} is required.");
+        return value.GetString()!;
+    }
+
+    private static string? OptionalString(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : throw new ArgumentException($"{name} must be a string.");
+    }
+
+    private static Guid? OptionalGuid(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (value.ValueKind == JsonValueKind.String)
+            return Guid.TryParse(value.GetString(), out var parsed)
+                ? parsed
+                : throw new ArgumentException($"{name} must be a UUID.");
+        return value.GetGuid();
+    }
+
+    private static int? OptionalInt(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        return value.GetInt32();
+    }
 
     private async Task<object> DescribeBaselineFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
     {

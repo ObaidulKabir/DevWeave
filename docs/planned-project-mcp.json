@@ -7,7 +7,7 @@
   "classification": "Knowledge and plan reads honor grant/role classification ceilings; above-ceiling objects are omitted.",
   "exportIntegrity": "Tenant export/import manifests require non-empty artifact checksums; unknown checksums are rejected.",
   "auth": "Production humans use OIDC; agents use credentials and active project grants. TEN-009 support access is time-bounded.",
-  "initializeInstructions": "Mirrored by DevWeave.Mcp McpServer.HandleInitialize instructions (serverInfo version 1.3.0+). Includes empty-project propose_initial_plan procedure and git codebaseTargets / register_codebase_target (references only).",
+  "initializeInstructions": "Mirrored by DevWeave.Mcp McpServer.HandleInitialize instructions (serverInfo version 1.4.0+). Includes empty-project propose_initial_plan procedure, git codebaseTargets / register_codebase_target (references only), and planning-agent Work item status (list_work_items, report_work_item, update_work_item_plan_state; verify/approve remain human).",
   "tools": [
     {
       "name": "devweave.channel.open",

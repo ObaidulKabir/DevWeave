@@ -100,6 +100,9 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         var plannerTools = listPlannerDoc!.RootElement.GetProperty("result").GetProperty("tools")
             .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         Assert.Contains("propose_initial_plan", plannerTools);
+        Assert.Contains("list_work_items", plannerTools);
+        Assert.Contains("report_work_item", plannerTools);
+        Assert.Contains("update_work_item_plan_state", plannerTools);
         Assert.DoesNotContain("request_assignment", plannerTools);
 
         using var listExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 4, McpMethods.ListTools, new { }));
@@ -108,6 +111,8 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         Assert.Contains("request_assignment", executorTools);
         Assert.DoesNotContain("propose_initial_plan", executorTools);
+        Assert.DoesNotContain("report_work_item", executorTools);
+        Assert.DoesNotContain("update_work_item_plan_state", executorTools);
     }
 
     [Fact]
@@ -146,6 +151,97 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "send_project_message");
         Assert.Contains("propose_initial_plan", send.GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("Does not create Knowledge", send.GetProperty("description").GetString(), StringComparison.Ordinal);
+
+        var reportTool = listPlannerDoc.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "report_work_item");
+        Assert.Contains("WriteKnowledge", reportTool.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("verify", reportTool.GetProperty("description").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Planning_agent_updates_imported_work_item_status()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        var bundle = MinimalPlan($"work-status-{Guid.NewGuid():N}");
+        using var propose = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new { name = "propose_initial_plan", arguments = bundle }));
+        using var proposeDoc = await propose.Content.ReadFromJsonAsync<JsonDocument>();
+        var proposalId = McpJson.Payload(proposeDoc!.RootElement).GetProperty("id").GetGuid();
+
+        var basePath = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals";
+        using var approve = await ownerClient.PostAsJsonAsync($"{basePath}/{proposalId}/approve",
+            new DecideInitialPlanProposalRequest("Looks good"));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        using var listed = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
+            new { name = "list_work_items", arguments = new { } }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        var workItems = McpJson.Payload(listedDoc!.RootElement).GetProperty("workItems");
+        Assert.Equal(1, workItems.GetArrayLength());
+        var item = workItems[0];
+        Assert.Equal("Planned", item.GetProperty("plannedState").GetString());
+        Assert.Equal("NotStarted", item.GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", item.GetProperty("verificationState").GetString());
+        Assert.Equal("Pending", item.GetProperty("approvalState").GetString());
+        var key = item.GetProperty("key").GetString()!;
+
+        using var illegalPlan = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 3, McpMethods.CallTool,
+            new
+            {
+                name = "update_work_item_plan_state",
+                arguments = new { key, state = "InProgress", reason = "Skip ready" },
+            }));
+        using var illegalPlanDoc = await illegalPlan.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32009, illegalPlanDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var ready = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 4, McpMethods.CallTool,
+            new
+            {
+                name = "update_work_item_plan_state",
+                arguments = new { key, state = "Ready", reason = "Backlog triaged" },
+            }));
+        using var readyDoc = await ready.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("Ready", McpJson.Payload(readyDoc!.RootElement).GetProperty("item").GetProperty("plannedState").GetString());
+
+        using var done = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 5, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "done", reason = "Auth delivered in the demo app" },
+            }));
+        using var doneDoc = await done.Content.ReadFromJsonAsync<JsonDocument>();
+        var reported = McpJson.Payload(doneDoc!.RootElement);
+        Assert.Equal("Completed", reported.GetProperty("item").GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", reported.GetProperty("item").GetProperty("verificationState").GetString());
+        Assert.Equal("Pending", reported.GetProperty("item").GetProperty("approvalState").GetString());
+
+        using var reopen = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 6, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "not-done", reason = "Reopened after review notes" },
+            }));
+        using var reopenDoc = await reopen.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("InProgress", McpJson.Payload(reopenDoc!.RootElement).GetProperty("item").GetProperty("reportedState").GetString());
+
+        using var blockedExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 7, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "Completed", reason = "Executor claim" },
+            }));
+        using var blockedExecutorDoc = await blockedExecutor.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedExecutorDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var verifyMissing = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 8, McpMethods.CallTool,
+            new { name = "verify_work_item", arguments = new { key, reason = "Nope" } }));
+        using var verifyMissingDoc = await verifyMissing.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32601, verifyMissingDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
     }
 
     [Fact]

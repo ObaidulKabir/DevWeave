@@ -1871,6 +1871,67 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("work_item_transitions", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.InitialPlanProposal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DecisionNote")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ProposedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProposedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("RequireEmptyProject")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ResultMappingJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ProjectId", "Status");
+
+                    b.HasIndex("TenantId", "ProjectId", "ProposedBy", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("initial_plan_proposals", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Planning.PlanExpansionProposal", b =>
                 {
                     b.Property<Guid>("Id")

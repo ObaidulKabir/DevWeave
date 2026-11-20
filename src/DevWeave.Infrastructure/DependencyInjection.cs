@@ -46,6 +46,7 @@ public static class DependencyInjection
         services.AddScoped<ILifecycleProfileRepository, LifecycleProfileRepository>();
         services.AddScoped<IWorkPlanningRepository, WorkPlanningRepository>();
         services.AddScoped<IPlanDesignRepository, PlanDesignRepository>();
+        services.AddScoped<IInitialPlanProposalRepository, InitialPlanProposalRepository>();
         services.AddScoped<IKnowledgeItemRepository, KnowledgeItemRepository>();
         services.AddScoped<IKnowledgeRevisionRepository, KnowledgeRevisionRepository>();
         services.AddScoped<IKnowledgeSearchRepository, KnowledgeSearchRepository>();

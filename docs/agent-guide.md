@@ -32,7 +32,10 @@ connect, what to read before you work, how to execute work, and what to do when 
 **Access you need** (granted by a project Owner in the dashboard):
 
 - Active membership in the project.
-- `ReadKnowledge` grant to read the outline and specifications; `WriteKnowledge` to propose anything.
+- Use **two separate agents** (separate credentials):
+  - **Planning**: `ReadKnowledge` + `WriteKnowledge` (optional `TraverseRelations`) for outline/spec/`propose_initial_plan`.
+  - **Execution**: `ReadKnowledge` + `AssembleContext` + `ExecuteWorkflow` for runtimes, leases, and change sets.
+- Tools are capability-gated: a planning key cannot take leases; an execution key cannot submit plan imports.
 - Your grant's classification ceiling limits which knowledge you can see.
 
 Example call:
@@ -42,13 +45,25 @@ Example call:
   "params": { "name": "get_work_status", "arguments": { "workPackageId": "3f1c..." } } }
 ```
 
-## 3. The session loop
+## 3. Empty project bootstrap (planning agent)
+
+When the remote project outline is empty (new app, or an existing codebase with no prior DevWeave knowledge):
+
+1. Design offline from the local repo (do **not** upload source).
+2. Call `propose_initial_plan` with an idempotent bundle: `knowledge[]`, `outline[]` (exactly one root with
+   `parentRef: null`), optional `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`.
+3. Defaults: `requireEmptyProject: true`. Tool success only stores a proposal; nothing is materialised yet.
+4. Ask the Owner to open Studio → **Plan import**, review the immutable payload, and **Approve**.
+5. After approval, `read_plan_outline` shows the published tree. Continue with `propose_plan_expansion` /
+   `propose_spec_*` for incremental changes.
+
+## 4. The session loop (execution agent)
 
 1. **Start up**: `initialize`, `tools/list`, then `register_runtime` and send `X-Runtime-Id` from then on.
 2. **Orient**: `get_plan_status` (current plan version and campaigns), `read_plan_outline` (what is being
    built), `get_effective_spec` (every binding decision).
-3. **Fill gaps** if your work needs a decision that is missing: `next_open_topics`, `list_spec_options`,
-   then `propose_spec_decision` (or `propose_spec_profile` for a whole stack). Wait for approval.
+3. **Fill gaps** if your work needs a decision that is missing: hand off to a **planning** agent for
+   `next_open_topics` / `propose_spec_*`, then wait for human approval.
 4. **Pick or create work** on a campaign whose `onCurrentPlan` is true: `list_work_packages`, or
    `create_work_package` with `implementsRevisionIds` / `workItemIds` / `specTopics`.
 5. **Lease** the part you will change: `request_assignment` (keep the returned `id` and `fence`).
@@ -60,7 +75,7 @@ Example call:
 Before steps 5, 6 and 7, and whenever a call is refused, call `get_work_status`. If `canProgress` is false,
 stop and follow section 5.
 
-## 4. Tool reference
+## 5. Tool reference
 
 ### Orientation and execution
 
@@ -84,6 +99,7 @@ stop and follow section 5.
 | Tool | Use it to | Key arguments |
 | --- | --- | --- |
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
+| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import) | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
 
 ### Specifications
@@ -105,7 +121,7 @@ stop and follow section 5.
 `open_channel`, `send_project_message`, `read_messages_after_cursor`, `acknowledge_messages`: durable
 messages between runtimes and humans. Acknowledge what you processed so you can resume after a reconnect.
 
-## 5. When the plan changes
+## 6. When the plan changes
 
 A project Owner can change the plan and lock a new plan version at any time. When that happens:
 
@@ -126,7 +142,7 @@ What you do:
 
 The same applies when a work package is closed or a kill switch stops your campaign, runtime or agent.
 
-## 6. Errors
+## 7. Errors
 
 Errors are JSON-RPC errors with a stable `code` and a `data.kind`. React to the code, not the message text.
 
@@ -140,7 +156,7 @@ Errors are JSON-RPC errors with a stable `code` and a `data.kind`. React to the 
 | `-32601` | `unknown-tool` | Tool name is wrong | Re-read `tools/list` |
 | `-32603` | none | Unexpected server error | Retry later with the same idempotency key |
 
-## 7. Known limits
+## 8. Known limits
 
 - Declaring a package scope is optional today; unscoped packages show `unscoped: true` because a plan change
   cannot be traced to them. Always declare scope.

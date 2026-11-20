@@ -173,8 +173,11 @@ export interface Metric {
   key: string;
   value: number;
   unit: string;
+  definitionVersion?: string;
   includedPopulation: string;
+  excludedPopulation?: string;
   calculatedAt?: string;
+  isEstimate?: boolean;
 }
 
 export interface Membership {

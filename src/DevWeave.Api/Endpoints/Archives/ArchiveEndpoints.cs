@@ -68,8 +68,19 @@ public static class ArchiveEndpoints
             "Begin import",
             http.TraceIdentifier);
 
-        var id = await archive.BeginImportAsync(scope, draft.ValidatedManifestRef, draft.IdempotencyKey);
-        return Results.Accepted($"/tenants/{tenantId}/import/{id}", new { id });
+        try
+        {
+            var id = await archive.BeginImportAsync(scope, draft.ValidatedManifestRef, draft.IdempotencyKey);
+            return Results.Accepted($"/tenants/{tenantId}/import/{id}", new { id });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+        catch (ConflictException ex)
+        {
+            return Results.Conflict(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> ListAuditLogsAsync(

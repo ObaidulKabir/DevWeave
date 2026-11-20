@@ -61,7 +61,7 @@ export function RegisterPage() {
         {created ? (
           <div className="mt-8 space-y-4">
             <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-              Tenant created. Sign in with the owner identity to continue.
+              Tenant created. Sign in via your identity provider (or pilot Owner IDs in Development) to continue.
             </div>
             <Link to="/login" className="btn btn-primary w-full">
               Sign in

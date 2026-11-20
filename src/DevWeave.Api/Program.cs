@@ -168,6 +168,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 // Compose and CI deploy rebuild containers but do not run `dotnet ef`. When enabled, the API applies
 // pending migrations before it accepts traffic so registration can write tenants on a fresh volume.
+// Prefer ConnectionStrings:DevWeaveMigrate (privileged) when the app connection uses role=devweave_app.
 var migrateOnStartup = app.Configuration.GetValue(
     "Database:MigrateOnStartup",
     defaultValue: false);
@@ -175,6 +176,9 @@ if (migrateOnStartup)
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+    var migrateConnection = app.Configuration.GetConnectionString("DevWeaveMigrate");
+    if (!string.IsNullOrWhiteSpace(migrateConnection))
+        db.Database.SetConnectionString(migrateConnection);
     db.Database.Migrate();
 }
 
@@ -213,6 +217,7 @@ app.MapGet("/health/ready", async (DevWeaveDbContext db, CancellationToken ct) =
 
 // Tenant and principal surface (SRS TEN-001..TEN-004).
 app.MapIdentityEndpoints();
+app.MapSupportAccessEndpoints();
 
 // Project and lifecycle surface (SRS PRJ-001..PRJ-006, PRJ-009, LFC-001).
 app.MapProjectEndpoints();

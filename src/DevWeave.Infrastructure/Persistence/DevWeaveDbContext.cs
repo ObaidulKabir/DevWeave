@@ -28,6 +28,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Principal> Principals => Set<Principal>();
     public DbSet<Membership> Memberships => Set<Membership>();
+    public DbSet<SupportAccessGrant> SupportAccessGrants => Set<SupportAccessGrant>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectReference> ProjectReferences => Set<ProjectReference>();
     public DbSet<ProjectMembership> ProjectMemberships => Set<ProjectMembership>();

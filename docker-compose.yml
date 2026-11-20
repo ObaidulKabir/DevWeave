@@ -64,13 +64,15 @@ services:
       object-storage: { condition: service_started }
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
-      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      # App traffic uses the least-privilege role. Migrations use DevWeaveMigrate without SET ROLE.
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally};Options=-c role=devweave_app
+      ConnectionStrings__DevWeaveMigrate: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
       Database__MigrateOnStartup: ${DATABASE_MIGRATE_ON_STARTUP:-true}
+      Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
+      Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
       ObjectStorage__Endpoint: http://object-storage:9000
       ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
       Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}
-      Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
-      Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
     ports:
       - "${API_PORT:-5080}:8080"
 
@@ -85,7 +87,7 @@ services:
       postgres: { condition: service_healthy }
       object-storage: { condition: service_started }
     environment:
-      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally};Options=-c role=devweave_app
       ObjectStorage__Endpoint: http://object-storage:9000
       ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
       Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}

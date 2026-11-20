@@ -26,17 +26,12 @@ public sealed class PortableArchive : IPortableArchive
 
     public async Task<ExportManifest> DescribeExportAsync(AuthorizedScope scope, CancellationToken ct = default)
     {
-        // SRS DATA-01, DATA-02: Describe the tenant's portable data set.
-        // For MVP, we collect all knowledge revisions and artifact checksums for the tenant.
-        
-        // Note: Real implementation would use a more efficient query or projection.
-        // Here we simulate the manifest generation.
-        
         var revisions = await _revisionRepository.ListByTenantAsync(scope.TenantId, ct);
         var resourceRefs = revisions.Select(r => new ResourceRef(r.KnowledgeItemId.Value, r.Id.Value)).ToList();
-        
+
         var artifacts = await _artifactRepository.ListByTenantAsync(scope.TenantId, ct);
-        var checksums = artifacts.Select(a => a.Checksum).Distinct().ToList();
+        EnsureArtifactChecksumIntegrity(artifacts);
+        var checksums = artifacts.Select(a => a.Checksum).Distinct(StringComparer.Ordinal).ToList();
 
         return new ExportManifest(
             scope.TenantId.Value,
@@ -49,34 +44,55 @@ public sealed class PortableArchive : IPortableArchive
     public async Task<Guid> BeginExportAsync(AuthorizedScope scope, string idempotencyKey,
         CancellationToken ct = default)
     {
-        // SRS DATA-03: Asynchronous export start.
         var manifest = await DescribeExportAsync(scope, ct);
-        
+
         var jobId = Guid.NewGuid();
-        
+
         await _auditJournal.AppendAsync(
             scope,
             "ExportStarted",
             $"Tenant:{scope.TenantId.Value}",
-            $"JobId:{jobId}",
+            $"JobId:{jobId};RevisionCount:{manifest.Revisions.Count};ChecksumCount:{manifest.ArtifactChecksums.Count}",
             ct);
-        
+
         return jobId;
     }
 
     public async Task<Guid> BeginImportAsync(AuthorizedScope scope, string validatedManifestRef,
         string idempotencyKey, CancellationToken ct = default)
     {
-        // SRS DATA-05: Asynchronous import start.
+        if (string.IsNullOrWhiteSpace(validatedManifestRef))
+            throw new ArgumentException("validatedManifestRef is required.", nameof(validatedManifestRef));
+
+        // EXP integrity: reject imports that declare checksums not present in the tenant store.
+        if (validatedManifestRef.StartsWith("checksums:", StringComparison.OrdinalIgnoreCase))
+        {
+            var declared = validatedManifestRef["checksums:".Length..]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var artifacts = await _artifactRepository.ListByTenantAsync(scope.TenantId, ct);
+            var known = artifacts.Select(a => a.Checksum).ToHashSet(StringComparer.Ordinal);
+            var missing = declared.Where(c => !known.Contains(c)).ToList();
+            if (missing.Count > 0)
+                throw new ConflictException($"Import rejected: manifest checksums not found in tenant storage ({missing.Count} missing).");
+        }
+
         var jobId = Guid.NewGuid();
-        
+
         await _auditJournal.AppendAsync(
             scope,
             "ImportStarted",
             $"Tenant:{scope.TenantId.Value}",
             $"Manifest:{validatedManifestRef};JobId:{jobId}",
             ct);
-        
+
         return jobId;
+    }
+
+    /// <summary>EXP-001/002: every stored artifact must carry a non-empty checksum before export.</summary>
+    internal static void EnsureArtifactChecksumIntegrity(IReadOnlyList<Domain.Artifacts.Artifact> artifacts)
+    {
+        var broken = artifacts.Where(a => string.IsNullOrWhiteSpace(a.Checksum)).ToList();
+        if (broken.Count > 0)
+            throw new ConflictException($"Export blocked: {broken.Count} artifact(s) missing checksum integrity metadata.");
     }
 }

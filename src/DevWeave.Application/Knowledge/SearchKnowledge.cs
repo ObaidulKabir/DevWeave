@@ -1,5 +1,6 @@
 using System.Text;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Security;
 using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
@@ -67,9 +68,7 @@ public sealed class SearchKnowledge
                 queryInspection.Reasons);
         }
 
-        var classificationCeiling = membership.Role is ProjectRole.Owner or ProjectRole.Admin
-            ? Classification.Restricted
-            : Classification.Internal;
+        var classificationCeiling = ClassificationAccess.CeilingFor(membership.Role);
 
         return await _search.SearchAsync(
             tenantId,

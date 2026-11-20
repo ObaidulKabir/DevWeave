@@ -4,6 +4,10 @@
   "protocolProfile": "pending-official-SDK-verification",
   "identity": "verified tenant, project, principal and runtime per request; never clientInfo",
   "toolSemantics": "Success acknowledges a durable commit, not recipient delivery, approval, or verification.",
+  "classification": "Knowledge and plan reads honor grant/role classification ceilings; above-ceiling objects are omitted.",
+  "exportIntegrity": "Tenant export/import manifests require non-empty artifact checksums; unknown checksums are rejected.",
+  "auth": "Production humans use OIDC; agents use credentials and active project grants. TEN-009 support access is time-bounded.",
+  "initializeInstructions": "Mirrored by DevWeave.Mcp McpServer.HandleInitialize instructions (serverInfo version 1.1.0+).",
   "tools": [
     {
       "name": "devweave.channel.open",

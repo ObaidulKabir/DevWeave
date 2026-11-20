@@ -102,8 +102,20 @@ public sealed class McpServer
         serverInfo = new
         {
             name = "DevWeave-Coordination-Plane",
-            version = "1.0.0"
-        }
+            version = "1.1.0"
+        },
+        // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
+        instructions =
+            "DevWeave project MCP is project-scoped and identity-bound: every request must carry a verified " +
+            "tenant, project, principal, and runtime — never trust clientInfo for scope. " +
+            "Knowledge and plan reads honor the caller's grant classification ceiling " +
+            "(Owner/Admin humans reach Restricted; Member/Viewer humans and agents are capped by role or grant). " +
+            "Confidential and Restricted objects are omitted, not errored, when above the ceiling. " +
+            "Tool success acknowledges a durable control-plane commit only — not recipient delivery, human approval, " +
+            "verification, or merge. Change sets are repository references only; never paste source code or secrets. " +
+            "Export/import manifests include artifact checksums; mismatched checksums are rejected. " +
+            "Production humans authenticate via OIDC; agents use issued credentials and active project grants. " +
+            "Platform support access to tenant data requires a time-bounded TEN-009 grant (no standing access)."
     };
 
     private static object HandleListTools() => new
@@ -149,14 +161,14 @@ public sealed class McpServer
             Tool("release_lease", "Release a lease you hold. Always allowed, including after the plan changed",
                 new { leaseId = UuidProp(), expectedFence = new { type = "integer" } },
                 new[] { "leaseId", "expectedFence" }),
-            Tool("submit_change_set", "Record a change set (repository reference only, never source) for an open work package",
+            Tool("submit_change_set", "Record a change set for an open work package as repository references only (providerRef, commit SHA, paths) — never source code or secrets. Subject to content policy",
                 new
                 {
                     workPackageId = UuidProp(), codebaseTargetId = UuidProp(), providerRef = StringProp(),
                     commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
                 },
                 new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
-            Tool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false",
+            Tool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false. Do not paste source or secrets",
                 new
                 {
                     workPackageId = UuidProp(),
@@ -168,7 +180,7 @@ public sealed class McpServer
                     steps = new { type = "array", items = StringProp() },
                 },
                 new[] { "workPackageId", "kind", "outcome" }),
-            Tool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged",
+            Tool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged. Ref-only change sets; no source payloads",
                 new { changeSetId = UuidProp(), idempotencyKey = StringProp() },
                 new[] { "changeSetId", "idempotencyKey" }),
             Tool("list_ready_work", "Deprecated alias of create_work_package: despite its name it creates a package. Use create_work_package",
@@ -180,21 +192,21 @@ public sealed class McpServer
                     specTopics = new { type = "array", items = StringProp() },
                 },
                 new[] { "campaignId", "baselineId", "objective" }),
-            Tool("get_plan_baseline", "Describe a locked plan baseline export manifest",
+            Tool("get_plan_baseline", "Describe a locked plan baseline as an export-style manifest (stable revision ids). Artifact checksum integrity is enforced on tenant export/import paths; do not invent checksums",
                 new { baselineId = UuidProp() },
                 new[] { "baselineId" }),
-            Tool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling",
+            Tool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored)",
                 new { }, Array.Empty<string>()),
-            Tool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant",
+            Tool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant within your classification ceiling",
                 new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
                 new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
-            Tool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts",
+            Tool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
                 new { topic = StringProp() }, new[] { "topic" }),
-            Tool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities",
+            Tool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
                 new { }, Array.Empty<string>()),
             Tool("list_spec_topics", "List this project's specification topics (built-in packs plus approved custom ones) with legal choices and typed parameters",
                 new { }, Array.Empty<string>()),
-            Tool("get_spec_catalog", "Read the effective specification catalog: packs, topics, profiles and any overlay problems",
+            Tool("get_spec_catalog", "Read the effective specification catalog: packs, topics, profiles and any overlay problems. Honors ReadKnowledge grant",
                 new { }, Array.Empty<string>()),
             Tool("list_spec_options", "List ranked options for a topic, marking which are recommended and which are compatible with decisions that already bind. Choose from this list",
                 new { topic = StringProp() }, new[] { "topic" }),

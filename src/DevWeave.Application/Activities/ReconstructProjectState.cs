@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Domain.Activities;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -6,10 +7,11 @@ using DevWeave.Domain.Projects;
 namespace DevWeave.Application.Activities;
 
 /// <summary>
-/// Reconstructs a project's state purely from its append-only revision and activity history (SRS
-/// REV-007). With no timestamp it uses each item's latest revision; with a timestamp it rolls each
-/// item back to the greatest revision recorded on or before that moment. Reads are tenant-scoped and
-/// return empty results for cross-tenant projects (deny-by-default).
+/// Reconstructs a project's knowledge revision pointers and activity history as-of a moment (SRS
+/// REV-007, Foundation MVP scope). With no timestamp it uses each item's latest revision and all
+/// activities; with a timestamp it rolls each item back to the greatest revision on or before that
+/// moment and includes only activities whose <see cref="Activity.StartedAt"/> is on or before asOf.
+/// Full reconstruction of relationships, approvals, and artifact graphs remains out of MVP scope.
 /// </summary>
 public sealed class ReconstructProjectState
 {
@@ -34,6 +36,9 @@ public sealed class ReconstructProjectState
         CancellationToken ct = default)
     {
         var activities = await _activities.ListForProjectAsync(tenantId, projectId, ct);
+        if (asOf is not null)
+            activities = activities.Where(a => a.StartedAt <= asOf.Value).ToList();
+
         var items = await _items.ListByProjectAsync(tenantId, projectId, ct);
 
         var snapshots = new List<ItemVersionSnapshot>(items.Count);

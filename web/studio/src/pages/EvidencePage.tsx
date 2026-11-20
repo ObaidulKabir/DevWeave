@@ -61,7 +61,7 @@ export function EvidencePage() {
       <ConfirmDialog
         open={Boolean(reviewTarget)}
         title="Accept this evidence?"
-        body="Acceptance is an audited review decision. It qualifies claims for verification but is not itself delivery approval (UI-06)."
+        body="Confirm acceptance. This audited review (UI-03/UI-06) qualifies claims for verification; it is not delivery approval. Reported evidence stays distinct from verified state (PRO-005)."
         confirmLabel="Accept"
         busy={busy}
         onCancel={() => setReviewTarget(null)}

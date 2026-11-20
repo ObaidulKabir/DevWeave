@@ -124,7 +124,8 @@ public sealed class KnowledgeUseCaseTests
         Assert.Equal(actor.Id, revision.Actor);
         Assert.Equal("src-1", revision.SourceReference);
 
-        var loaded = await new GetKnowledgeItem(fakes.Items).ExecuteAsync(tenant.Id, item.Id);
+        var loaded = await new GetKnowledgeItem(fakes.Items, fakes.Memberships)
+            .ExecuteAsync(tenant.Id, item.Id, actor.Id);
         Assert.Equal(revision.Id, loaded!.CurrentRevisionId);
         Assert.Equal(1, loaded.CurrentRevisionNumber);
     }
@@ -427,15 +428,18 @@ public sealed class KnowledgeUseCaseTests
             .ExecuteAsync(tenantB.Id, itemB.Id, 0, "1", "{}", actorB.Id, "seed", null, null);
 
         // Items
-        Assert.Null(await new GetKnowledgeItem(fakes.Items).ExecuteAsync(tenantA.Id, itemB.Id));
+        Assert.Null(await new GetKnowledgeItem(fakes.Items, fakes.Memberships)
+            .ExecuteAsync(tenantA.Id, itemB.Id, actorA.Id));
         var tenantItems = await new ListKnowledgeItemsForTenant(fakes.Items).ExecuteAsync(tenantA.Id);
         Assert.Single(tenantItems);
         Assert.Equal(itemA.Id, tenantItems[0].Id);
 
-        var projectItems = await new ListKnowledgeItemsForProject(fakes.Items).ExecuteAsync(tenantA.Id, projectA.Id);
+        var projectItems = await new ListKnowledgeItemsForProject(fakes.Items, fakes.Memberships)
+            .ExecuteAsync(tenantA.Id, projectA.Id, actorA.Id);
         Assert.Single(projectItems);
         Assert.Equal(itemA.Id, projectItems[0].Id);
-        Assert.Empty(await new ListKnowledgeItemsForProject(fakes.Items).ExecuteAsync(tenantA.Id, projectB.Id));
+        Assert.Empty(await new ListKnowledgeItemsForProject(fakes.Items, fakes.Memberships)
+            .ExecuteAsync(tenantA.Id, projectB.Id, actorA.Id));
 
         // Revisions
         Assert.Null(await new GetRevision(fakes.Revisions).ExecuteAsync(tenantA.Id, revisionB.Id));

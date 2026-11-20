@@ -226,6 +226,7 @@ app.MapWorkPlanningEndpoints();
 // Knowledge item and revision surface (SRS KNW-001..KNW-013, REV-001..REV-008, BR-004..BR-009).
 app.MapKnowledgeEndpoints();
 app.MapPlanDesignEndpoints();
+app.MapPlanImportEndpoints();
 
 // Integration surface (SRS INT-001..INT-008).
 app.MapIntegrationEndpoints();

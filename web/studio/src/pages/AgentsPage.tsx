@@ -24,6 +24,10 @@ const CAPABILITIES: { value: string; label: string; help: string }[] = [
   { value: 'TraverseRelations', label: 'Traverse relations', help: 'Follow typed relations between knowledge items.' },
   { value: 'ExecuteWorkflow', label: 'Execute workflow', help: 'Take leases, submit change sets and request integration.' },
 ];
+const AGENT_PRESETS = {
+  Planning: ['ReadKnowledge', 'WriteKnowledge', 'TraverseRelations'],
+  Execution: ['ReadKnowledge', 'AssembleContext', 'ExecuteWorkflow'],
+} as const;
 const CEILINGS = ['Public', 'Internal', 'Confidential', 'Restricted'] as const;
 
 type AgentRecord = {
@@ -409,6 +413,36 @@ export function AgentsPage() {
     }, `${capabilityLabel(grant.capability)} approved.`);
   }
 
+  function applyPreset(preset: keyof typeof AGENT_PRESETS) {
+    if (!selected || !project) {
+      setError('Select a project before applying an agent preset.');
+      return;
+    }
+    void act(async () => {
+      await ensureMemberships(selected.agent.id);
+      for (const capability of AGENT_PRESETS[preset]) {
+        try {
+          const grant = await apiFetch<AgentGrant>(`${base}/agent-grants`, {
+            method: 'POST',
+            body: JSON.stringify({
+              agentId: selected.agent.id,
+              projectId: project.id,
+              capability,
+              expiresAt: null,
+              classificationCeiling: grantForm.ceiling,
+            }),
+          });
+          await apiFetch(`${base}/agent-grants/${grant.id}/approve`, {
+            method: 'POST',
+            body: JSON.stringify({ approver: requireActor() }),
+          });
+        } catch {
+          // Duplicate grants are fine when re-applying a preset.
+        }
+      }
+    }, `${preset} preset applied (${AGENT_PRESETS[preset].join(', ')}).`);
+  }
+
   function confirmRevokeGrant(grant: AgentGrant, email: string) {
     setConfirmation({
       title: grant.status === 'Proposed' ? 'Reject grant?' : 'Revoke grant?',
@@ -782,6 +816,21 @@ export function AgentsPage() {
                     </table>
                   </div>
                 )}
+
+                <div className="flex flex-wrap gap-2 rounded-xl border border-[var(--line)] bg-[var(--mist)]/40 px-4 py-3">
+                  <p className="w-full text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                    Role presets
+                  </p>
+                  <button type="button" className="btn btn-ghost text-xs" disabled={disabled || !project} onClick={() => applyPreset('Planning')}>
+                    Apply Planning
+                  </button>
+                  <button type="button" className="btn btn-ghost text-xs" disabled={disabled || !project} onClick={() => applyPreset('Execution')}>
+                    Apply Execution
+                  </button>
+                  <p className="w-full text-xs text-[var(--muted)]">
+                    Planning: design and propose_initial_plan. Execution: leases and change sets. Keep them on separate agents.
+                  </p>
+                </div>
 
                 <form onSubmit={proposeGrant} className="grid gap-3 rounded-xl border border-dashed border-[var(--line)] p-4 sm:grid-cols-2 lg:grid-cols-4">
                   <label className="space-y-1">

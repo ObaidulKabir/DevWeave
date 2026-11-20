@@ -1,0 +1,222 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using DevWeave.Application.Abstractions;
+using DevWeave.Contracts.Planning.V1;
+using DevWeave.Domain.Agents;
+using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Lifecycle;
+using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
+using DevWeave.Infrastructure.Persistence;
+using DevWeave.Mcp.Protocol;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace DevWeave.Api.IntegrationTests;
+
+public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFactory>
+{
+    private readonly IdentityTestFactory _factory;
+
+    public PlanImportIntegrationTests(IdentityTestFactory factory)
+    {
+        _factory = factory;
+        _factory.PrepareDatabase();
+    }
+
+    [Fact]
+    public async Task Planning_agent_proposes_initial_plan_and_owner_materializes_it()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agentClient = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        var bundle = MinimalPlan($"import-{Guid.NewGuid():N}");
+        using var propose = await agentClient.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new { name = "propose_initial_plan", arguments = bundle }));
+        Assert.Equal(HttpStatusCode.OK, propose.StatusCode);
+        using var proposeDoc = await propose.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(JsonValueKind.Null, proposeDoc!.RootElement.GetProperty("error").ValueKind);
+        var proposalId = proposeDoc.RootElement.GetProperty("result").GetProperty("id").GetGuid();
+
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var basePath = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals";
+        using var listed = await ownerClient.GetAsync($"{basePath}/");
+        Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
+        using var listDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Contains(listDoc!.RootElement.EnumerateArray(), row => row.GetProperty("id").GetGuid() == proposalId);
+
+        using var approve = await ownerClient.PostAsJsonAsync($"{basePath}/{proposalId}/approve",
+            new DecideInitialPlanProposalRequest("Looks good"));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+        using var approved = await approve.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("Approved", approved!.RootElement.GetProperty("status").GetString());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        Assert.Equal(2, await db.KnowledgeItems.CountAsync(i => i.TenantId == seed.Tenant.Id && i.ProjectId == seed.Project.Id));
+        Assert.Equal(2, await db.PlanOutlineNodes.CountAsync(n => n.TenantId == seed.Tenant.Id && n.ProjectId == seed.Project.Id));
+        Assert.Equal(1, await db.WorkItems.CountAsync(w => w.TenantId == seed.Tenant.Id && w.ProjectId == seed.Project.Id));
+    }
+
+    [Fact]
+    public async Task Execution_agent_cannot_propose_initial_plan_and_planning_agent_cannot_request_assignment()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        using var blockedPropose = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new { name = "propose_initial_plan", arguments = MinimalPlan($"x-{Guid.NewGuid():N}") }));
+        using var blockedProposeDoc = await blockedPropose.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedProposeDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var blockedLease = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
+            new
+            {
+                name = "request_assignment",
+                arguments = new
+                {
+                    workPackageId = Guid.NewGuid(),
+                    resourceScope = "src/",
+                    expiresAt = DateTimeOffset.UtcNow.AddHours(1),
+                    idempotencyKey = "lease-1",
+                },
+            }));
+        using var blockedLeaseDoc = await blockedLease.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedLeaseDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var listPlanner = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 3, McpMethods.ListTools, new { }));
+        using var listPlannerDoc = await listPlanner.Content.ReadFromJsonAsync<JsonDocument>();
+        var plannerTools = listPlannerDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
+        Assert.Contains("propose_initial_plan", plannerTools);
+        Assert.DoesNotContain("request_assignment", plannerTools);
+
+        using var listExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 4, McpMethods.ListTools, new { }));
+        using var listExecutorDoc = await listExecutor.Content.ReadFromJsonAsync<JsonDocument>();
+        var executorTools = listExecutorDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
+        Assert.Contains("request_assignment", executorTools);
+        Assert.DoesNotContain("propose_initial_plan", executorTools);
+    }
+
+    [Fact]
+    public async Task Agent_proposer_cannot_approve_plan_import()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var scope = _factory.Services.CreateScope();
+        var import = scope.ServiceProvider.GetRequiredService<Application.Planning.PlanImportService>();
+        var proposal = await import.ProposeAsync(seed.Tenant.Id, seed.Project.Id, seed.Planner.Id,
+            ToContract(MinimalPlan($"self-{Guid.NewGuid():N}")), CancellationToken.None);
+
+        await Assert.ThrowsAsync<UnauthorizedTenantException>(() =>
+            import.ApproveAsync(seed.Tenant.Id, seed.Project.Id, seed.Planner.Id, proposal.Id, null, CancellationToken.None));
+    }
+
+    private async Task<Seed> SeedAsync(bool planning, bool execution)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var tenant = Tenant.Create($"Import {Guid.NewGuid():N}");
+        var owner = Principal.Create(tenant.Id, $"owner-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var planner = Principal.Create(tenant.Id, $"planner-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+        var executor = Principal.Create(tenant.Id, $"executor-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+        var profile = LifecycleProfile.Create(tenant.Id, Guid.NewGuid().ToString("N"), "Plan", "1");
+        var project = Project.Create(tenant.Id, "App", Guid.NewGuid().ToString("N"), null, profile.Id, owner.Id);
+        db.AddRange(tenant, owner, planner, executor, profile, project);
+        db.Add(ProjectMembership.Grant(tenant.Id, project.Id, owner.Id, ProjectRole.Owner));
+
+        var schema = SchemaDefinition.Create("doc.note", "1.0", "platform", "Note", "{\"type\":\"object\"}");
+        schema.Publish();
+        if (!await db.SchemaDefinitions.AnyAsync(s => s.Namespace == "doc.note" && s.Version == "1.0"))
+            db.Add(schema);
+
+        void Grant(Principal agent, params AgentCapability[] capabilities)
+        {
+            db.Add(ProjectMembership.Grant(tenant.Id, project.Id, agent.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(tenant.Id, agent.Id, "test", "hashed-test-secret", null));
+            foreach (var capability in capabilities)
+            {
+                var grant = AgentGrant.Propose(tenant.Id, project.Id, agent.Id, capability, null, Classification.Internal);
+                grant.Approve(owner.Id);
+                db.Add(grant);
+            }
+        }
+
+        if (planning)
+            Grant(planner, AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge);
+        if (execution)
+            Grant(executor, AgentCapability.ReadKnowledge, AgentCapability.ExecuteWorkflow, AgentCapability.AssembleContext);
+
+        await db.SaveChangesAsync();
+        return new Seed(tenant, project, owner, planner, executor);
+    }
+
+    private static object MinimalPlan(string idempotencyKey) => new
+    {
+        idempotencyKey,
+        requireEmptyProject = true,
+        knowledge = new object[]
+        {
+            new
+            {
+                @ref = "root",
+                key = $"goal-{Guid.NewGuid():N}"[..20],
+                title = "Application goal",
+                typeId = "doc.note",
+                schemaVersion = "1.0",
+                classification = "Internal",
+                representationKind = "Text",
+                content = "{\"summary\":\"Build the demo\"}",
+                reason = "Bootstrap from desktop agent",
+            },
+            new
+            {
+                @ref = "req1",
+                key = $"req-{Guid.NewGuid():N}"[..20],
+                title = "First requirement",
+                typeId = "doc.note",
+                schemaVersion = "1.0",
+                classification = "Internal",
+                representationKind = "Text",
+                content = "{\"summary\":\"Users can sign in\"}",
+                reason = "Captured from existing app",
+            },
+        },
+        outline = new object[]
+        {
+            new { itemRef = "root", parentRef = (string?)null, position = 0 },
+            new { itemRef = "req1", parentRef = "root", position = 0 },
+        },
+        relations = Array.Empty<object>(),
+        milestones = Array.Empty<object>(),
+        workItems = new object[]
+        {
+            new
+            {
+                @ref = "w1",
+                key = $"work-{Guid.NewGuid():N}"[..20],
+                title = "Implement sign-in",
+                description = "Deliver auth",
+                milestoneRef = (string?)null,
+                priority = "Normal",
+                dependsOnRefs = Array.Empty<string>(),
+            },
+        },
+        workLinks = new object[]
+        {
+            new { workItemRef = "w1", knowledgeRef = "req1" },
+        },
+    };
+
+    private static InitialPlanProposalV1 ToContract(object bundle) =>
+        JsonSerializer.Deserialize<InitialPlanProposalV1>(
+            JsonSerializer.Serialize(bundle),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
+    private sealed record Seed(Tenant Tenant, Project Project, Principal Owner, Principal Planner, Principal Executor);
+}

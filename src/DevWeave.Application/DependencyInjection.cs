@@ -57,6 +57,7 @@ public static class DependencyInjection
 
         services.AddScoped<CreateKnowledgeItem>();
         services.AddScoped<PlanDesignService>();
+        services.AddScoped<PlanImportService>();
         services.AddScoped<SpecCatalogService>();
         services.AddScoped<SpecificationService>();
         services.AddScoped<PlanLockReview>();

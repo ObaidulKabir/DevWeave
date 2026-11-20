@@ -3,6 +3,7 @@ using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
+using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Specifications;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Knowledge;
@@ -25,7 +26,9 @@ public sealed class McpServer
     private readonly IIntegrationQueue _integration;
     private readonly IWorkStatusReader _status;
     private readonly PlanDesignService _planning;
+    private readonly PlanImportService _planImport;
     private readonly SpecificationService _specs;
+    private readonly IAgentGrantRepository _grants;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
 
@@ -41,7 +44,9 @@ public sealed class McpServer
         IIntegrationQueue integration,
         IWorkStatusReader status,
         PlanDesignService planning,
+        PlanImportService planImport,
         SpecificationService specs,
+        IAgentGrantRepository grants,
         ILogger<McpServer> logger)
     {
         _channels = channels;
@@ -53,7 +58,9 @@ public sealed class McpServer
         _integration = integration;
         _status = status;
         _planning = planning;
+        _planImport = planImport;
         _specs = specs;
+        _grants = grants;
         _logger = logger;
         _options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
     }
@@ -69,7 +76,7 @@ public sealed class McpServer
             object? result = request.Method switch
             {
                 McpMethods.Initialize => HandleInitialize(),
-                McpMethods.ListTools => HandleListTools(),
+                McpMethods.ListTools => await HandleListToolsAsync(scope, ct),
                 McpMethods.CallTool => await HandleCallToolAsync(scope, runtimeId, request, ct),
                 McpMethods.SendMessage => await HandleSendMessageAsync(scope, runtimeId, request, ct),
                 McpMethods.ReplayMessages => await HandleReplayAsync(scope, request, ct),
@@ -115,115 +122,141 @@ public sealed class McpServer
             "verification, or merge. Change sets are repository references only; never paste source code or secrets. " +
             "Export/import manifests include artifact checksums; mismatched checksums are rejected. " +
             "Production humans authenticate via OIDC; agents use issued credentials and active project grants. " +
+            "Use a Planning agent (ReadKnowledge/WriteKnowledge) for propose_initial_plan and design tools; " +
+            "use an Execution agent (ExecuteWorkflow) for leases and change sets. " +
             "Platform support access to tenant data requires a time-bounded TEN-009 grant (no standing access)."
     };
 
-    private static object HandleListTools() => new
+    private async Task<object> HandleListToolsAsync(AuthorizedScope scope, CancellationToken ct)
     {
-        tools = new object[]
-        {
-            Tool("send_project_message", "Send a durable coordination message to a channel",
-                new { channelId = UuidProp(), messageType = StringProp(), payload = new { type = "object" }, idempotencyKey = StringProp() },
-                new[] { "channelId", "messageType", "payload", "idempotencyKey" }),
-            Tool("read_messages_after_cursor", "Replay durable channel messages after a sequence cursor",
-                new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
-                new[] { "channelId" }),
-            Tool("acknowledge_messages", "Acknowledge processed channel sequence for reconnect recovery",
-                new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
-                new[] { "channelId", "processedThroughSequence" }),
-            Tool("open_channel", "Open a project coordination channel",
-                new { channelType = StringProp(), campaignId = UuidProp(), workPackageId = UuidProp() },
-                new[] { "channelType" }),
-            Tool("register_runtime", "Register this agent runtime instance for the project",
-                new { runtimeClass = StringProp(), protocolVersion = StringProp(), capabilities = new { type = "array", items = new { type = "string" } }, attestationRef = StringProp() },
-                new[] { "runtimeClass", "protocolVersion", "attestationRef" }),
-            Tool("heartbeat_lease", "Renew an exclusive work-package lease fencing token",
-                new { leaseId = UuidProp(), expectedFence = new { type = "integer" }, expiresAt = StringProp() },
-                new[] { "leaseId", "expectedFence", "expiresAt" }),
-            Tool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
-                new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
-                new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
-            Tool("get_plan_status", "Current plan version and every campaign with the plan version it runs on. Call at start-up and whenever a request is refused",
-                new { }, Array.Empty<string>()),
-            Tool("list_work_packages", "List a campaign's work packages with status, declared scope and whether each can still progress (and why not)",
-                new { campaignId = UuidProp() }, new[] { "campaignId" }),
-            Tool("get_work_status", "Check whether one work package can still progress, and the reason if it cannot (for example a newer plan version was locked)",
-                new { workPackageId = UuidProp() }, new[] { "workPackageId" }),
-            Tool("create_work_package", "Create a work package under a campaign's plan version. Declare what it implements (approved knowledge revisions from that version, work items, specification topics) so plan changes can be traced to it",
-                new
-                {
-                    campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
-                    implementsRevisionIds = new { type = "array", items = UuidProp() },
-                    workItemIds = new { type = "array", items = UuidProp() },
-                    specTopics = new { type = "array", items = StringProp() },
-                },
-                new[] { "campaignId", "baselineId", "objective" }),
-            Tool("release_lease", "Release a lease you hold. Always allowed, including after the plan changed",
-                new { leaseId = UuidProp(), expectedFence = new { type = "integer" } },
-                new[] { "leaseId", "expectedFence" }),
-            Tool("submit_change_set", "Record a change set for an open work package as repository references only (providerRef, commit SHA, paths) — never source code or secrets. Subject to content policy",
-                new
-                {
-                    workPackageId = UuidProp(), codebaseTargetId = UuidProp(), providerRef = StringProp(),
-                    commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
-                },
-                new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
-            Tool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false. Do not paste source or secrets",
-                new
-                {
-                    workPackageId = UuidProp(),
-                    kind = StringProp(),
-                    outcome = StringProp(),
-                    whatSucceeded = StringProp(),
-                    blockedReason = StringProp(),
-                    changeSetId = UuidProp(),
-                    steps = new { type = "array", items = StringProp() },
-                },
-                new[] { "workPackageId", "kind", "outcome" }),
-            Tool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged. Ref-only change sets; no source payloads",
-                new { changeSetId = UuidProp(), idempotencyKey = StringProp() },
-                new[] { "changeSetId", "idempotencyKey" }),
-            Tool("list_ready_work", "Deprecated alias of create_work_package: despite its name it creates a package. Use create_work_package",
-                new
-                {
-                    campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
-                    implementsRevisionIds = new { type = "array", items = UuidProp() },
-                    workItemIds = new { type = "array", items = UuidProp() },
-                    specTopics = new { type = "array", items = StringProp() },
-                },
-                new[] { "campaignId", "baselineId", "objective" }),
-            Tool("get_plan_baseline", "Describe a locked plan baseline as an export-style manifest (stable revision ids). Artifact checksum integrity is enforced on tenant export/import paths; do not invent checksums",
-                new { baselineId = UuidProp() },
-                new[] { "baselineId" }),
-            Tool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored)",
-                new { }, Array.Empty<string>()),
-            Tool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant within your classification ceiling",
-                new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
-                new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
-            Tool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
-                new { topic = StringProp() }, new[] { "topic" }),
-            Tool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
-                new { }, Array.Empty<string>()),
-            Tool("list_spec_topics", "List this project's specification topics (built-in packs plus approved custom ones) with legal choices and typed parameters",
-                new { }, Array.Empty<string>()),
-            Tool("get_spec_catalog", "Read the effective specification catalog: packs, topics, profiles and any overlay problems. Honors ReadKnowledge grant",
-                new { }, Array.Empty<string>()),
-            Tool("list_spec_options", "List ranked options for a topic, marking which are recommended and which are compatible with decisions that already bind. Choose from this list",
-                new { topic = StringProp() }, new[] { "topic" }),
-            Tool("next_open_topics", "List topics that still need a decision, in the order they should be decided",
-                new { }, Array.Empty<string>()),
-            Tool("get_spec_pack_upgrades", "List available upgrades for built-in packs this project is held back on, with a diff and affected decisions",
-                new { }, Array.Empty<string>()),
-            Tool("propose_spec_profile", "Propose a whole profile (or a custom list of decisions) as one bundle for a single human approval. Each decision is validated against its topic. Requires WriteKnowledge grant",
-                new { profile = StringProp(), level = StringProp(), decisions = new { type = "array", items = new { type = "object" } }, rationale = StringProp() },
-                new[] { "level" }),
-            Tool("propose_spec_overlay", "Propose a catalog extension (custom topics, options, profiles, hidden or deprecated options). Needs human approval before it applies. Requires WriteKnowledge grant",
-                new { overlay = new { type = "object" }, rationale = StringProp() }, new[] { "overlay" }),
-            Tool("propose_spec_decision", "Propose a specification decision for a topic that has no binding decision. It is validated against the topic definition and needs human approval before it binds. Requires WriteKnowledge grant",
-                new { topic = StringProp(), level = StringProp(), choice = StringProp(), @params = new { type = "object" }, rationale = StringProp() },
-                new[] { "topic", "level", "choice" }),
-        }
-    };
+        var capabilities = scope.ProjectId is null
+            ? new HashSet<Domain.Agents.AgentCapability>()
+            : await McpToolAuthorization.LoadActiveCapabilitiesAsync(
+                _grants, scope.TenantId, scope.ProjectId, scope.ActorId, ct);
+
+        var tools = AllTools()
+            .Where(tool => McpToolAuthorization.IsAllowed(tool.Name, capabilities))
+            .Select(tool => tool.Descriptor)
+            .ToArray();
+        return new { tools };
+    }
+
+    private static (string Name, object Descriptor)[] AllTools() =>
+    [
+        NamedTool("send_project_message", "Send a durable coordination message to a channel",
+            new { channelId = UuidProp(), messageType = StringProp(), payload = new { type = "object" }, idempotencyKey = StringProp() },
+            new[] { "channelId", "messageType", "payload", "idempotencyKey" }),
+        NamedTool("read_messages_after_cursor", "Replay durable channel messages after a sequence cursor",
+            new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
+            new[] { "channelId" }),
+        NamedTool("acknowledge_messages", "Acknowledge processed channel sequence for reconnect recovery",
+            new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
+            new[] { "channelId", "processedThroughSequence" }),
+        NamedTool("open_channel", "Open a project coordination channel",
+            new { channelType = StringProp(), campaignId = UuidProp(), workPackageId = UuidProp() },
+            new[] { "channelType" }),
+        NamedTool("register_runtime", "Register this agent runtime instance for the project",
+            new { runtimeClass = StringProp(), protocolVersion = StringProp(), capabilities = new { type = "array", items = new { type = "string" } }, attestationRef = StringProp() },
+            new[] { "runtimeClass", "protocolVersion", "attestationRef" }),
+        NamedTool("heartbeat_lease", "Renew an exclusive work-package lease fencing token",
+            new { leaseId = UuidProp(), expectedFence = new { type = "integer" }, expiresAt = StringProp() },
+            new[] { "leaseId", "expectedFence", "expiresAt" }),
+        NamedTool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
+            new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
+            new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
+        NamedTool("get_plan_status", "Current plan version and every campaign with the plan version it runs on. Call at start-up and whenever a request is refused",
+            new { }, Array.Empty<string>()),
+        NamedTool("list_work_packages", "List a campaign's work packages with status, declared scope and whether each can still progress (and why not)",
+            new { campaignId = UuidProp() }, new[] { "campaignId" }),
+        NamedTool("get_work_status", "Check whether one work package can still progress, and the reason if it cannot (for example a newer plan version was locked)",
+            new { workPackageId = UuidProp() }, new[] { "workPackageId" }),
+        NamedTool("create_work_package", "Create a work package under a campaign's plan version. Declare what it implements (approved knowledge revisions from that version, work items, specification topics) so plan changes can be traced to it",
+            new
+            {
+                campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
+                implementsRevisionIds = new { type = "array", items = UuidProp() },
+                workItemIds = new { type = "array", items = UuidProp() },
+                specTopics = new { type = "array", items = StringProp() },
+            },
+            new[] { "campaignId", "baselineId", "objective" }),
+        NamedTool("release_lease", "Release a lease you hold. Always allowed, including after the plan changed",
+            new { leaseId = UuidProp(), expectedFence = new { type = "integer" } },
+            new[] { "leaseId", "expectedFence" }),
+        NamedTool("submit_change_set", "Record a change set for an open work package as repository references only (providerRef, commit SHA, paths) — never source code or secrets. Subject to content policy",
+            new
+            {
+                workPackageId = UuidProp(), codebaseTargetId = UuidProp(), providerRef = StringProp(),
+                commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
+            },
+            new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
+        NamedTool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false. Do not paste source or secrets",
+            new
+            {
+                workPackageId = UuidProp(),
+                kind = StringProp(),
+                outcome = StringProp(),
+                whatSucceeded = StringProp(),
+                blockedReason = StringProp(),
+                changeSetId = UuidProp(),
+                steps = new { type = "array", items = StringProp() },
+            },
+            new[] { "workPackageId", "kind", "outcome" }),
+        NamedTool("request_integration", "Queue a change set for integration. The decision re-checks the plan; work the plan has moved past is rejected, not merged. Ref-only change sets; no source payloads",
+            new { changeSetId = UuidProp(), idempotencyKey = StringProp() },
+            new[] { "changeSetId", "idempotencyKey" }),
+        NamedTool("list_ready_work", "Deprecated alias of create_work_package: despite its name it creates a package. Use create_work_package",
+            new
+            {
+                campaignId = UuidProp(), baselineId = UuidProp(), objective = StringProp(),
+                implementsRevisionIds = new { type = "array", items = UuidProp() },
+                workItemIds = new { type = "array", items = UuidProp() },
+                specTopics = new { type = "array", items = StringProp() },
+            },
+            new[] { "campaignId", "baselineId", "objective" }),
+        NamedTool("get_plan_baseline", "Describe a locked plan baseline as an export-style manifest (stable revision ids). Artifact checksum integrity is enforced on tenant export/import paths; do not invent checksums",
+            new { baselineId = UuidProp() },
+            new[] { "baselineId" }),
+        NamedTool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored)",
+            new { }, Array.Empty<string>()),
+        NamedTool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant within your classification ceiling",
+            new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
+            new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
+        NamedTool("propose_initial_plan", "Submit a full plan bundle (knowledge, outline, relations, milestones, work) for Owner approval. Use on empty projects or when importing design from a desktop agent. Does not materialize until a human approves in Studio. Requires WriteKnowledge",
+            new
+            {
+                idempotencyKey = StringProp(),
+                requireEmptyProject = new { type = "boolean" },
+                knowledge = new { type = "array", items = new { type = "object" } },
+                outline = new { type = "array", items = new { type = "object" } },
+                relations = new { type = "array", items = new { type = "object" } },
+                milestones = new { type = "array", items = new { type = "object" } },
+                workItems = new { type = "array", items = new { type = "object" } },
+                workLinks = new { type = "array", items = new { type = "object" } },
+            },
+            new[] { "idempotencyKey", "knowledge", "outline" }),
+        NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
+            new { topic = StringProp() }, new[] { "topic" }),
+        NamedTool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
+            new { }, Array.Empty<string>()),
+        NamedTool("list_spec_topics", "List this project's specification topics (built-in packs plus approved custom ones) with legal choices and typed parameters",
+            new { }, Array.Empty<string>()),
+        NamedTool("get_spec_catalog", "Read the effective specification catalog: packs, topics, profiles and any overlay problems. Honors ReadKnowledge grant",
+            new { }, Array.Empty<string>()),
+        NamedTool("list_spec_options", "List ranked options for a topic, marking which are recommended and which are compatible with decisions that already bind. Choose from this list",
+            new { topic = StringProp() }, new[] { "topic" }),
+        NamedTool("next_open_topics", "List topics that still need a decision, in the order they should be decided",
+            new { }, Array.Empty<string>()),
+        NamedTool("get_spec_pack_upgrades", "List available upgrades for built-in packs this project is held back on, with a diff and affected decisions",
+            new { }, Array.Empty<string>()),
+        NamedTool("propose_spec_profile", "Propose a whole profile (or a custom list of decisions) as one bundle for a single human approval. Each decision is validated against its topic. Requires WriteKnowledge grant",
+            new { profile = StringProp(), level = StringProp(), decisions = new { type = "array", items = new { type = "object" } }, rationale = StringProp() },
+            new[] { "level" }),
+        NamedTool("propose_spec_overlay", "Propose a catalog extension (custom topics, options, profiles, hidden or deprecated options). Needs human approval before it applies. Requires WriteKnowledge grant",
+            new { overlay = new { type = "object" }, rationale = StringProp() }, new[] { "overlay" }),
+        NamedTool("propose_spec_decision", "Propose a specification decision for a topic that has no binding decision. It is validated against the topic definition and needs human approval before it binds. Requires WriteKnowledge grant",
+            new { topic = StringProp(), level = StringProp(), choice = StringProp(), @params = new { type = "object" }, rationale = StringProp() },
+            new[] { "topic", "level", "choice" }),
+    ];
 
     private async Task<object> HandleCallToolAsync(
         AuthorizedScope scope,
@@ -243,6 +276,11 @@ public sealed class McpServer
             throw new ArgumentException(
                 "tools/call 'arguments' must be a JSON object, for example {\"workPackageId\": \"...\"}. " +
                 "Arrays and other shapes are not accepted.");
+
+        if (scope.ProjectId is null)
+            throw new UnauthorizedTenantException("MCP tools require a project scope.");
+        await McpToolAuthorization.EnsureCanCallAsync(
+            _grants, scope.TenantId, scope.ProjectId, scope.ActorId, name, ct);
 
         return name switch
         {
@@ -273,6 +311,7 @@ public sealed class McpServer
                 scope.ActorId, new KnowledgeItemId(args.GetProperty("parentItemId").GetGuid()),
                 args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
                 args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
+            "propose_initial_plan" => await ProposeInitialPlanFromArgsAsync(scope, args, ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
@@ -291,6 +330,34 @@ public sealed class McpServer
                 scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
             "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
+        };
+    }
+
+    private async Task<object> ProposeInitialPlanFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Deserialize<InitialPlanProposalV1>(args.GetRawText(), _options)
+            ?? throw new ArgumentException("propose_initial_plan arguments must be a plan bundle object.");
+        payload = payload with
+        {
+            RequireEmptyProject = args.TryGetProperty("requireEmptyProject", out _)
+                ? payload.RequireEmptyProject
+                : true,
+            Knowledge = payload.Knowledge ?? Array.Empty<PlanImportKnowledgeDraftV1>(),
+            Outline = payload.Outline ?? Array.Empty<PlanImportOutlineDraftV1>(),
+            Relations = payload.Relations ?? Array.Empty<PlanImportRelationDraftV1>(),
+            Milestones = payload.Milestones ?? Array.Empty<PlanImportMilestoneDraftV1>(),
+            WorkItems = payload.WorkItems ?? Array.Empty<PlanImportWorkItemDraftV1>(),
+            WorkLinks = payload.WorkLinks ?? Array.Empty<PlanImportWorkLinkDraftV1>(),
+        };
+        var proposal = await _planImport.ProposeAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, payload, ct);
+        return new
+        {
+            id = proposal.Id.Value,
+            proposal.IdempotencyKey,
+            proposal.PayloadHash,
+            status = proposal.Status.ToString(),
+            proposal.RequireEmptyProject,
+            proposedAt = proposal.ProposedAt,
         };
     }
 
@@ -535,6 +602,9 @@ public sealed class McpServer
     {
         return await _baselines.DescribeAsync(scope, args.GetProperty("baselineId").GetGuid(), ct);
     }
+
+    private static (string Name, object Descriptor) NamedTool(string name, string description, object properties, string[] required) =>
+        (name, Tool(name, description, properties, required));
 
     private static object Tool(string name, string description, object properties, string[] required) => new
     {

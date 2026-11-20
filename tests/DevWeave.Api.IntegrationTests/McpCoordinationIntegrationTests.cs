@@ -7,9 +7,13 @@ using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
+using DevWeave.Infrastructure.Persistence;
 using DevWeave.Mcp.Protocol;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.IntegrationTests;
@@ -202,5 +206,24 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
             new GrantProjectMembershipRequest(principalId, ProjectRole.Member),
             JsonOptions);
         response.EnsureSuccessStatusCode();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var tenant = new TenantId(tenantId);
+        var project = new ProjectId(projectId);
+        var agent = new PrincipalId(principalId);
+        var owner = new PrincipalId(ownerId);
+        foreach (var capability in new[]
+                 {
+                     AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge, AgentCapability.ExecuteWorkflow,
+                 })
+        {
+            var grant = AgentGrant.Propose(tenant, project, agent, capability, null, Classification.Internal);
+            grant.Approve(owner);
+            db.Add(grant);
+        }
+        if (!await db.AgentCredentials.AnyAsync(c => c.TenantId == tenant && c.AgentId == agent))
+            db.Add(AgentCredential.Issue(tenant, agent, "test", "hash", null));
+        await db.SaveChangesAsync();
     }
 }

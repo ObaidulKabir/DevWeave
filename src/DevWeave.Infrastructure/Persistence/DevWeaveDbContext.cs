@@ -42,6 +42,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<PlanOutlineNode> PlanOutlineNodes => Set<PlanOutlineNode>();
     public DbSet<PlanWorkLink> PlanWorkLinks => Set<PlanWorkLink>();
     public DbSet<PlanExpansionProposal> PlanExpansionProposals => Set<PlanExpansionProposal>();
+    public DbSet<InitialPlanProposal> InitialPlanProposals => Set<InitialPlanProposal>();
     public DbSet<KnowledgeItem> KnowledgeItems => Set<KnowledgeItem>();
     public DbSet<KnowledgeRevision> KnowledgeRevisions => Set<KnowledgeRevision>();
     public DbSet<SchemaDefinition> SchemaDefinitions => Set<SchemaDefinition>();

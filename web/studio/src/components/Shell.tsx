@@ -10,6 +10,7 @@ const NAV = [
   ['/overview', 'Overview'],
   ['/plan-map', 'Plan map'],
   ['/plan-outline', 'Plan outline'],
+  ['/plan-import', 'Plan import'],
   ['/plan-versions', 'Plan versions'],
   ['/knowledge', 'Knowledge'],
   ['/documents', 'Documents'],

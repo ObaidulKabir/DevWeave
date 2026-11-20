@@ -212,16 +212,14 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             new { name = "read_plan_outline", arguments = new { } }));
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         using var outline = await read.Content.ReadFromJsonAsync<JsonDocument>();
-        Assert.Equal(JsonValueKind.Null, outline!.RootElement.GetProperty("error").ValueKind);
-        Assert.Equal(1, outline.RootElement.GetProperty("result").GetProperty("nodes").GetArrayLength());
+        Assert.Equal(1, McpJson.Payload(outline!.RootElement).GetProperty("nodes").GetArrayLength());
 
         using var propose = await client.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
             new { name = "propose_plan_expansion", arguments = new {
                 parentItemId = seed.Root.Id.Value, key = "agent-module", title = "Agent module",
                 typeId = "doc.note", rationale = "Break down the user journey" } }));
         using var result = await propose.Content.ReadFromJsonAsync<JsonDocument>();
-        Assert.Equal(JsonValueKind.Null, result!.RootElement.GetProperty("error").ValueKind);
-        var proposalId = result.RootElement.GetProperty("result").GetProperty("id").GetGuid();
+        var proposalId = McpJson.Payload(result!.RootElement).GetProperty("id").GetGuid();
         using var scopeAfter = _factory.Services.CreateScope();
         var design = scopeAfter.ServiceProvider.GetRequiredService<PlanDesignService>();
         await Assert.ThrowsAsync<UnauthorizedTenantException>(() =>

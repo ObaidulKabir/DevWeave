@@ -32,6 +32,25 @@ connect, what to read before you work, how to execute work, and what to do when 
 DevWeave does not publish MCP resources or prompts yet. `resources/list` and `prompts/list` return compliant
 empty collections with explicit cache metadata; clients should not patch or invent entries.
 
+`tools/call` returns a JSON-RPC **object** (never a top-level JSON array). The `result` is an MCP
+CallToolResult: `content` (text JSON), `structuredContent` (the same payload as an object), and
+`isError`. List collections are also copied onto `result` itself (`result.channels`, `result.messages`)
+so JSON-RPC clients that do not unwrap `structuredContent` can still read them. List tools wrap
+collections:
+
+| Tool | `structuredContent` shape |
+| --- | --- |
+| `list_channels` | `{ "channels": [ { "id", "type", "channelType", ... } ] }` |
+| `list_messages` / `read_messages_after_cursor` | `{ "messages": [ ... ], "nextCursor" }` |
+| `list_schemas` | `{ "schemas": [ ... ] }` |
+| `list_relation_types` | `{ "relationTypes": [ ... ] }` |
+| `list_work_packages` | `{ "workPackages": [ ... ] }` |
+| `list_spec_topics` / `next_open_topics` | `{ "topics": [ ... ] }` |
+
+A JSON-RPC success omits `error`; a failure omits `result`. Coordination messages (Knowledge / Relations /
+Work payloads on a channel) are durable logs. They do **not** publish Knowledge, Relations, or Work items —
+use `propose_initial_plan` and Owner Plan import for that.
+
 **Access you need** (granted by a project Owner in the dashboard):
 
 - Active membership in the project.
@@ -131,9 +150,11 @@ planning clients should use the MCP tool or their own agent-capability endpoint.
 
 ### Coordination channels
 
-`list_channels`, `open_channel`, `send_project_message`, `read_messages_after_cursor`,
-`acknowledge_messages`: discover and exchange durable messages between runtimes and humans. Acknowledge what
-you processed so you can resume after a reconnect. These are execution tools and require `ExecuteWorkflow`.
+`list_channels`, `open_channel`, `send_project_message`, `read_messages_after_cursor` (alias
+`list_messages`), `acknowledge_messages`: discover and exchange durable messages between runtimes and humans.
+Acknowledge what you processed so you can resume after a reconnect. These are execution tools and require
+`ExecuteWorkflow`. Channel payloads never materialize plan records; inspect them in Studio under
+Coordination and Live operations.
 
 ## 6. When the plan changes
 

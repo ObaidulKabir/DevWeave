@@ -1,6 +1,7 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useWorkspace } from '../workspace/WorkspaceContext';
+import { BrandMark } from './BrandMark';
 
 const NAV = [
   ['/apps', 'Applications'],
@@ -38,7 +39,12 @@ export function Shell() {
     <div className="studio-shell flex min-h-screen">
       <aside className="hidden w-72 shrink-0 bg-[var(--ink)] px-4 py-6 text-white lg:flex lg:flex-col" aria-label="Owner Studio navigation">
         <div className="px-3">
-          <p className="font-display text-2xl font-bold tracking-tight">DevWeave</p>
+          <BrandMark
+            variant="icon"
+            to="/apps"
+            imgClassName="h-14 w-14 rounded-xl object-contain bg-white p-1 ring-1 ring-white/25"
+          />
+          <p className="mt-3 font-display text-xl font-bold tracking-tight">DevWeave</p>
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-teal-200/80">Owner Studio</p>
         </div>
 
@@ -87,17 +93,32 @@ export function Shell() {
         {/* UI-02: persistent tenant + project context */}
         <header className="border-b border-[var(--line)] bg-white/80 px-4 py-4 backdrop-blur sm:px-8">
           <div className="mx-auto flex max-w-7xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">Current context</p>
-              <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="font-display text-2xl font-bold tracking-tight">{project?.name ?? 'DevWeave'}</h1>
-                <span className="font-mono text-xs text-[var(--muted)]">{project?.key}</span>
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <BrandMark
+                variant="icon"
+                to="/apps"
+                className="shrink-0"
+                imgClassName="h-16 w-16 rounded-xl object-contain bg-white ring-1 ring-[var(--line)] sm:h-[72px] sm:w-[72px]"
+              />
+              <div className="min-w-0">
+                <Link
+                  to="/apps"
+                  className="block font-display text-3xl font-extrabold leading-none tracking-tight text-[var(--ink)] hover:opacity-90 sm:text-[2.35rem]"
+                >
+                  DevWeave
+                </Link>
+                <h1 className="mt-2 truncate text-base font-medium leading-snug tracking-tight text-[var(--ink-soft)] sm:text-lg">
+                  {project?.name ?? 'No project selected'}
+                  {project?.key ? (
+                    <span className="ml-2 font-mono text-xs font-normal text-[var(--muted)]">{project.key}</span>
+                  ) : null}
+                </h1>
+                <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                  Tenant <span className="font-mono">{tenantId ?? 'preview'}</span>
+                  {' · '}
+                  Project <span className="font-mono">{project?.id.slice(0, 8) ?? '—'}</span>
+                </p>
               </div>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Tenant <span className="font-mono">{tenantId ?? 'preview'}</span>
-                {' · '}
-                Project <span className="font-mono">{project?.id.slice(0, 8) ?? '—'}</span>
-              </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <label className="text-xs text-[var(--muted)]" htmlFor="project-switcher">

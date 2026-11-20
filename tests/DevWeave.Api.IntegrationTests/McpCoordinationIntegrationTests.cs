@@ -54,9 +54,17 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
         var initResponse = await client.PostAsJsonAsync($"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc", initRequest, JsonOptions);
         Assert.Equal(HttpStatusCode.OK, initResponse.StatusCode);
         
-        var initResult = (await initResponse.Content.ReadFromJsonAsync<JsonRpcResponse>(JsonOptions))!;
-        Assert.Null(initResult.Error);
-        Assert.NotNull(initResult.Result);
+        var initPayload = await initResponse.Content.ReadAsStringAsync();
+        using var initEnvelope = JsonDocument.Parse(initPayload);
+        Assert.False(initEnvelope.RootElement.TryGetProperty("error", out var initError) &&
+                     initError.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined);
+        var initResult = initEnvelope.RootElement.GetProperty("result");
+        Assert.Equal("1.1.0", initResult.GetProperty("serverInfo").GetProperty("version").GetString());
+        var instructions = initResult.GetProperty("instructions").GetString();
+        Assert.Contains("classification ceiling", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("checksum", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OIDC", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TEN-009", instructions, StringComparison.OrdinalIgnoreCase);
 
         // 4. Register Runtime
         var registration = new RuntimeRegistration(agent.Id, "DotNetRuntime", "1.0", new List<string>(), "session-1");

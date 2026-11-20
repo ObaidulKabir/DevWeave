@@ -447,6 +447,37 @@ public sealed class KnowledgeUseCaseTests
         Assert.Single(await fakes.Revisions.ListByItemAsync(tenantB.Id, itemB.Id));
     }
 
+    [Fact]
+    public async Task tenant_owner_reads_project_knowledge_without_project_membership()
+    {
+        var fakes = CreateFakes();
+        await SeedActiveSchemaAsync(fakes, "type", "1");
+        var tenant = Tenant.Create("Alpha Corp");
+        var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
+        var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
+        var owner = await SeedPrincipalAsync(fakes, tenant.Id, "owner@alphacorp.com");
+        var member = await SeedPrincipalAsync(fakes, tenant.Id, "member@alphacorp.com");
+        await SeedTenantRoleAsync(fakes, tenant.Id, owner.Id, MembershipRole.Owner);
+        await SeedTenantRoleAsync(fakes, tenant.Id, member.Id, MembershipRole.Member);
+
+        var item = await new CreateKnowledgeItem(fakes.Items, fakes.Projects, fakes.Principals, fakes.Schemas, fakes.Memberships, fakes.UnitOfWork)
+            .ExecuteAsync(tenant.Id, project.Id, "k", "t", Classification.Internal, RepresentationKind.Text, "type", "1", actor.Id);
+
+        var noProjectMemberships = new EmptyProjectMemberships();
+        var listed = await new ListKnowledgeItemsForProject(fakes.Items, noProjectMemberships, fakes.TenantMemberships)
+            .ExecuteAsync(tenant.Id, project.Id, owner.Id);
+        Assert.Single(listed);
+        Assert.Equal(item.Id, listed[0].Id);
+
+        Assert.NotNull(await new GetKnowledgeItem(fakes.Items, noProjectMemberships, fakes.TenantMemberships)
+            .ExecuteAsync(tenant.Id, item.Id, owner.Id));
+
+        Assert.Empty(await new ListKnowledgeItemsForProject(fakes.Items, noProjectMemberships, fakes.TenantMemberships)
+            .ExecuteAsync(tenant.Id, project.Id, member.Id));
+        Assert.Null(await new GetKnowledgeItem(fakes.Items, noProjectMemberships, fakes.TenantMemberships)
+            .ExecuteAsync(tenant.Id, item.Id, member.Id));
+    }
+
     private static Fakes CreateFakes() => new();
 
     private static async Task<Project> SeedProjectAsync(Fakes fakes, TenantId tenantId, string key)
@@ -461,6 +492,14 @@ public sealed class KnowledgeUseCaseTests
         var principal = Principal.Create(tenantId, email, PrincipalType.Human);
         await fakes.Principals.AddAsync(principal);
         return principal;
+    }
+
+    private static async Task SeedTenantRoleAsync(
+        Fakes fakes, TenantId tenantId, PrincipalId principalId, MembershipRole role)
+    {
+        var membership = Membership.Invite(tenantId, principalId, role);
+        membership.Activate();
+        await fakes.TenantMemberships.AddAsync(membership);
     }
 
     private static async Task SeedActiveSchemaAsync(Fakes fakes, string @namespace, string version)
@@ -508,6 +547,42 @@ public sealed class KnowledgeUseCaseTests
         public StubContentInspector Inspector { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
         public OwnerOfEveryProject Memberships => new(Projects);
+        public InMemoryTenantMembershipRepository TenantMemberships { get; } = new();
+    }
+
+    private sealed class EmptyProjectMemberships : IProjectMembershipRepository
+    {
+        public Task AddAsync(ProjectMembership membership, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<ProjectMembership?> GetByIdAsync(TenantId tenantId, ProjectMembershipId id, CancellationToken ct = default) =>
+            Task.FromResult<ProjectMembership?>(null);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>([]);
+
+        public Task<IReadOnlyList<ProjectMembership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ProjectMembership>>([]);
+    }
+
+    private sealed class InMemoryTenantMembershipRepository : IMembershipRepository
+    {
+        public List<Membership> Memberships { get; } = new();
+
+        public Task AddAsync(Membership membership, CancellationToken ct = default)
+        {
+            Memberships.Add(membership);
+            return Task.CompletedTask;
+        }
+
+        public Task<Membership?> GetByIdAsync(TenantId tenantId, MembershipId id, CancellationToken ct = default) =>
+            Task.FromResult(Memberships.FirstOrDefault(m => m.TenantId == tenantId && m.Id == id));
+
+        public Task<IReadOnlyList<Membership>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>(Memberships.Where(m => m.TenantId == tenantId).ToList());
+
+        public Task<IReadOnlyList<Membership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>(
+                Memberships.Where(m => m.TenantId == tenantId && m.PrincipalId == principalId).ToList());
     }
 
     /// <summary>These tests are about knowledge rules, not access, so every principal owns every seeded project.</summary>

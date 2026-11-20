@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Security;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 
@@ -8,11 +9,15 @@ internal static class ProjectWorkAuthorization
 {
     public static async Task EnsureCanReadAsync(IPrincipalRepository principals,
         IProjectMembershipRepository memberships, TenantId tenantId, ProjectId projectId,
-        PrincipalId actorId, CancellationToken ct)
+        PrincipalId actorId, CancellationToken ct,
+        IMembershipRepository? tenantMemberships = null)
     {
         var principal = await principals.GetByIdAsync(tenantId, actorId, ct);
         if (principal is null || !principal.IsActive)
             throw new NotFoundException($"Project '{projectId}' was not found within tenant '{tenantId}'.");
+        if (tenantMemberships is not null &&
+            await TenantProjectAccess.IsTenantAdministratorAsync(tenantMemberships, tenantId, actorId, ct))
+            return;
         var rows = await memberships.ListByPrincipalAsync(tenantId, actorId, ct);
         if (!rows.Any(candidate => candidate.ProjectId == projectId
             && candidate.Status == ProjectMembershipStatus.Active))
@@ -21,8 +26,11 @@ internal static class ProjectWorkAuthorization
 
     public static async Task EnsureMemberAsync(IProjectMembershipRepository memberships,
         TenantId tenantId, ProjectId projectId, PrincipalId actorId, bool reviewerOnly,
-        CancellationToken ct)
+        CancellationToken ct, IMembershipRepository? tenantMemberships = null)
     {
+        if (tenantMemberships is not null &&
+            await TenantProjectAccess.IsTenantAdministratorAsync(tenantMemberships, tenantId, actorId, ct))
+            return;
         var rows = await memberships.ListByPrincipalAsync(tenantId, actorId, ct);
         var member = rows.FirstOrDefault(candidate =>
             candidate.ProjectId == projectId && candidate.Status == ProjectMembershipStatus.Active);

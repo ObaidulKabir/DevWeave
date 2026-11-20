@@ -6,7 +6,7 @@ using DevWeave.Domain.Projects;
 namespace DevWeave.Application.Lifecycle;
 
 public sealed class ListMilestones(IWorkPlanningRepository work, IPrincipalRepository principals,
-    IProjectMembershipRepository memberships)
+    IProjectMembershipRepository memberships, IMembershipRepository tenantMemberships)
 {
     public Task<IReadOnlyList<Milestone>> ExecuteAsync(TenantId tenantId, ProjectId projectId,
         PrincipalId actorId, CancellationToken ct = default) =>
@@ -16,7 +16,7 @@ public sealed class ListMilestones(IWorkPlanningRepository work, IPrincipalRepos
         ProjectId projectId, PrincipalId actorId, CancellationToken ct)
     {
         await ProjectWorkAuthorization.EnsureCanReadAsync(principals, memberships,
-            tenantId, projectId, actorId, ct);
+            tenantId, projectId, actorId, ct, tenantMemberships);
         return await work.ListMilestonesAsync(tenantId, projectId, ct);
     }
 }

@@ -10,11 +10,16 @@ public sealed class GetKnowledgeItem
 {
     private readonly IKnowledgeItemRepository _items;
     private readonly IProjectMembershipRepository _memberships;
+    private readonly IMembershipRepository? _tenantMemberships;
 
-    public GetKnowledgeItem(IKnowledgeItemRepository items, IProjectMembershipRepository memberships)
+    public GetKnowledgeItem(
+        IKnowledgeItemRepository items,
+        IProjectMembershipRepository memberships,
+        IMembershipRepository? tenantMemberships = null)
     {
         _items = items;
         _memberships = memberships;
+        _tenantMemberships = tenantMemberships;
     }
 
     public async Task<KnowledgeItem?> ExecuteAsync(
@@ -27,10 +32,9 @@ public sealed class GetKnowledgeItem
         if (item is null)
             return null;
 
-        var memberships = await _memberships.ListByPrincipalAsync(tenantId, actorId, ct);
-        var membership = memberships.FirstOrDefault(m =>
-            m.ProjectId == item.ProjectId && m.Status == ProjectMembershipStatus.Active);
-        if (membership is null || !ClassificationAccess.Allows(membership.Role, item.Classification))
+        var role = await TenantProjectAccess.ResolveProjectRoleAsync(
+            _memberships, tenantId, item.ProjectId, actorId, ct, _tenantMemberships);
+        if (role is null || !ClassificationAccess.Allows(role.Value, item.Classification))
             return null;
 
         return item;

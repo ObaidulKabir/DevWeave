@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { EmptyState, Panel } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import { formatWhen, shortId } from '../lib/format';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
@@ -50,7 +52,8 @@ type PlanImportDetail = PlanImportSummary & {
 };
 
 export function PlanImportPage() {
-  const { tenantId, project, live, busy, run, refresh } = useWorkspace();
+  const { tenantId, project, live, busy, run, refresh, channels } = useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [rows, setRows] = useState<PlanImportSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [detail, setDetail] = useState<PlanImportDetail | null>(null);
@@ -118,13 +121,23 @@ export function PlanImportPage() {
         </p>
         {message ? <p className="mt-4 text-sm text-[var(--ink)]">{message}</p> : null}
       </section>
+      <AgentPushCallout
+        pendingPlanImports={rows.filter((row) => row.status === 'Proposed').length}
+        channelMessageCount={postedMessages}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <Panel title="Proposals" subtitle={project ? project.name : 'Select an application'}>
           {!live ? (
             <EmptyState label="Sign in with Live API to review plan imports." />
           ) : rows.length === 0 ? (
-            <EmptyState label="No plan import proposals yet." />
+            <EmptyState
+              label={
+                postedMessages > 0
+                  ? 'No propose_initial_plan proposals. Agent send_project_message payloads are on Coordination.'
+                  : 'No plan import proposals yet.'
+              }
+            />
           ) : (
             <ul className="divide-y divide-[var(--line)]">
               {rows.map((row) => (

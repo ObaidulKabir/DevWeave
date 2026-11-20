@@ -120,7 +120,8 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
             relationships,
             activities,
             evidence);
-        if (projectId is not null)
+        if (projectId is not null &&
+            activeTenantMembership.Role is not (MembershipRole.Owner or MembershipRole.Admin))
         {
             var projectRows = await projectMemberships.ListByPrincipalAsync(
                 tenantId,

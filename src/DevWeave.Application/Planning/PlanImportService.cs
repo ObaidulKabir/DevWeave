@@ -21,6 +21,7 @@ public sealed class PlanImportService(
     IProjectRepository projects,
     IPrincipalRepository principals,
     IProjectMembershipRepository memberships,
+    IMembershipRepository tenantMemberships,
     IAgentGrantRepository grants,
     IAgentCredentialRepository credentials,
     ISchemaDefinitionRepository schemas,
@@ -517,7 +518,8 @@ public sealed class PlanImportService(
         var principal = await principals.GetByIdAsync(tenant, actor, ct);
         if (principal is null || !principal.IsActive || principal.Type != PrincipalType.Human)
             throw new UnauthorizedTenantException("Only humans can read plan import proposals.");
-        await ProjectWorkAuthorization.EnsureMemberAsync(memberships, tenant, project, actor, reviewerOnly: false, ct);
+        await ProjectWorkAuthorization.EnsureMemberAsync(
+            memberships, tenant, project, actor, reviewerOnly: false, ct, tenantMemberships);
     }
 
     private async Task AuthorizeHumanReviewerAsync(TenantId tenant, ProjectId project, PrincipalId actor, CancellationToken ct)
@@ -527,6 +529,7 @@ public sealed class PlanImportService(
         var principal = await principals.GetByIdAsync(tenant, actor, ct);
         if (principal is null || !principal.IsActive || principal.Type != PrincipalType.Human)
             throw new UnauthorizedTenantException("Only humans can decide plan import proposals.");
-        await ProjectWorkAuthorization.EnsureMemberAsync(memberships, tenant, project, actor, reviewerOnly: true, ct);
+        await ProjectWorkAuthorization.EnsureMemberAsync(
+            memberships, tenant, project, actor, reviewerOnly: true, ct, tenantMemberships);
     }
 }

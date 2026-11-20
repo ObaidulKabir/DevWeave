@@ -6,13 +6,13 @@ using DevWeave.Domain.Projects;
 namespace DevWeave.Application.Lifecycle;
 
 public sealed class ListWorkItemTransitions(IWorkPlanningRepository work, IPrincipalRepository principals,
-    IProjectMembershipRepository memberships)
+    IProjectMembershipRepository memberships, IMembershipRepository tenantMemberships)
 {
     public async Task<IReadOnlyList<WorkItemTransition>> ExecuteAsync(TenantId tenantId,
         ProjectId projectId, WorkItemId itemId, PrincipalId actorId, CancellationToken ct = default)
     {
         await ProjectWorkAuthorization.EnsureCanReadAsync(principals, memberships,
-            tenantId, projectId, actorId, ct);
+            tenantId, projectId, actorId, ct, tenantMemberships);
         return await work.ListTransitionsAsync(tenantId, projectId, itemId, ct);
     }
 }

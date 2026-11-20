@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Knowledge;
 using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Relations;
@@ -34,6 +35,8 @@ public sealed class PlanImportService(
     CreateMilestone createMilestone,
     CreateWorkItem createWorkItem,
     PlanDesignService planDesign,
+    ICodebaseRegistry codebases,
+    IRepositoryReferenceAdapter git,
     IUnitOfWork uow)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -48,6 +51,7 @@ public sealed class PlanImportService(
     private const int MaxRelations = 200;
     private const int MaxMilestones = 50;
     private const int MaxWorkItems = 200;
+    private const int MaxCodebaseTargets = 10;
     private const int MaxContentChars = 100_000;
 
     public async Task<InitialPlanProposal> ProposeAsync(
@@ -168,7 +172,8 @@ public sealed class PlanImportService(
             payload.Outline.Count,
             payload.Relations.Count,
             payload.Milestones.Count,
-            payload.WorkItems.Count);
+            payload.WorkItems.Count,
+            payload.CodebaseTargets?.Count ?? 0);
     }
 
     public InitialPlanProposalDetailResponse ToDetail(InitialPlanProposal proposal)
@@ -270,6 +275,14 @@ public sealed class PlanImportService(
                 revisionIds[link.KnowledgeRef], ct);
         }
 
+        var scope = new AuthorizedScope(tenant, actor, project, "Plan import codebase target", "plan-import");
+        foreach (var target in payload.CodebaseTargets ?? Array.Empty<PlanImportCodebaseTargetDraftV1>())
+        {
+            var id = await codebases.RegisterAsync(
+                scope, target.Provider, target.RepositoryId, target.TargetBranch, target.BaseCommitSha, ct);
+            mapping[$"codebase:{target.Ref}"] = id;
+        }
+
         return mapping;
     }
 
@@ -294,6 +307,8 @@ public sealed class PlanImportService(
             throw new ArgumentException($"At most {MaxMilestones} milestones are allowed.");
         if ((payload.WorkItems?.Count ?? 0) > MaxWorkItems)
             throw new ArgumentException($"At most {MaxWorkItems} work items are allowed.");
+        if ((payload.CodebaseTargets?.Count ?? 0) > MaxCodebaseTargets)
+            throw new ArgumentException($"At most {MaxCodebaseTargets} codebase targets are allowed.");
 
         if (payload.RequireEmptyProject)
         {
@@ -406,6 +421,24 @@ public sealed class PlanImportService(
                 throw new ArgumentException($"Work link knowledgeRef '{link.KnowledgeRef}' is unknown.");
             if (!(payload.Outline?.Any(o => o.ItemRef == link.KnowledgeRef) ?? false))
                 throw new ArgumentException($"Work link knowledgeRef '{link.KnowledgeRef}' must be in the outline.");
+        }
+
+        var codebaseRefs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var target in payload.CodebaseTargets ?? Array.Empty<PlanImportCodebaseTargetDraftV1>())
+        {
+            RequireRef(target.Ref, "codebase");
+            if (!codebaseRefs.Add(target.Ref))
+                throw new ArgumentException($"Duplicate codebase ref '{target.Ref}'.");
+            if (string.IsNullOrWhiteSpace(target.Provider) ||
+                string.IsNullOrWhiteSpace(target.RepositoryId) ||
+                string.IsNullOrWhiteSpace(target.TargetBranch) ||
+                string.IsNullOrWhiteSpace(target.BaseCommitSha))
+            {
+                throw new ArgumentException($"Codebase '{target.Ref}' is missing provider, repositoryId, targetBranch, or baseCommitSha.");
+            }
+
+            if (string.Equals(target.Provider, git.Provider, StringComparison.OrdinalIgnoreCase))
+                await git.ResolveAsync(target.RepositoryId, target.TargetBranch, target.BaseCommitSha, ct);
         }
     }
 

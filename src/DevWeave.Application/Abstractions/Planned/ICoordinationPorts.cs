@@ -46,6 +46,7 @@ public interface ICodebaseRegistry
 {
     Task<Guid> RegisterAsync(AuthorizedScope scope, string provider, string repositoryId,
         string targetBranch, string baseCommitSha, CancellationToken ct = default);
+    Task<IReadOnlyList<CodebaseTargetView>> ListAsync(AuthorizedScope scope, CancellationToken ct = default);
     Task<Guid> RecordChangeSetAsync(AuthorizedScope scope, ChangeSetDraft draft,
         CancellationToken ct = default);
 }

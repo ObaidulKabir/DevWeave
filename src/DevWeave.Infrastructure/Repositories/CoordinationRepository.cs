@@ -253,6 +253,36 @@ public sealed class CoordinationRepository : ICoordinationRepository
             .FirstOrDefaultAsync(t => t.TenantId == tenantId && t.Id == id, ct);
     }
 
+    public async Task<List<CodebaseTarget>> ListCodebaseTargetsByProjectAsync(
+        TenantId tenantId, ProjectId projectId, CancellationToken ct = default)
+    {
+        return await _context.CodebaseTargets
+            .Where(t => t.TenantId == tenantId && t.ProjectId == projectId)
+            .OrderBy(t => t.Provider)
+            .ThenBy(t => t.RepositoryId)
+            .ThenBy(t => t.CreatedAt)
+            .ToListAsync(ct);
+    }
+
+    public async Task<CodebaseTarget?> FindCodebaseTargetAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        string provider,
+        string repositoryId,
+        string targetBranch,
+        string baseCommitSha,
+        CancellationToken ct = default)
+    {
+        return await _context.CodebaseTargets.FirstOrDefaultAsync(
+            t => t.TenantId == tenantId &&
+                 t.ProjectId == projectId &&
+                 t.Provider == provider &&
+                 t.RepositoryId == repositoryId &&
+                 t.TargetBranch == targetBranch &&
+                 t.BaseCommitSha == baseCommitSha,
+            ct);
+    }
+
     // Change Sets
     public async Task AddChangeSetAsync(ChangeSet changeSet, CancellationToken ct = default)
     {

@@ -32,6 +32,7 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/codebase-targets", RegisterCodebaseTargetAsync);
+        group.MapGet("/codebase-targets", ListCodebaseTargetsAsync);
         group.MapPost("/change-sets", RecordChangeSetAsync);
 
         group.MapPost("/campaigns", CreateCampaignAsync)
@@ -174,6 +175,36 @@ public static class CoordinationEndpoints
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> ListCodebaseTargetsAsync(
+        Guid tenantId,
+        Guid projectId,
+        HttpContext http,
+        ICodebaseRegistry registry,
+        IAgentGrantRepository grants,
+        CancellationToken ct)
+    {
+        if (string.Equals(
+                http.User.FindFirst(AuthClaims.PrincipalType)?.Value,
+                "AiAgent",
+                StringComparison.Ordinal))
+        {
+            var tenant = new TenantId(tenantId);
+            var project = new ProjectId(projectId);
+            var actor = AuthenticatedPrincipal.GetId(http);
+            var now = DateTimeOffset.UtcNow;
+            var allowed = (await grants.ListForAgentAsync(tenant, actor, ct))
+                .Any(grant =>
+                    grant.IsActive(now) &&
+                    grant.CoversProject(project) &&
+                    grant.Capability is AgentCapability.ReadKnowledge or AgentCapability.ExecuteWorkflow);
+            if (!allowed)
+                return Results.Forbid();
+        }
+
+        var targets = await registry.ListAsync(Scope(tenantId, projectId, http, "List codebase targets"), ct);
+        return Results.Ok(targets);
     }
 
     private static async Task<IResult> RecordChangeSetAsync(

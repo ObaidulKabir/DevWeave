@@ -126,6 +126,18 @@ export interface PlanImportProposalSummary {
   relationCount: number;
   milestoneCount: number;
   workItemCount: number;
+  codebaseTargetCount?: number;
+}
+
+export interface CodebaseTarget {
+  id: string;
+  provider: string;
+  repositoryId: string;
+  targetBranch: string;
+  baseCommitSha: string;
+  canonicalRef: string;
+  browseUrl?: string | null;
+  createdAt: string;
 }
 
 export interface PlanOutline {

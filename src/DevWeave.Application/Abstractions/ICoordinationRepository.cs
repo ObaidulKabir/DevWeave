@@ -47,6 +47,15 @@ public interface ICoordinationRepository
     // Codebase Targets
     Task AddCodebaseTargetAsync(CodebaseTarget target, CancellationToken ct = default);
     Task<CodebaseTarget?> GetCodebaseTargetByIdAsync(TenantId tenantId, CodebaseTargetId id, CancellationToken ct = default);
+    Task<List<CodebaseTarget>> ListCodebaseTargetsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
+    Task<CodebaseTarget?> FindCodebaseTargetAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        string provider,
+        string repositoryId,
+        string targetBranch,
+        string baseCommitSha,
+        CancellationToken ct = default);
 
     // Change Sets
     Task AddChangeSetAsync(ChangeSet changeSet, CancellationToken ct = default);

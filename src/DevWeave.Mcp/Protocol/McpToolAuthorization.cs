@@ -15,6 +15,8 @@ public static class McpToolAuthorization
         ["read_plan_outline"] = [AgentCapability.ReadKnowledge],
         ["propose_plan_expansion"] = [AgentCapability.WriteKnowledge],
         ["propose_initial_plan"] = [AgentCapability.WriteKnowledge],
+        ["list_codebase_targets"] = [AgentCapability.ReadKnowledge, AgentCapability.ExecuteWorkflow],
+        ["register_codebase_target"] = [AgentCapability.WriteKnowledge],
         ["list_schemas"] = [AgentCapability.ReadKnowledge],
         // Plan-import authors need the active relation vocabulary even when they do not traverse edges.
         ["list_relation_types"] = [AgentCapability.TraverseRelations, AgentCapability.WriteKnowledge],

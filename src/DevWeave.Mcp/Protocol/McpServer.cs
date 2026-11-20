@@ -128,7 +128,7 @@ public sealed class McpServer
         serverInfo = new
         {
             name = "DevWeave-Coordination-Plane",
-            version = "1.2.0"
+            version = "1.3.0"
         },
         // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
         instructions =
@@ -151,10 +151,12 @@ public sealed class McpServer
             "empty, stop and ask the Owner to register and publish schemas (agents cannot); " +
             "(3) list_relation_types when submitting relations — use an active code; sourceRef and targetRef must " +
             "be knowledge refs from this bundle, never file paths; " +
-            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], and " +
-            "outline[] with exactly one root (parentRef null); " +
+            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], " +
+            "outline[] with exactly one root (parentRef null), and optional codebaseTargets[] git identities " +
+            "(provider, owner/name or remote URL, branch, commit SHA — never clones, blobs, diffs, or source); " +
             "(5) success returns status Proposed — ask the Owner to Approve and materialize. You cannot approve " +
-            "your own proposal. After approval, use propose_plan_expansion for incremental children."
+            "your own proposal. After approval, use propose_plan_expansion for incremental children and " +
+            "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative."
     };
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
@@ -277,7 +279,7 @@ public sealed class McpServer
         NamedTool("propose_initial_plan",
             "Publish a Knowledge/outline/Relations/Work bundle for Owner approval. This is the only MCP path that can populate those Studio tabs. send_project_message never creates plan records. " +
             "Procedure: call read_plan_outline (empty tree => import here); call list_schemas and copy typeId/schemaVersion (if schemas is empty, stop — the Owner must publish schemas); call list_relation_types for relationTypeCode if you include relations (endpoints must be knowledge refs, not file paths); call this tool; then tell the Owner to open Studio → Plan import → Approve and materialize. Success returns id with status Proposed. You cannot approve your own proposal. Default requireEmptyProject is true. " +
-            "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Requires WriteKnowledge on a Planning agent.",
+            "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Optional codebaseTargets[] record git-host identity only (provider, repositoryId, targetBranch, baseCommitSha). Requires WriteKnowledge on a Planning agent.",
             new
             {
                 idempotencyKey = StringProp("Stable client key. Repeating the same key with the same bundle returns the existing proposal."),
@@ -357,8 +359,32 @@ public sealed class McpServer
                         },
                         ["workItemRef", "knowledgeRef"]),
                     "Optional links from work items to outline knowledge."),
+                codebaseTargets = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            @ref = StringProp("Client-local id unique in this bundle."),
+                            provider = StringProp("Git host, for example github."),
+                            repositoryId = StringProp("owner/name or a clean remote URL. No credentials, local paths, clones, or file contents."),
+                            targetBranch = StringProp("Protected or default branch name."),
+                            baseCommitSha = StringProp("7-40 character hex SHA currently observed."),
+                            reason = StringProp("Optional note for the Owner."),
+                        },
+                        ["ref", "provider", "repositoryId", "targetBranch", "baseCommitSha"]),
+                    "Optional git-host pointers. At most 10. Never source."),
             },
             ["idempotencyKey", "knowledge", "outline"]),
+        NamedTool("list_codebase_targets", "List registered git repository pointers for this project (provider, repositoryId, branch, SHA, canonical ref, browse URL). References only — DevWeave never stores clones or source. Planning and execution agents may call this.",
+            new { }, Array.Empty<string>()),
+        NamedTool("register_codebase_target", "Record a git repository identity as a references-only codebase target. Accepts owner/name or a clean GitHub remote URL, plus branch and commit SHA. Never send clones, blobs, diffs, or source. Does not start a campaign. Idempotent for the same provider/repo/branch/SHA. Requires WriteKnowledge.",
+            new
+            {
+                provider = StringProp("Git host, for example github."),
+                repositoryId = StringProp("owner/name or https://github.com/owner/name.git — no credentials."),
+                targetBranch = StringProp(),
+                baseCommitSha = StringProp("7-40 character hex SHA."),
+            },
+            ["provider", "repositoryId", "targetBranch", "baseCommitSha"]),
         NamedTool("list_schemas", "List active published Knowledge schemas. Call this before propose_initial_plan and copy typeId (namespace) and schemaVersion (version). An empty list means the Owner has not published schemas yet — do not invent typeIds.",
             new { }, Array.Empty<string>()),
         NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
@@ -446,6 +472,8 @@ public sealed class McpServer
                 args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
                 args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
             "propose_initial_plan" => await ProposeInitialPlanFromArgsAsync(scope, args, ct),
+            "list_codebase_targets" => await ListCodebaseTargetsFromArgsAsync(scope, ct),
+            "register_codebase_target" => await RegisterCodebaseFromArgsAsync(scope, args, ct),
             "list_schemas" => await ListSchemasAsync(ct),
             "list_relation_types" => await ListRelationTypesAsync(ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
@@ -557,6 +585,7 @@ public sealed class McpServer
             Milestones = payload.Milestones ?? Array.Empty<PlanImportMilestoneDraftV1>(),
             WorkItems = payload.WorkItems ?? Array.Empty<PlanImportWorkItemDraftV1>(),
             WorkLinks = payload.WorkLinks ?? Array.Empty<PlanImportWorkLinkDraftV1>(),
+            CodebaseTargets = payload.CodebaseTargets ?? Array.Empty<PlanImportCodebaseTargetDraftV1>(),
         };
         var proposal = await _planImport.ProposeAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, payload, ct);
         return new
@@ -568,6 +597,26 @@ public sealed class McpServer
             proposal.RequireEmptyProject,
             proposedAt = proposal.ProposedAt,
         };
+    }
+
+    private async Task<object> ListCodebaseTargetsFromArgsAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        var targets = await _codebases.ListAsync(scope, ct);
+        return new { codebaseTargets = targets };
+    }
+
+    private async Task<object> RegisterCodebaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var id = await _codebases.RegisterAsync(
+            scope,
+            args.GetProperty("provider").GetString()!,
+            args.GetProperty("repositoryId").GetString()!,
+            args.GetProperty("targetBranch").GetString()!,
+            args.GetProperty("baseCommitSha").GetString()!,
+            ct);
+        var listed = await _codebases.ListAsync(scope, ct);
+        var target = listed.First(t => t.Id == id);
+        return target;
     }
 
     private async Task<object> ProposeBundleFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)

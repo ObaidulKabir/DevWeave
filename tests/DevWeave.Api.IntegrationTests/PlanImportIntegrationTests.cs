@@ -60,6 +60,11 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         Assert.Equal(2, await db.KnowledgeItems.CountAsync(i => i.TenantId == seed.Tenant.Id && i.ProjectId == seed.Project.Id));
         Assert.Equal(2, await db.PlanOutlineNodes.CountAsync(n => n.TenantId == seed.Tenant.Id && n.ProjectId == seed.Project.Id));
         Assert.Equal(1, await db.WorkItems.CountAsync(w => w.TenantId == seed.Tenant.Id && w.ProjectId == seed.Project.Id));
+        Assert.Equal(1, await db.CodebaseTargets.CountAsync(t => t.TenantId == seed.Tenant.Id && t.ProjectId == seed.Project.Id));
+        var target = await db.CodebaseTargets.SingleAsync(t => t.TenantId == seed.Tenant.Id && t.ProjectId == seed.Project.Id);
+        Assert.Equal("github", target.Provider);
+        Assert.Equal("acme/checkout", target.RepositoryId);
+        Assert.Equal("main", target.TargetBranch);
     }
 
     [Fact]
@@ -141,6 +146,82 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "send_project_message");
         Assert.Contains("propose_initial_plan", send.GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("Does not create Knowledge", send.GetProperty("description").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Planning_agent_registers_and_lists_git_codebase_targets_without_source()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var mcpUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var restUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination/codebase-targets";
+
+        using var registered = await planner.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "https://github.com/acme/checkout.git",
+                    targetBranch = "main",
+                    baseCommitSha = "Abc1234",
+                },
+            }));
+        using var registeredDoc = await registered.Content.ReadFromJsonAsync<JsonDocument>();
+        var target = McpJson.Payload(registeredDoc!.RootElement);
+        Assert.Equal("github", target.GetProperty("provider").GetString());
+        Assert.Equal("acme/checkout", target.GetProperty("repositoryId").GetString());
+        Assert.Equal("abc1234", target.GetProperty("baseCommitSha").GetString());
+        Assert.Equal("https://github.com/acme/checkout", target.GetProperty("browseUrl").GetString());
+        Assert.DoesNotContain("class ", target.GetRawText(), StringComparison.Ordinal);
+
+        using var again = await planner.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "acme/checkout",
+                    targetBranch = "main",
+                    baseCommitSha = "abc1234",
+                },
+            }));
+        using var againDoc = await again.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(target.GetProperty("id").GetGuid(), McpJson.Payload(againDoc!.RootElement).GetProperty("id").GetGuid());
+
+        using var listed = await executor.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 3, McpMethods.CallTool,
+            new { name = "list_codebase_targets", arguments = new { } }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        McpJson.AssertCallToolResult(listedDoc!.RootElement);
+        Assert.Contains(
+            McpJson.Payload(listedDoc.RootElement).GetProperty("codebaseTargets").EnumerateArray(),
+            row => row.GetProperty("repositoryId").GetString() == "acme/checkout");
+
+        using var rest = await owner.GetAsync(restUrl);
+        Assert.Equal(HttpStatusCode.OK, rest.StatusCode);
+        using var restDoc = await rest.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Contains(
+            restDoc!.RootElement.EnumerateArray(),
+            row => row.GetProperty("canonicalRef").GetString() == "github:acme/checkout@main#abc1234");
+
+        using var blocked = await executor.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 4, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "acme/other",
+                    targetBranch = "main",
+                    baseCommitSha = "def5678",
+                },
+            }));
+        using var blockedDoc = await blocked.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
     }
 
     [Fact]
@@ -339,6 +420,18 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         workLinks = new object[]
         {
             new { workItemRef = "w1", knowledgeRef = "req1" },
+        },
+        codebaseTargets = new object[]
+        {
+            new
+            {
+                @ref = "repo1",
+                provider = "github",
+                repositoryId = "https://github.com/acme/checkout.git",
+                targetBranch = "main",
+                baseCommitSha = "abc1234",
+                reason = "Local origin remote",
+            },
         },
     };
 

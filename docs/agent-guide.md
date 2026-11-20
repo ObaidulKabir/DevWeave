@@ -44,6 +44,7 @@ collections:
 | `list_messages` / `read_messages_after_cursor` | `{ "messages": [ ... ], "nextCursor" }` |
 | `list_schemas` | `{ "schemas": [ ... ] }` |
 | `list_relation_types` | `{ "relationTypes": [ ... ] }` |
+| `list_codebase_targets` | `{ "codebaseTargets": [ { "id", "provider", "repositoryId", "targetBranch", "baseCommitSha", "canonicalRef", "browseUrl" } ] }` |
 | `list_work_packages` | `{ "workPackages": [ ... ] }` |
 | `list_spec_topics` / `next_open_topics` | `{ "topics": [ ... ] }` |
 
@@ -82,7 +83,9 @@ When `read_plan_outline` is empty (new app, or an existing codebase with no prio
    not file paths.
 4. Call `propose_initial_plan` with a stable `idempotencyKey`, `requireEmptyProject: true` (default),
    `knowledge[]`, and `outline[]` with **exactly one** root (`parentRef: null`). Optional:
-   `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`.
+   `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`, and `codebaseTargets[]` git identities
+   (`provider`, `repositoryId` as `owner/name` or a clean remote URL, `targetBranch`, `baseCommitSha`).
+   Never send clones, blobs, diffs, or source; git hosting remains authoritative.
    Each knowledge draft needs `ref`, `key`, `title`, `typeId`, `schemaVersion`, `classification`,
    `representationKind` (not `SourceCode`), `content`, and `reason`. Work `priority` is
    `Low` / `Normal` / `High` / `Critical`. `workLinks.knowledgeRef` must be in the outline.
@@ -138,7 +141,9 @@ stop and follow section 6.
 | Tool | Use it to | Key arguments |
 | --- | --- | --- |
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
-| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
+| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work/`codebaseTargets` |
+| `list_codebase_targets` | List registered git-host pointers (no source) | none |
+| `register_codebase_target` | Record a git identity (`owner/name` or clean remote URL + branch + SHA). Planning only. | `provider`, `repositoryId`, `targetBranch`, `baseCommitSha` |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
 | `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import | none |
 | `list_relation_types` | Discover active relation codes, endpoint constraints, direction and cardinality | none |

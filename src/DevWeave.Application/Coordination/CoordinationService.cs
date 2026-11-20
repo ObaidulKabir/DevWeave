@@ -558,6 +558,11 @@ public sealed class CoordinationService :
     {
         // Validate reference shape through the provider adapter when the registered provider matches;
         // always persist only identifiers/SHAs, never source content.
+        if (scope.ProjectId is null)
+            throw new ArgumentException("Codebase targets require a project scope.");
+        if (string.IsNullOrWhiteSpace(provider))
+            throw new ArgumentException("Provider is required.", nameof(provider));
+
         var normalizedProvider = provider.Trim().ToLowerInvariant();
         var resolvedProvider = normalizedProvider;
         var resolvedRepo = repositoryId;
@@ -572,14 +577,21 @@ public sealed class CoordinationService :
             resolvedBranch = resolved.TargetBranch;
             resolvedSha = resolved.BaseCommitSha;
         }
-        else if (string.IsNullOrWhiteSpace(repositoryId) || string.IsNullOrWhiteSpace(targetBranch) || string.IsNullOrWhiteSpace(baseCommitSha))
+        else
         {
-            throw new ArgumentException("Provider, repositoryId, targetBranch and baseCommitSha are required.");
+            RejectUnsafeRepositoryIdentity(repositoryId, targetBranch, baseCommitSha);
+            if (string.IsNullOrWhiteSpace(repositoryId) || string.IsNullOrWhiteSpace(targetBranch) || string.IsNullOrWhiteSpace(baseCommitSha))
+                throw new ArgumentException("Provider, repositoryId, targetBranch and baseCommitSha are required.");
         }
+
+        var existing = await _repository.FindCodebaseTargetAsync(
+            scope.TenantId, scope.ProjectId, resolvedProvider, resolvedRepo, resolvedBranch, resolvedSha, ct);
+        if (existing is not null)
+            return existing.Id.Value;
 
         var target = CodebaseTarget.Register(
             scope.TenantId,
-            scope.ProjectId!,
+            scope.ProjectId,
             resolvedProvider,
             resolvedRepo,
             resolvedBranch,
@@ -588,6 +600,58 @@ public sealed class CoordinationService :
         await _repository.AddCodebaseTargetAsync(target, ct);
         await _uow.SaveChangesAsync(ct);
         return target.Id.Value;
+    }
+
+    public async Task<IReadOnlyList<CodebaseTargetView>> ListAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        if (scope.ProjectId is null)
+            throw new ArgumentException("Codebase targets require a project scope.");
+        var targets = await _repository.ListCodebaseTargetsByProjectAsync(scope.TenantId, scope.ProjectId, ct);
+        return targets.Select(ToView).ToArray();
+    }
+
+    private static CodebaseTargetView ToView(CodebaseTarget target)
+    {
+        var browse = string.Equals(target.Provider, "github", StringComparison.OrdinalIgnoreCase)
+            ? $"https://github.com/{target.RepositoryId}"
+            : null;
+        return new CodebaseTargetView(
+            target.Id.Value,
+            target.Provider,
+            target.RepositoryId,
+            target.TargetBranch,
+            target.BaseCommitSha,
+            $"{target.Provider}:{target.RepositoryId}@{target.TargetBranch}#{target.BaseCommitSha}",
+            browse,
+            target.CreatedAt);
+    }
+
+    private static void RejectUnsafeRepositoryIdentity(string repositoryId, string targetBranch, string baseCommitSha)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryId) ||
+            repositoryId.Contains('\\', StringComparison.Ordinal) ||
+            repositoryId.StartsWith('/') ||
+            repositoryId.StartsWith('.') ||
+            repositoryId.Contains("..", StringComparison.Ordinal) ||
+            repositoryId.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
+            HasEmbeddedCredentials(repositoryId))
+        {
+            throw new ArgumentException(
+                "Repository identity must be a host pointer (owner/name or remote URL), never a local path, file URL, or credentialed URL.");
+        }
+
+        if (string.IsNullOrWhiteSpace(targetBranch) || targetBranch.Contains("..", StringComparison.Ordinal))
+            throw new ArgumentException("Target branch is required and cannot contain path traversal.");
+        if (string.IsNullOrWhiteSpace(baseCommitSha))
+            throw new ArgumentException("Base commit SHA is required.");
+    }
+
+    private static bool HasEmbeddedCredentials(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            return value.Contains("://", StringComparison.Ordinal) && value.Contains('@');
+        return !string.IsNullOrEmpty(uri.UserInfo) &&
+               !string.Equals(uri.UserInfo, "git", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<Guid> RecordChangeSetAsync(AuthorizedScope scope, ChangeSetDraft draft, CancellationToken ct = default)

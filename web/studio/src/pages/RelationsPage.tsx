@@ -1,12 +1,16 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { EmptyState, Panel } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { MetaLine } from '../components/MetaLine';
+import { channelMessageCount } from '../lib/coordination';
 import { shortId } from '../lib/format';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function RelationsPage() {
-  const { relationships, knowledge } = useWorkspace();
+  const { relationships, knowledge, channels } = useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const titleFor = (id: string) => knowledge.find((item) => item.id === id)?.title ?? shortId(id);
 
   return (
@@ -28,9 +32,16 @@ export function RelationsPage() {
           Review knowledge items first →
         </Link>
       </section>
+      <AgentPushCallout pendingPlanImports={0} channelMessageCount={postedMessages} />
       <Panel title="Relationship explorer" subtitle="Read each row from source to target; a revoked link is no longer active.">
         {relationships.length === 0 ? (
-          <EmptyState label="No relationships loaded for this project. First create knowledge items, then connect them using a registered relation type through the API." />
+          <EmptyState
+            label={
+              postedMessages > 0
+                ? 'No published relations yet. Agent Relations messages are on Coordination until Plan import is approved.'
+                : 'No relationships loaded for this project. First create knowledge items, then connect them using a registered relation type through the API.'
+            }
+          />
         ) : (
           <div className="divide-y divide-[var(--line)]">
             {relationships.map((rel) => (

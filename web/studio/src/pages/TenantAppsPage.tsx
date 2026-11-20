@@ -54,7 +54,14 @@ export function TenantAppsPage() {
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">
           Each application is a project workspace: plan, knowledge, coordination, and the agents allowed to work in it.
           Open <span className="font-semibold text-[var(--ink)]">Manage Agents</span> on an application to register
-          agents, issue API keys, and approve grants.
+          agents, issue API keys, and approve grants. MCP keys belong to this tenant
+          {tenantId ? (
+            <>
+              {' '}
+              (<span className="font-mono text-xs text-[var(--ink)]">{tenantId}</span>)
+            </>
+          ) : null}
+          ; a push from another tenant will not appear here.
         </p>
         {!live ? (
           <p className="mt-4 text-sm text-amber-800">Sign in to load live applications for this tenant.</p>
@@ -125,7 +132,7 @@ export function TenantAppsPage() {
           }
         >
           {projects.length === 0 ? (
-            <EmptyState label="No applications yet. Create one to start managing agents." />
+            <EmptyState label="No applications in this tenant yet. Agent MCP credentials only create or fill the project they were issued for — confirm the tenant GUID matches Settings." />
           ) : (
             <ul className="divide-y divide-[var(--line)]">
               {projects.map((item) => {

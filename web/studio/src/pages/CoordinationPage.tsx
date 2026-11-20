@@ -6,17 +6,15 @@ import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
 import { campaignsStillOnOlderPlan } from '../lib/plan';
-import type { Campaign, CoordinationChannel, PlanBaselineSummary, PlanStatus } from '../lib/types';
+import type { Campaign, CoordinationChannel, CoordinationMessage, PlanBaselineSummary, PlanStatus } from '../lib/types';
+import {
+  asChannelList,
+  asMessageList,
+  messagePayloadText,
+  prettyCoordinationPayload,
+  summarizeCoordinationPayload,
+} from '../lib/coordination';
 import { useWorkspace } from '../workspace/WorkspaceContext';
-
-function asChannelList(payload: unknown): CoordinationChannel[] {
-  if (Array.isArray(payload)) return payload as CoordinationChannel[];
-  if (payload && typeof payload === 'object') {
-    const record = payload as { channels?: CoordinationChannel[]; items?: CoordinationChannel[] };
-    return record.channels ?? record.items ?? [];
-  }
-  return [];
-}
 
 export function CoordinationPage() {
   const { tenantId, project, live, busy, run, campaigns, mcp, setCampaigns, refresh } = useWorkspace();
@@ -31,6 +29,9 @@ export function CoordinationPage() {
   const [baselines, setBaselines] = useState<PlanBaselineSummary[]>([]);
   const [planStatus, setPlanStatus] = useState<PlanStatus | null>(null);
   const [channels, setChannels] = useState<CoordinationChannel[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
+  const [messages, setMessages] = useState<CoordinationMessage[]>([]);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
 
   const base = tenantId && project ? `/tenants/${tenantId}/projects/${project.id}/coordination` : undefined;
 
@@ -39,6 +40,8 @@ export function CoordinationPage() {
       setBaselines([]);
       setPlanStatus(null);
       setChannels([]);
+      setSelectedChannelId('');
+      setMessages([]);
       return;
     }
     try {
@@ -50,18 +53,48 @@ export function CoordinationPage() {
       const safeList = Array.isArray(list) ? list : [];
       setBaselines(safeList);
       setPlanStatus(status && Array.isArray(status.campaigns) ? status : null);
-      setChannels(asChannelList(channelPayload));
+      const nextChannels = asChannelList(channelPayload);
+      setChannels(nextChannels);
+      setSelectedChannelId((current) => {
+        if (current && nextChannels.some((channel) => channel.id === current)) return current;
+        return nextChannels[0]?.id ?? '';
+      });
       setForm((current) => (current.baselineId ? current : { ...current, baselineId: safeList[0]?.id ?? '' }));
     } catch {
       setBaselines([]);
       setPlanStatus(null);
       setChannels([]);
+      setSelectedChannelId('');
+      setMessages([]);
     }
   }, [base]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!base || !selectedChannelId) {
+      setMessages([]);
+      setMessagesError(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch<unknown>(`${base}/channels/${selectedChannelId}/messages?afterSequence=0&limit=200`)
+      .then((payload) => {
+        if (cancelled) return;
+        setMessages(asMessageList(payload).sort((a, b) => a.sequence - b.sequence));
+        setMessagesError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setMessages([]);
+        setMessagesError(err instanceof Error ? err.message : 'Could not load channel messages.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, selectedChannelId]);
 
   const chosenBaseline = baselines.find((b) => b.id === form.baselineId);
   const offCurrentPlan = campaignsStillOnOlderPlan(planStatus?.campaigns);
@@ -208,9 +241,51 @@ export function CoordinationPage() {
                   title={`${channel.channelType} · ${shortId(channel.id)}`}
                   subtitle={`${channel.sequenceHighWatermark} messages · ${formatWhen(channel.createdAt)}`}
                   meta={<StateBadge value={channel.visibility} />}
+                  active={selectedChannelId === channel.id}
+                  onClick={() => setSelectedChannelId(channel.id)}
                 />
               ))}
             </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="Channel messages"
+          subtitle={
+            selectedChannelId
+              ? `Payloads posted to ${shortId(selectedChannelId)}. These are not Knowledge items until Plan import.`
+              : 'Select a channel to read what the agent posted.'
+          }
+        >
+          {messagesError ? (
+            <p className="px-5 py-4 text-sm text-[var(--danger)]" role="alert">
+              {messagesError}
+            </p>
+          ) : messages.length === 0 ? (
+            <EmptyState label="No messages in this channel yet." />
+          ) : (
+            <ol className="divide-y divide-[var(--line)]">
+              {messages.map((message) => {
+                const raw = messagePayloadText(message);
+                const pretty = prettyCoordinationPayload(raw);
+                return (
+                  <li key={message.id} className="px-5 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold">
+                        {message.messageType} · seq {message.sequence}
+                      </p>
+                      <span className="text-xs text-[var(--muted)]">{formatWhen(message.createdAt)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted)]">{summarizeCoordinationPayload(raw)}</p>
+                    {pretty ? (
+                      <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-[var(--paper)] p-3 font-mono text-[11px] leading-relaxed text-[var(--ink)]">
+                        {pretty}
+                      </pre>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
           )}
         </Panel>
 

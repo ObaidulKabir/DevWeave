@@ -24,6 +24,7 @@ import type {
   Runtime,
   WorkPackageStatus,
 } from '../lib/types';
+import { messagePayloadText, summarizeCoordinationPayload } from '../lib/coordination';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const POLL_MS = 4000;
@@ -376,14 +377,7 @@ function buildFeed(
 
   for (const msg of snapshot.messages) {
     const channel = snapshot.channels.find((c) => c.id === msg.channelId);
-    let metaPreview = '';
-    try {
-      const parsed = JSON.parse(msg.allowedMetadataJson || '{}') as Record<string, unknown>;
-      const text = parsed.text ?? parsed.summary ?? parsed.body;
-      if (typeof text === 'string') metaPreview = text.slice(0, 160);
-    } catch {
-      metaPreview = '';
-    }
+    const metaPreview = summarizeCoordinationPayload(messagePayloadText(msg));
     items.push({
       id: `msg:${msg.id}`,
       kind: 'message',

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ContentEditor } from '../components/ContentEditor';
 import { ContentView } from '../components/ContentView';
@@ -7,6 +8,7 @@ import { EmptyState, Panel, Row } from '../components/Panel';
 import { RevisionDiff } from '../components/RevisionDiff';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import { diffContent } from '../lib/content';
 import { formatWhen, shortId } from '../lib/format';
 import type {
@@ -43,7 +45,8 @@ function matchesFilter(item: KnowledgeItem, filter: Filter): boolean {
 }
 
 export function KnowledgePage() {
-  const { tenantId, project, live, busy, run, knowledge, setKnowledge } = useWorkspace();
+  const { tenantId, project, live, busy, run, knowledge, setKnowledge, channels } = useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<Filter>('review');
   const [tab, setTab] = useState<Tab>('read');
@@ -300,21 +303,7 @@ export function KnowledgePage() {
         </p>
       </details>
 
-      {pendingPlanImports > 0 ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
-          <p className="font-semibold">
-            {pendingPlanImports} agent plan import {pendingPlanImports === 1 ? 'is' : 'are'} waiting for Owner review.
-          </p>
-          <p className="mt-1 leading-relaxed">
-            A successful <code className="font-mono text-xs">propose_initial_plan</code> call stores a proposal; it
-            does not publish Knowledge or Work until approval. Review it under{' '}
-            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>. Messages on a
-            coordination channel (even if typed Knowledge / Relations / Work) stay on{' '}
-            <Link className="font-semibold underline" to="/coordination">Coordination</Link> until an Owner
-            approves a plan import.
-          </p>
-        </section>
-      ) : null}
+      <AgentPushCallout pendingPlanImports={pendingPlanImports} channelMessageCount={postedMessages} />
 
       {hits.length > 0 ? (
         <Panel title="Search results" subtitle="Only results you are allowed to see.">
@@ -358,7 +347,15 @@ export function KnowledgePage() {
               </div>
             </header>
             {visible.length === 0 ? (
-              <EmptyState label={filter === 'review' ? 'Nothing is waiting for review. 🎉' : 'No items in this view.'} />
+              <EmptyState
+                label={
+                  knowledge.length === 0 && postedMessages > 0
+                    ? 'No published knowledge. Agent Knowledge/Relations/Work messages are on Coordination until Plan import.'
+                    : filter === 'review'
+                      ? 'Nothing is waiting for review. 🎉'
+                      : 'No items in this view.'
+                }
+              />
             ) : (
               <ul className="max-h-[28rem] divide-y divide-[var(--line)] overflow-auto">
                 {visible.map((item) => (

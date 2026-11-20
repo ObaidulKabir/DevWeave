@@ -552,7 +552,12 @@ public static class CoordinationEndpoints
             var page = await channels.ReplayAsync(
                 Scope(tenantId, projectId, http, "Replay messages"),
                 channelId, afterSequence, limit <= 0 ? 50 : Math.Min(limit, 200), ct);
-            return Results.Ok(page);
+            return Results.Ok(new
+            {
+                messages = page.Items,
+                items = page.Items,
+                nextCursor = page.NextCursor,
+            });
         }
         catch (NotFoundException) { return Results.NotFound(); }
     }

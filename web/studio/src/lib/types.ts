@@ -355,7 +355,8 @@ export interface CoordinationMessage {
   runtimeId: string;
   messageType: string;
   schemaVersion: string;
-  allowedMetadataJson: string;
+  allowedMetadataJson?: string;
+  payloadJson?: string;
   createdAt: string;
 }
 

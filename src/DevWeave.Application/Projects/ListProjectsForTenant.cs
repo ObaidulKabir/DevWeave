@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Security;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 
@@ -8,18 +9,16 @@ public sealed class ListProjectsForTenant
 {
     private readonly IProjectRepository _projects;
     private readonly IProjectMembershipRepository? _projectMemberships;
-
-    public ListProjectsForTenant(IProjectRepository projects)
-    {
-        _projects = projects;
-    }
+    private readonly IMembershipRepository? _tenantMemberships;
 
     public ListProjectsForTenant(
         IProjectRepository projects,
-        IProjectMembershipRepository projectMemberships)
+        IProjectMembershipRepository? projectMemberships = null,
+        IMembershipRepository? tenantMemberships = null)
     {
         _projects = projects;
         _projectMemberships = projectMemberships;
+        _tenantMemberships = tenantMemberships;
     }
 
     public Task<IReadOnlyList<Project>> ExecuteAsync(TenantId tenantId, CancellationToken ct = default) =>
@@ -31,7 +30,14 @@ public sealed class ListProjectsForTenant
         CancellationToken ct = default)
     {
         var projects = await _projects.ListByTenantAsync(tenantId, ct);
-        if (_projectMemberships is null || principalId.Value == Guid.Empty)
+        if (principalId.Value == Guid.Empty)
+            return projects;
+
+        if (_tenantMemberships is not null &&
+            await TenantProjectAccess.IsTenantAdministratorAsync(_tenantMemberships, tenantId, principalId, ct))
+            return projects;
+
+        if (_projectMemberships is null)
             return projects;
 
         var memberships = await _projectMemberships.ListByPrincipalAsync(tenantId, principalId, ct);

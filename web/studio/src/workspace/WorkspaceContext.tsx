@@ -15,6 +15,7 @@ import { getActiveTenantId } from '../lib/session';
 import type {
   Activity,
   Campaign,
+  CoordinationChannel,
   EvidenceItem,
   KnowledgeItem,
   Membership,
@@ -27,6 +28,7 @@ import type {
   Runtime,
   WorkItem,
 } from '../lib/types';
+import { asChannelList } from '../lib/coordination';
 
 interface WorkspaceValue {
   tenantId?: string;
@@ -46,6 +48,7 @@ interface WorkspaceValue {
   evidence: EvidenceItem[];
   members: Membership[];
   campaigns: Campaign[];
+  channels: CoordinationChannel[];
   runtimes: Runtime[];
   mcp: McpDirectory | null;
   error: string | null;
@@ -132,6 +135,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [members, setMembers] = useState<Membership[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [channels, setChannels] = useState<CoordinationChannel[]>([]);
   const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [mcp, setMcp] = useState<McpDirectory | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +183,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setEvidence([]);
       setMembers([]);
       setCampaigns([]);
+      setChannels([]);
       setRuntimes([]);
       setMcp(null);
       return;
@@ -207,6 +212,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       nextEvidence,
       nextMembers,
       nextCampaigns,
+      nextChannels,
       nextRuntimes,
       nextMcp,
       nextOutline,
@@ -220,6 +226,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       soft(`${base}/evidence`, [] as EvidenceItem[]).then(asList<EvidenceItem>),
       soft(`/tenants/${tenantId}/members`, [] as Membership[]).then(asList<Membership>),
       soft(`${base}/coordination/campaigns`, [] as Campaign[]).then(asList<Campaign>),
+      soft(`${base}/coordination/channels`, [] as unknown[]).then(asChannelList),
       soft(`${base}/coordination/runtimes`, [] as Runtime[]).then(asList<Runtime>),
       soft<McpDirectory | null>(`${base}/coordination/mcp`, null),
       soft(`${base}/plan/`, EMPTY_OUTLINE, () => setOutlineError(true)).then(normalizeOutline),
@@ -234,6 +241,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setEvidence(nextEvidence);
     setMembers(nextMembers);
     setCampaigns(nextCampaigns);
+    setChannels(nextChannels);
     setRuntimes(nextRuntimes);
     setMcp(nextMcp);
     setOutline(nextOutline);
@@ -307,6 +315,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     evidence,
     members,
     campaigns,
+    channels,
     runtimes,
     mcp,
     error,

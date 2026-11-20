@@ -10,13 +10,16 @@ public sealed class ListKnowledgeItemsForProject
 {
     private readonly IKnowledgeItemRepository _items;
     private readonly IProjectMembershipRepository _memberships;
+    private readonly IMembershipRepository? _tenantMemberships;
 
     public ListKnowledgeItemsForProject(
         IKnowledgeItemRepository items,
-        IProjectMembershipRepository memberships)
+        IProjectMembershipRepository memberships,
+        IMembershipRepository? tenantMemberships = null)
     {
         _items = items;
         _memberships = memberships;
+        _tenantMemberships = tenantMemberships;
     }
 
     public async Task<IReadOnlyList<KnowledgeItem>> ExecuteAsync(
@@ -25,13 +28,12 @@ public sealed class ListKnowledgeItemsForProject
         PrincipalId actorId,
         CancellationToken ct = default)
     {
-        var memberships = await _memberships.ListByPrincipalAsync(tenantId, actorId, ct);
-        var membership = memberships.FirstOrDefault(m =>
-            m.ProjectId == projectId && m.Status == ProjectMembershipStatus.Active);
-        if (membership is null)
+        var role = await TenantProjectAccess.ResolveProjectRoleAsync(
+            _memberships, tenantId, projectId, actorId, ct, _tenantMemberships);
+        if (role is null)
             return Array.Empty<KnowledgeItem>();
 
-        var ceiling = ClassificationAccess.CeilingFor(membership.Role);
+        var ceiling = ClassificationAccess.CeilingFor(role.Value);
         var items = await _items.ListByProjectAsync(tenantId, projectId, ct);
         return items.Where(i => i.Classification <= ceiling).ToList();
     }

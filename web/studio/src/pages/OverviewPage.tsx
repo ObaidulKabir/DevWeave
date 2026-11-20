@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { PlanVersionStatusCard } from '../components/PlanVersionStatusCard';
 import { SpecStatusCard } from '../components/SpecStatusCard';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import { formatWhen } from '../lib/format';
 import type { PlanImportProposalSummary } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function OverviewPage() {
-  const { tenantId, project, metrics, knowledge, workItems, evidence, activities, campaigns, live } = useWorkspace();
+  const { tenantId, project, metrics, knowledge, workItems, evidence, activities, campaigns, channels, live } =
+    useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [pendingPlanImports, setPendingPlanImports] = useState(0);
   const planningSteps = [
     {
@@ -100,18 +104,7 @@ export function OverviewPage() {
         </div>
       </section>
 
-      {pendingPlanImports > 0 ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
-          <p className="font-semibold">
-            {pendingPlanImports} desktop-agent plan import {pendingPlanImports === 1 ? 'needs' : 'need'} review.
-          </p>
-          <p className="mt-1 leading-relaxed">
-            Imported Knowledge, Relations, and Work stay unpublished until an Owner approves the immutable bundle in{' '}
-            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>. Coordination channels do
-            not display planning records.
-          </p>
-        </section>
-      ) : null}
+      <AgentPushCallout pendingPlanImports={pendingPlanImports} channelMessageCount={postedMessages} />
 
       <section aria-labelledby="planning-flow-title" className="space-y-4">
         <div>
@@ -178,7 +171,13 @@ export function OverviewPage() {
 
         <Panel title="Knowledge snapshot" subtitle="Lifecycle and verification states stay independent (UI-03).">
           {knowledge.length === 0 ? (
-            <EmptyState label="No knowledge items yet." />
+            <EmptyState
+              label={
+                postedMessages > 0
+                  ? 'No published knowledge yet. Agent payloads are on Coordination until Plan import is approved.'
+                  : 'No knowledge items yet.'
+              }
+            />
           ) : (
             <div className="divide-y divide-[var(--line)]">
               {knowledge.slice(0, 6).map((item) => (

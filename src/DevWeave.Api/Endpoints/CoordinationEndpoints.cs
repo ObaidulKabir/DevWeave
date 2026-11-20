@@ -3,6 +3,7 @@ using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 using Microsoft.AspNetCore.Mvc;
@@ -65,8 +66,7 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/channels", OpenChannelAsync);
-        group.MapGet("/channels", ListChannelsAsync)
-            .RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/channels", ListChannelsAsync);
         group.MapPost("/channels/{channelId:guid}/messages", SendMessageAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/channels/{channelId:guid}/messages", ReplayMessagesAsync);
@@ -429,8 +429,30 @@ public static class CoordinationEndpoints
     }
 
     private static async Task<IResult> ListChannelsAsync(
-        Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)
+        Guid tenantId,
+        Guid projectId,
+        HttpContext http,
+        ICoordinationRepository repository,
+        IAgentGrantRepository grants,
+        CancellationToken ct)
     {
+        if (string.Equals(
+                http.User.FindFirst(AuthClaims.PrincipalType)?.Value,
+                "AiAgent",
+                StringComparison.Ordinal))
+        {
+            var tenant = new TenantId(tenantId);
+            var project = new ProjectId(projectId);
+            var actor = AuthenticatedPrincipal.GetId(http);
+            var allowed = (await grants.ListForAgentAsync(tenant, actor, ct))
+                .Any(grant =>
+                    grant.IsActive(DateTimeOffset.UtcNow) &&
+                    grant.CoversProject(project) &&
+                    grant.Capability == AgentCapability.ExecuteWorkflow);
+            if (!allowed)
+                return Results.Forbid();
+        }
+
         var channels = await repository.ListChannelsByProjectAsync(
             new TenantId(tenantId), new ProjectId(projectId), ct);
         return Results.Ok(channels

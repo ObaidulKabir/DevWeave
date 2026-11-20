@@ -110,6 +110,24 @@ export interface PlanExpansionProposal {
   resolvedItemId: string | null;
 }
 
+export interface PlanImportProposalSummary {
+  id: string;
+  idempotencyKey: string;
+  payloadHash: string;
+  requireEmptyProject: boolean;
+  status: string;
+  proposedBy: string;
+  proposedAt: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  decisionNote?: string | null;
+  knowledgeCount: number;
+  outlineCount: number;
+  relationCount: number;
+  milestoneCount: number;
+  workItemCount: number;
+}
+
 export interface PlanOutline {
   nodes: PlanOutlineNode[];
   links: PlanWorkLink[];

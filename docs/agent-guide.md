@@ -26,8 +26,11 @@ connect, what to read before you work, how to execute work, and what to do when 
 | Protocol | JSON-RPC 2.0, MCP protocol version `2026-07-28` |
 | Authentication | `Authorization: Bearer <agent token>` (an AI-agent principal with an active credential) |
 | Runtime identity | `X-Runtime-Id: <runtime id>` on every call after `register_runtime` |
-| Methods | `initialize`, `tools/list`, `tools/call` (`{ "name": ..., "arguments": {...} }`) |
+| Methods | `initialize`, `tools/list`, `tools/call`, `resources/list`, `prompts/list` |
 | Arguments | Always a JSON **object** (or omitted). Arrays and other shapes are refused with `-32602`. Check your client, for example PowerShell must send a hashtable, not `$args` |
+
+DevWeave does not publish MCP resources or prompts yet. `resources/list` and `prompts/list` return compliant
+empty collections with explicit cache metadata; clients should not patch or invent entries.
 
 **Access you need** (granted by a project Owner in the dashboard):
 
@@ -57,6 +60,10 @@ When the remote project outline is empty (new app, or an existing codebase with 
 5. After approval, `read_plan_outline` shows the published tree. Continue with `propose_plan_expansion` /
    `propose_spec_*` for incremental changes.
 
+Do not look for a submitted bundle under **Coordination**. Coordination contains execution channels,
+runtimes and packages; the pending bundle is under **Plan import**, and its Knowledge/Relations/Work become
+visible on their normal pages only after Owner approval.
+
 ## 4. The session loop (execution agent)
 
 1. **Start up**: `initialize`, `tools/list`, then `register_runtime` and send `X-Runtime-Id` from then on.
@@ -73,7 +80,7 @@ When the remote project outline is empty (new app, or an existing codebase with 
 9. **Finish**: `release_lease`. You may still `report_workthrough` after the plan stops the package (final success or blockage).
 
 Before steps 5, 6 and 7, and whenever a call is refused, call `get_work_status`. If `canProgress` is false,
-stop and follow section 5.
+stop and follow section 6.
 
 ## 5. Tool reference
 
@@ -101,6 +108,12 @@ stop and follow section 5.
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
 | `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import) | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
+| `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import | none |
+| `list_relation_types` | Discover active relation codes, endpoint constraints, direction and cardinality | none |
+
+The same schema vocabulary is available to the authenticated agent at
+`GET /tenants/{tenantId}/agents/{agentId}/capabilities`. Global `GET /schemas` is a human registry surface;
+planning clients should use the MCP tool or their own agent-capability endpoint.
 
 ### Specifications
 
@@ -118,8 +131,9 @@ stop and follow section 5.
 
 ### Coordination channels
 
-`open_channel`, `send_project_message`, `read_messages_after_cursor`, `acknowledge_messages`: durable
-messages between runtimes and humans. Acknowledge what you processed so you can resume after a reconnect.
+`list_channels`, `open_channel`, `send_project_message`, `read_messages_after_cursor`,
+`acknowledge_messages`: discover and exchange durable messages between runtimes and humans. Acknowledge what
+you processed so you can resume after a reconnect. These are execution tools and require `ExecuteWorkflow`.
 
 ## 6. When the plan changes
 
@@ -166,3 +180,6 @@ Errors are JSON-RPC errors with a stable `code` and a `data.kind`. React to the 
   your grants.
 - A package you could not lease (for example because the plan had already moved on) cannot receive a
   workthrough from you. Say what blocked you on the campaign channel instead.
+- On Windows, third-party Python clients should call `sys.stdout.reconfigure(encoding="utf-8")` when
+  available or use ASCII-only console messages. DevWeave protocol payloads are UTF-8; decorative terminal
+  emoji are a client concern and are not required by this API.

@@ -7,7 +7,7 @@ import {
   ensureTenantMembership,
   slugifyKey,
 } from '../lib/apps';
-import { apiFetch } from '../lib/api';
+import { apiFetch, publicApiOrigin } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
 import type {
   AgentCredential,
@@ -18,7 +18,6 @@ import type {
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 const MCP_CAPABILITIES = ['ReadKnowledge', 'WriteKnowledge', 'AssembleContext', 'ExecuteWorkflow'] as const;
-const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'http://localhost:5080';
 
 function maskSecret(id: string): string {
   const compact = id.replace(/-/g, '');
@@ -80,10 +79,11 @@ export function AccessPage() {
     [agents, selectedAgentId],
   );
 
+  const apiOrigin = publicApiOrigin();
   const mcpPath = tenantId && project
     ? `/tenants/${tenantId}/projects/${project.id}/mcp/rpc`
     : '/tenants/{tenantId}/projects/{projectId}/mcp/rpc';
-  const mcpUrl = `${API_ORIGIN}${mcpPath}`;
+  const mcpUrl = `${apiOrigin}${mcpPath}`;
   const authPath = tenantId && selectedAgent
     ? `/tenants/${tenantId}/agents/${selectedAgent.id}/authenticate`
     : '/tenants/{tenantId}/agents/{agentId}/authenticate';
@@ -507,7 +507,7 @@ export function AccessPage() {
                 1. Exchange the API key secret for a short-lived agent bearer token:
               </p>
               <pre className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white px-3 py-2 font-mono text-[11px] text-[var(--ink)]">
-{`POST ${API_ORIGIN}${authPath}
+{`POST ${apiOrigin}${authPath}
 { "credentialId": "<credential id>", "secret": "<plainTextSecret>" }`}
               </pre>
               <p>

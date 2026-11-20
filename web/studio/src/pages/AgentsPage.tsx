@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
-import { ApiError, apiFetch } from '../lib/api';
+import { ApiError, apiFetch, publicApiOrigin } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
 import type {
   AgentCredential,
@@ -25,7 +25,6 @@ const CAPABILITIES: { value: string; label: string; help: string }[] = [
   { value: 'ExecuteWorkflow', label: 'Execute workflow', help: 'Take leases, submit change sets and request integration.' },
 ];
 const CEILINGS = ['Public', 'Internal', 'Confidential', 'Restricted'] as const;
-const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'http://localhost:5080';
 
 type AgentRecord = {
   agent: AgentPrincipal;
@@ -992,11 +991,11 @@ export function AgentsPage() {
                 </SectionTitle>
                 <pre className="overflow-x-auto rounded-xl border border-[var(--line)] bg-white px-3 py-3 font-mono text-[11px] leading-relaxed text-[var(--ink)]">
 {`# 1. Exchange an API key for a short-lived bearer token
-POST ${API_ORIGIN}/tenants/${tenantId ?? '{tenantId}'}/agents/${selected.agent.id}/authenticate
+POST ${publicApiOrigin()}/tenants/${tenantId ?? '{tenantId}'}/agents/${selected.agent.id}/authenticate
 { "credentialId": "<key id>", "secret": "<secret>" }
 
 # 2. Call MCP with  Authorization: Bearer <accessToken>
-POST ${API_ORIGIN}/tenants/${tenantId ?? '{tenantId}'}/projects/${project?.id ?? '{projectId}'}/mcp/rpc`}
+POST ${publicApiOrigin()}/tenants/${tenantId ?? '{tenantId}'}/projects/${project?.id ?? '{projectId}'}/mcp/rpc`}
                 </pre>
               </div>
             </div>

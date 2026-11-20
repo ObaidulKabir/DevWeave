@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { BrandMark } from '../components/BrandMark';
@@ -7,14 +7,30 @@ import { getEnvTenantId, getLastIdentity } from '../lib/session';
 const GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function resolveOidcAuthorizeUrl(): string | null {
-  const authority = (import.meta.env.VITE_OIDC_AUTHORITY as string | undefined)?.trim();
+interface LoginOptions {
+  pilotEnabled: boolean;
+  oidcAuthority?: string | null;
+  oidcAudience?: string | null;
+  studioClientId?: string | null;
+}
+
+function resolveOidcAuthorizeUrl(options?: LoginOptions | null): string | null {
+  const authority =
+    (import.meta.env.VITE_OIDC_AUTHORITY as string | undefined)?.trim() ||
+    options?.oidcAuthority?.trim() ||
+    '';
   if (!authority) return null;
-  const clientId = (import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined)?.trim() || 'devweave-studio';
+  const clientId =
+    (import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined)?.trim() ||
+    options?.studioClientId?.trim() ||
+    'devweave-studio';
   const redirectUri =
     (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined)?.trim() ||
     `${window.location.origin}/login`;
-  const audience = (import.meta.env.VITE_OIDC_AUDIENCE as string | undefined)?.trim() || 'devweave-api';
+  const audience =
+    (import.meta.env.VITE_OIDC_AUDIENCE as string | undefined)?.trim() ||
+    options?.oidcAudience?.trim() ||
+    'devweave-api';
   const base = authority.endsWith('/') ? authority : `${authority}/`;
   const url = new URL('authorize', base);
   url.searchParams.set('client_id', clientId);
@@ -32,12 +48,28 @@ export function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from;
   const destination = from && from !== '/login' && from !== '/' ? from : '/apps';
 
-  const oidcAuthorizeUrl = useMemo(() => resolveOidcAuthorizeUrl(), []);
+  const [loginOptions, setLoginOptions] = useState<LoginOptions | null>(null);
+  const oidcAuthorizeUrl = useMemo(() => resolveOidcAuthorizeUrl(loginOptions), [loginOptions]);
   const last = getLastIdentity();
   const [tenantId, setTenantId] = useState(() => last?.tenantId ?? getEnvTenantId() ?? '');
   const [principalId, setPrincipalId] = useState(() => last?.principalId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+    void fetch(`${baseUrl}/auth/login-options`, { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as LoginOptions;
+      })
+      .then((options) => {
+        if (options) setLoginOptions(options);
+      })
+      .catch(() => {
+        /* Keep the GUID form; login-options is advisory. */
+      });
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -78,7 +110,9 @@ export function LoginPage() {
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
             {oidcAuthorizeUrl
               ? 'Production sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'
-              : 'Development sign-in uses your tenant and Owner principal (pilot JWT). Set VITE_OIDC_AUTHORITY to enable IdP sign-in.'}
+              : loginOptions && loginOptions.pilotEnabled === false
+                ? 'GUID sign-in is disabled on this host. Configure an identity provider, or run the API in Development.'
+                : 'Development sign-in uses your tenant and Owner principal. Register a tenant first if these IDs are new.'}
             {last?.email || last?.tenantName ? (
               <>
                 {' '}

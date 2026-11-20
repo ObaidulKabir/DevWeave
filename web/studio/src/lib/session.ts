@@ -165,7 +165,7 @@ async function readPilotError(response: Response, fallback: string): Promise<nev
     throw new Error(
       apiError ??
         (body?.includes('Not Found') || !body
-          ? 'Pilot auth is unavailable (API not in Development, or identity not found).'
+          ? 'Sign-in failed: this host does not mint GUID sessions, or those tenant/owner IDs were not found. Register a tenant first, or use the identity provider when it is configured.'
           : body),
     );
   }

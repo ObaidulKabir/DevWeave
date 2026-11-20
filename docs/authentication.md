@@ -48,9 +48,12 @@ symmetrically signed human JWTs minted by the pilot endpoints (same claim shape 
 - `POST /auth/register` — the registration path above, including a development bearer token
 - `POST /auth/pilot/bootstrap` — the same provisioning as registration, plus a development bearer token
 - `POST /auth/pilot/token` — mint a bearer token for an existing active human principal
+- `GET /auth/login-options` — whether GUID (pilot) sign-in is enabled and the OIDC authority Studio should use
 
 Pilot routes return 404 outside Development or when an OIDC authority is configured. `POST /auth/register`
-stays available. Agents still use `POST /tenants/{tenantId}/agents/{agentId}/authenticate`.
+stays available. Agents still use `POST /tenants/{tenantId}/agents/{agentId}/authenticate`. `/auth/pilot/token`
+sets the RLS tenant session from the request body before looking up the Owner; without that, a valid
+Owner appears missing.
 
 ## Current Boundary
 

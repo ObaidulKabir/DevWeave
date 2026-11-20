@@ -31,7 +31,10 @@ public static class PilotAuthEndpoints
         CancellationToken ct)
     {
         if (!IsPilotEnabled(environment, configuration))
-            return Results.NotFound();
+            return Results.NotFound(new
+            {
+                error = "GUID sign-in is disabled on this host. Use your identity provider, or run the API in Development without an OIDC authority.",
+            });
 
         if (request is null)
             return Results.BadRequest(new { error = "tenantName and ownerEmail are required." });
@@ -61,18 +64,29 @@ public static class PilotAuthEndpoints
     private static async Task<IResult> MintTokenAsync(
         [FromBody] PilotTokenRequest request,
         IPrincipalRepository principals,
+        ITenantContext tenantContext,
         PilotHumanTokenService tokens,
         IHostEnvironment environment,
         IConfiguration configuration,
         CancellationToken ct)
     {
         if (!IsPilotEnabled(environment, configuration))
-            return Results.NotFound();
+            return Results.NotFound(new
+            {
+                error = "GUID sign-in is disabled on this host. Use your identity provider, or run the API in Development without an OIDC authority.",
+            });
+
+        // Principals are behind RLS. Anonymous /auth/pilot/token has no JWT tenant claim and no
+        // {tenantId} route value, so the session tenant must come from the request before the lookup.
+        tenantContext.TenantId = request.TenantId;
 
         var principal = await principals.GetByIdAsync(
             new TenantId(request.TenantId), new PrincipalId(request.PrincipalId), ct);
         if (principal is null || !principal.IsActive || principal.Type != PrincipalType.Human)
-            return Results.NotFound();
+            return Results.NotFound(new
+            {
+                error = "No active Owner principal matches those tenant and owner IDs. Register a tenant first, or check both values.",
+            });
 
         var accessToken = tokens.Issue(
             principal.TenantId, principal.Id, platformAdmin: request.PlatformAdmin);

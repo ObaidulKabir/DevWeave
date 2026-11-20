@@ -15,7 +15,22 @@ public static class RegistrationEndpoints
     public static IEndpointRouteBuilder MapRegistrationEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/auth/register", RegisterAsync).AllowAnonymous();
+        endpoints.MapGet("/auth/login-options", LoginOptions).AllowAnonymous();
         return endpoints;
+    }
+
+    private static IResult LoginOptions(IHostEnvironment environment, IConfiguration configuration)
+    {
+        var authority = configuration["Auth:Oidc:Authority"];
+        var audience = configuration["Auth:Oidc:Audience"];
+        var clientId = configuration["Auth:Oidc:StudioClientId"];
+        return Results.Ok(new
+        {
+            pilotEnabled = PilotAuthEndpoints.IsPilotEnabled(environment, configuration),
+            oidcAuthority = string.IsNullOrWhiteSpace(authority) ? null : authority,
+            oidcAudience = string.IsNullOrWhiteSpace(audience) ? null : audience,
+            studioClientId = string.IsNullOrWhiteSpace(clientId) ? "devweave-studio" : clientId,
+        });
     }
 
     private static async Task<IResult> RegisterAsync(

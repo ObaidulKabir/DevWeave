@@ -42,6 +42,25 @@ public sealed class TenantRegistrationIntegrationTests : IClassFixture<IdentityT
         using var membersResponse = await client.SendAsync(membersRequest);
 
         Assert.Equal(HttpStatusCode.OK, membersResponse.StatusCode);
+
+        using var options = await client.GetAsync("/auth/login-options");
+        Assert.Equal(HttpStatusCode.OK, options.StatusCode);
+        using var optionsBody = JsonDocument.Parse(await options.Content.ReadAsStringAsync());
+        Assert.True(optionsBody.RootElement.GetProperty("pilotEnabled").GetBoolean());
+
+        using var token = await client.PostAsJsonAsync(
+            "/auth/pilot/token",
+            new { tenantId, principalId, platformAdmin = true });
+        Assert.Equal(HttpStatusCode.OK, token.StatusCode);
+        using var minted = JsonDocument.Parse(await token.Content.ReadAsStringAsync());
+        Assert.False(string.IsNullOrWhiteSpace(minted.RootElement.GetProperty("accessToken").GetString()));
+
+        using var missing = await client.PostAsJsonAsync(
+            "/auth/pilot/token",
+            new { tenantId, principalId = Guid.NewGuid(), platformAdmin = true });
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        using var missingBody = JsonDocument.Parse(await missing.Content.ReadAsStringAsync());
+        Assert.Contains("Owner principal", missingBody.RootElement.GetProperty("error").GetString());
         using var members = JsonDocument.Parse(await membersResponse.Content.ReadAsStringAsync());
         var membership = Assert.Single(members.RootElement.EnumerateArray());
         Assert.Equal(principalId, membership.GetProperty("principalId").GetGuid());
@@ -77,5 +96,10 @@ public sealed class TenantRegistrationIntegrationTests : IClassFixture<IdentityT
         Assert.NotEqual(Guid.Empty, body.RootElement.GetProperty("tenantId").GetGuid());
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("accessToken").ValueKind);
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("tokenType").ValueKind);
+
+        using var options = await client.GetAsync("/auth/login-options");
+        using var optionsBody = JsonDocument.Parse(await options.Content.ReadAsStringAsync());
+        Assert.False(optionsBody.RootElement.GetProperty("pilotEnabled").GetBoolean());
+        Assert.Equal(IdentityTestFactory.TestOidcIssuer, optionsBody.RootElement.GetProperty("oidcAuthority").GetString());
     }
 }

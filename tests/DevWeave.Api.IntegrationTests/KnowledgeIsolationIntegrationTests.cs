@@ -68,15 +68,15 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         Assert.Equal(itemA.Id, alphaItems[0].Id);
         Assert.DoesNotContain(alphaItems, i => i.Id == itemB.Id);
 
-        var crossTenantItem = await GetKnowledgeItemAsync(alpha.Id, itemB.Id);
+        var crossTenantItem = await GetKnowledgeItemAsync(alpha.Id, itemB.Id, principalA.Id);
         Assert.Null(crossTenantItem);
 
         // HTTP project read path
-        var alphaProjectItems = await ListKnowledgeItemsForProjectAsync(alpha.Id, projectA.Id);
+        var alphaProjectItems = await ListKnowledgeItemsForProjectAsync(alpha.Id, projectA.Id, principalA.Id);
         Assert.Single(alphaProjectItems);
         Assert.Equal(itemA.Id, alphaProjectItems[0].Id);
 
-        var crossTenantProjectItems = await ListKnowledgeItemsForProjectAsync(alpha.Id, projectB.Id);
+        var crossTenantProjectItems = await ListKnowledgeItemsForProjectAsync(alpha.Id, projectB.Id, principalA.Id);
         Assert.Empty(crossTenantProjectItems);
 
         // HTTP revision read path
@@ -128,7 +128,7 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         Assert.NotNull(staleBody.Message);
 
         // The item still points at revision 1: the stale write changed nothing.
-        var fetched = await GetKnowledgeItemAsync(tenant.Id, item.Id);
+        var fetched = await GetKnowledgeItemAsync(tenant.Id, item.Id, principal.Id);
         Assert.Equal(1, fetched!.CurrentRevisionNumber);
 
         // A duplicate key within the same project conflicts (BR-004 / invariant #2).
@@ -173,8 +173,35 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         Assert.Equal("prohibited-content", codeBody.Code);
 
         // Nothing was persisted: the item remains at revision 0.
-        var fetched = await GetKnowledgeItemAsync(tenant.Id, item.Id);
+        var fetched = await GetKnowledgeItemAsync(tenant.Id, item.Id, principal.Id);
         Assert.Equal(0, fetched!.CurrentRevisionNumber);
+    }
+
+    [Fact]
+    public async Task GOV_004_member_cannot_read_restricted_knowledge_item()
+    {
+        var tenant = await CreateTenantAsync("Gov Corp");
+        var owner = await CreatePrincipalAsync(tenant.Id, "owner@gov.test", PrincipalType.Human);
+        var member = await CreatePrincipalAsync(tenant.Id, "member@gov.test", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "gov", "Gov", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "gov-project", profile.Id, owner.Id);
+
+        await ActivateTenantMembershipAsync(tenant.Id, member.Id, MembershipRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, member.Id, ProjectRole.Member);
+        await SeedPublishedSchemaAsync("architecture.mmd", "1.0", "{\"type\":\"object\"}");
+
+        var restricted = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "restricted-secret", owner.Id, Classification.Restricted);
+        var internalItem = await CreateKnowledgeItemAsync(
+            tenant.Id, project.Id, "internal-ok", owner.Id, Classification.Internal);
+
+        Assert.Null(await GetKnowledgeItemAsync(tenant.Id, restricted.Id, member.Id));
+        Assert.NotNull(await GetKnowledgeItemAsync(tenant.Id, internalItem.Id, member.Id));
+        Assert.NotNull(await GetKnowledgeItemAsync(tenant.Id, restricted.Id, owner.Id));
+
+        var memberList = await ListKnowledgeItemsForProjectAsync(tenant.Id, project.Id, member.Id);
+        Assert.DoesNotContain(memberList, i => i.Id == restricted.Id);
+        Assert.Contains(memberList, i => i.Id == internalItem.Id);
     }
 
     [Fact]
@@ -392,16 +419,21 @@ public sealed class KnowledgeIsolationIntegrationTests : IClassFixture<IdentityT
         return (await response.Content.ReadFromJsonAsync<List<KnowledgeItemResponse>>(JsonOptions))!;
     }
 
-    private async Task<List<KnowledgeItemResponse>> ListKnowledgeItemsForProjectAsync(Guid tenantId, Guid projectId)
+    private async Task<List<KnowledgeItemResponse>> ListKnowledgeItemsForProjectAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid actorId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/knowledge");
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/knowledge");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<KnowledgeItemResponse>>(JsonOptions))!;
     }
 
-    private async Task<KnowledgeItemResponse?> GetKnowledgeItemAsync(Guid tenantId, Guid itemId)
+    private async Task<KnowledgeItemResponse?> GetKnowledgeItemAsync(Guid tenantId, Guid itemId, Guid actorId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/knowledge/{itemId}");
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.GetAsync($"/tenants/{tenantId}/knowledge/{itemId}");
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;

@@ -140,22 +140,24 @@ Ordered slices, each one vertical (domain → tests → endpoint → contract):
 
 The twelve labels organize work, not percentage completion. Add sub-slices where required; no M/MVP requirement is deferred merely because it did not fit an earlier label.
 
-### Current implementation status (2026-11-11)
+### Current implementation status (2026-11-20)
+
+Evidence: [docs/mvp-evidence-register.md](mvp-evidence-register.md) (Foundation MVP rows `pass`/`waived`). R1 work is sequenced in [docs/r1-commercial-pilot-backlog.md](r1-commercial-pilot-backlog.md).
 
 | Historical slice | Status | Remaining acceptance |
 | --- | --- | --- |
-| 1 Identity | Implemented prototype | Authentication, effective revocation/project policy, support access |
-| 2 Projects | Implemented prototype | Authorized/audited transitions, initial typed goals/risks, controlled export/deletion, work/lifecycle semantics |
-| 3 Knowledge | Implemented prototype | Creation-time type validation, exact schema pin, state consistency, DB immutability/concurrency |
-| 4 Schemas | Implemented prototype | Authorized administration/discovery and schema contract suite |
-| 5 Relationships | Implemented prototype | Resource policy, DB ownership integrity, concurrency/cardinality verification |
-| 6 Activities | Implemented prototype | Validated revision pins, automatic append-only audit/events, historical reconstruction |
-| 7 Artifacts/evidence | Implemented prototype | Collision-safe immutable objects, real storage tests, shared scanning, evidence-backed verification |
-| 8 Agents/context | Implemented prototype | Enforced credentials/admission/classification, safe replay/execution dedupe, permitted schema/tool discovery |
-| 9 Search | Implemented prototype | Complete SRS traceability/acceptance and hardening exit reviews; tenant-wide Search remains unavailable |
-| 10 Integrations | Implemented prototype | Durable outbox publication, provider-specific webhook security spikes |
-| 11 Audit/Export | Implemented prototype | Portable manifest generation, storage integration, import verification |
-| 12 Reporting | Implemented prototype | Metric projection coverage, evidence review UX in Studio |
+| 1 Identity | MVP exit | Live IdP cutover per [docs/ops/production-oidc-cutover.md](ops/production-oidc-cutover.md) |
+| 2 Projects | MVP exit | — |
+| 3 Knowledge | MVP exit | Classification ceilings proven for Member vs Owner/Admin |
+| 4 Schemas | MVP exit | — |
+| 5 Relationships | MVP exit | — |
+| 6 Activities | MVP exit | REV-007 narrowed to revisions + activities as-of |
+| 7 Artifacts/evidence | MVP exit | — |
+| 8 Agents/context | MVP exit | — |
+| 9 Search | MVP exit | Tenant-wide Search still unavailable (project-scoped only) |
+| 10 Integrations | MVP exit | Provider-specific webhook spikes remain optional |
+| 11 Audit/Export | MVP exit | EXP-004 JSON-LD waived (FUT) |
+| 12 Reporting / OPS | MVP exit | Production-timed backup drill re-record when live host ready |
 
 Slice 9 currently searches current revisions through PostgreSQL full-text search. Search requires
 active Human tenant and project membership before the adapter runs; Owner/Admin can search through

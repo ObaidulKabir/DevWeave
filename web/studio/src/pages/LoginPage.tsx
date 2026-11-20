@@ -1,10 +1,28 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { getEnvTenantId, getLastIdentity } from '../lib/session';
 
 const GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function resolveOidcAuthorizeUrl(): string | null {
+  const authority = (import.meta.env.VITE_OIDC_AUTHORITY as string | undefined)?.trim();
+  if (!authority) return null;
+  const clientId = (import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined)?.trim() || 'devweave-studio';
+  const redirectUri =
+    (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined)?.trim() ||
+    `${window.location.origin}/login`;
+  const audience = (import.meta.env.VITE_OIDC_AUDIENCE as string | undefined)?.trim() || 'devweave-api';
+  const base = authority.endsWith('/') ? authority : `${authority}/`;
+  const url = new URL('authorize', base);
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'openid profile');
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('audience', audience);
+  return url.toString();
+}
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -13,6 +31,7 @@ export function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from;
   const destination = from && from !== '/login' && from !== '/' ? from : '/apps';
 
+  const oidcAuthorizeUrl = useMemo(() => resolveOidcAuthorizeUrl(), []);
   const last = getLastIdentity();
   const [tenantId, setTenantId] = useState(() => last?.tenantId ?? getEnvTenantId() ?? '');
   const [principalId, setPrincipalId] = useState(() => last?.principalId ?? '');
@@ -53,7 +72,9 @@ export function LoginPage() {
           </p>
           <h1 className="mt-6 font-display text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-            Sign in with your tenant and Owner principal to open the applications dashboard.
+            {oidcAuthorizeUrl
+              ? 'Production sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'
+              : 'Development sign-in uses your tenant and Owner principal (pilot JWT). Set VITE_OIDC_AUTHORITY to enable IdP sign-in.'}
             {last?.email || last?.tenantName ? (
               <>
                 {' '}
@@ -75,6 +96,17 @@ export function LoginPage() {
             ) : null}
           </p>
         </div>
+
+        {oidcAuthorizeUrl ? (
+          <div className="mt-8 space-y-4">
+            <a className="btn btn-primary w-full" href={oidcAuthorizeUrl}>
+              Sign in with identity provider
+            </a>
+            <p className="text-center text-xs text-[var(--muted)]">
+              Pilot GUID form remains available below for emergency break-glass only.
+            </p>
+          </div>
+        ) : null}
 
         <form className="mt-8 space-y-4" onSubmit={onSubmit} noValidate>
           <label className="block space-y-1.5">
@@ -118,7 +150,7 @@ export function LoginPage() {
           ) : null}
 
           <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in to dashboard'}
+            {busy ? 'Signing in…' : oidcAuthorizeUrl ? 'Break-glass pilot sign-in' : 'Sign in to dashboard'}
           </button>
         </form>
 

@@ -32,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<ActivateMember>();
         services.AddScoped<RevokeMember>();
         services.AddScoped<ListMembersForTenant>();
+        services.AddScoped<ManageSupportAccess>();
 
         services.AddScoped<CreateProject>();
         services.AddScoped<GetProject>();

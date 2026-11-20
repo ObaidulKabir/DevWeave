@@ -100,6 +100,50 @@ public sealed class ArchiveIntegrationTests : IClassFixture<IdentityTestFactory>
         Assert.Equal(HttpStatusCode.Accepted, exportResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task EXP_001_002_manifest_checksums_match_stored_artifacts_and_import_rejects_unknown_checksums()
+    {
+        var tenant = await CreateTenantAsync("Export Integrity Co");
+        var owner = await CreateOwnerAsync(tenant.Id, "owner@export.test");
+        var client = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "agile", "Agile", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "export-project", profile.Id, owner.Id);
+
+        using var form = new MultipartFormDataContent();
+        var bytes = System.Text.Encoding.UTF8.GetBytes("exportable evidence bytes");
+        var file = new ByteArrayContent(bytes);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
+        form.Add(file, "file", "notes.txt");
+        form.Add(new StringContent("notes.txt"), "key");
+        form.Add(new StringContent("notes.txt"), "fileName");
+        form.Add(new StringContent("text/plain"), "mediaType");
+        form.Add(new StringContent("Internal"), "classification");
+        form.Add(new StringContent(owner.Id.ToString()), "creator");
+
+        using var upload = await client.PostAsync($"/tenants/{tenant.Id}/projects/{project.Id}/artifacts", form);
+        upload.EnsureSuccessStatusCode();
+        using var artifactDoc = JsonDocument.Parse(await upload.Content.ReadAsStringAsync());
+        var checksum = artifactDoc.RootElement.GetProperty("checksum").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(checksum));
+
+        using var manifestResponse = await client.GetAsync($"/tenants/{tenant.Id}/export/manifest");
+        manifestResponse.EnsureSuccessStatusCode();
+        var manifest = (await manifestResponse.Content.ReadFromJsonAsync<ExportManifest>(JsonOptions))!;
+        Assert.Contains(checksum!, manifest.ArtifactChecksums);
+
+        using var goodImport = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/import",
+            new ImportDraft($"checksums:{checksum}", $"import-ok-{Guid.NewGuid():N}"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Accepted, goodImport.StatusCode);
+
+        using var badImport = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/import",
+            new ImportDraft("checksums:sha256:not-present-in-tenant", $"import-bad-{Guid.NewGuid():N}"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, badImport.StatusCode);
+    }
+
     private async Task<TenantResponse> CreateTenantAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync("/tenants", new CreateTenantRequest(name), JsonOptions);

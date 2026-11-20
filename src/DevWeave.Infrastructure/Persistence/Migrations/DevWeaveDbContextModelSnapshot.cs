@@ -1316,6 +1316,41 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("principals", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Identity.SupportAccessGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApproverId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OperatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "OperatorId");
+
+                    b.ToTable("support_access_grants", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Identity.Tenant", b =>
                 {
                     b.Property<Guid>("Id")

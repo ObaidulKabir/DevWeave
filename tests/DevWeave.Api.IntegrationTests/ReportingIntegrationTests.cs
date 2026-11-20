@@ -57,6 +57,12 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         var metrics = (await metricsResponse.Content.ReadFromJsonAsync<List<MetricView>>(JsonOptions))!;
         Assert.NotEmpty(metrics);
         Assert.Contains(metrics, m => m.Key == "knowledge.total_items" && m.Value == 1);
+        Assert.Contains(metrics, m => m.Key == "work.planned_count");
+        Assert.Contains(metrics, m => m.Key == "work.reported_completed_count");
+        Assert.Contains(metrics, m => m.Key == "work.verified_count");
+        var estimate = Assert.Single(metrics, m => m.Key == "work.completion_estimate");
+        Assert.True(estimate.IsEstimate);
+        Assert.Equal("1.0", estimate.DefinitionVersion);
 
         // 4. Generate Report (REP-002)
         var reportDraft = new ReportDraft("Quarterly Review");

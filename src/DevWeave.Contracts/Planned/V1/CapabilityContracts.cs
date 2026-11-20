@@ -35,8 +35,15 @@ public sealed record IngressEnvelope(string ProviderEventId, DateTimeOffset Sent
     string SchemaVersion, string MetadataJson);
 public sealed record ExportManifest(Guid TenantId, string FormatVersion, DateTimeOffset CreatedAt,
     IReadOnlyList<ResourceRef> Revisions, IReadOnlyList<string> ArtifactChecksums);
-public sealed record MetricView(string Key, decimal Value, string Unit, string DefinitionVersion,
-    DateTimeOffset CalculatedAt, string IncludedPopulation, string ExcludedPopulation);
+public sealed record MetricView(
+    string Key,
+    decimal Value,
+    string Unit,
+    string DefinitionVersion,
+    DateTimeOffset CalculatedAt,
+    string IncludedPopulation,
+    string ExcludedPopulation,
+    bool IsEstimate = false);
 public sealed record ApplicationDraft(string Key, string Version, string LifecycleState,
     IReadOnlyList<string> DeclaredCapabilities);
 public sealed record AnnotationDraft(ResourceRef Target, string Text, string Classification);

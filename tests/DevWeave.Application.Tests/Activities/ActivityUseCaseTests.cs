@@ -172,6 +172,35 @@ public sealed class ActivityUseCaseTests
     }
 
     [Fact]
+    public async Task REV_007_reconstruct_filters_activities_started_after_asOf()
+    {
+        var fakes = CreateFakes();
+        var tenant = Tenant.Create("Alpha Corp");
+        var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
+        var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
+
+        var early = Activity.Create(
+            tenant.Id, project.Id, ActivityType.Generated, actor.Id, "early",
+            ActivityStatus.Completed, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), null, null, null,
+            Array.Empty<ActivityInput>(), Array.Empty<ActivityOutput>());
+        var late = Activity.Create(
+            tenant.Id, project.Id, ActivityType.Generated, actor.Id, "late",
+            ActivityStatus.Completed, new DateTimeOffset(2026, 1, 3, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 1, 3, 0, 0, 0, TimeSpan.Zero), null, null, null,
+            Array.Empty<ActivityInput>(), Array.Empty<ActivityOutput>());
+        await fakes.Activities.AddAsync(early);
+        await fakes.Activities.AddAsync(late);
+
+        var asOf = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
+        var result = await new ReconstructProjectState(fakes.Activities, fakes.Items, fakes.Revisions)
+            .ExecuteAsync(tenant.Id, project.Id, asOf);
+
+        Assert.Single(result.Activities);
+        Assert.Equal(early.Id, result.Activities[0].Id);
+    }
+
+    [Fact]
     public async Task PROV_O_export_projects_activity_agent_used_and_generated()
     {
         var fakes = CreateFakes();

@@ -26,7 +26,7 @@ export function ReportsPage() {
     <>
       <Panel
         title="Reporting"
-        subtitle="Owner metrics and audited report generation (RPT / UI-01)."
+        subtitle="Reproducible owner metrics (RPT-001..003) and audited report generation (UI-01). Estimates stay labeled separately from measured values (RPT-006)."
         actions={
           <button className="btn btn-primary" disabled={!live || busy} onClick={() => setConfirm(true)}>
             Generate report
@@ -40,12 +40,20 @@ export function ReportsPage() {
             ) : (
               metrics.map((metric) => (
                 <article key={metric.key} className="rounded-xl border border-[var(--line)] bg-white/70 p-4">
-                  <p className="text-sm text-[var(--muted)]">{metric.key}</p>
+                  <p className="text-sm text-[var(--muted)]">
+                    {metric.key}
+                    {metric.isEstimate ? (
+                      <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                        Estimate
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="mt-2 font-display text-3xl font-bold">
                     {metric.value}
                     <span className="ml-2 text-sm font-normal text-[var(--muted)]">{metric.unit}</span>
                   </p>
                   <p className="mt-2 text-xs text-[var(--muted)]">
+                    {metric.definitionVersion ? `def ${metric.definitionVersion} · ` : ''}
                     {metric.includedPopulation}
                     {metric.calculatedAt ? ` · ${formatWhen(metric.calculatedAt)}` : ''}
                   </p>

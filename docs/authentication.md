@@ -18,7 +18,8 @@ Configure these values per environment:
 
 Production startup fails if the OIDC authority/audience are missing or if the agent signing key is
 missing, too short, or still contains the development placeholder marker. Supply secrets through the
-deployment secret manager rather than editing `appsettings.json`.
+deployment secret manager rather than editing `appsettings.json`. Cutover steps:
+[docs/ops/production-oidc-cutover.md](ops/production-oidc-cutover.md).
 
 The OIDC provider must map these DevWeave identity claims into its access token:
 

@@ -308,7 +308,10 @@ export function KnowledgePage() {
           <p className="mt-1 leading-relaxed">
             A successful <code className="font-mono text-xs">propose_initial_plan</code> call stores a proposal; it
             does not publish Knowledge or Work until approval. Review it under{' '}
-            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>, not Coordination.
+            <Link className="font-semibold underline" to="/plan-import">Plan import</Link>. Messages on a
+            coordination channel (even if typed Knowledge / Relations / Work) stay on{' '}
+            <Link className="font-semibold underline" to="/coordination">Coordination</Link> until an Owner
+            approves a plan import.
           </p>
         </section>
       ) : null}

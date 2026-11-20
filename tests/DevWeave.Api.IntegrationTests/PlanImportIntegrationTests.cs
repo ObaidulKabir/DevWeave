@@ -40,8 +40,7 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             new { name = "propose_initial_plan", arguments = bundle }));
         Assert.Equal(HttpStatusCode.OK, propose.StatusCode);
         using var proposeDoc = await propose.Content.ReadFromJsonAsync<JsonDocument>();
-        Assert.Equal(JsonValueKind.Null, proposeDoc!.RootElement.GetProperty("error").ValueKind);
-        var proposalId = proposeDoc.RootElement.GetProperty("result").GetProperty("id").GetGuid();
+        var proposalId = McpJson.Payload(proposeDoc!.RootElement).GetProperty("id").GetGuid();
 
         using var ownerClient = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
         var basePath = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals";
@@ -155,24 +154,36 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
 
         var schemas = await CallAsync(planner, 5, McpMethods.CallTool,
             new { name = "list_schemas", arguments = new { } });
+        McpJson.AssertCallToolResult(schemas);
         Assert.Contains(
-            schemas.GetProperty("result").EnumerateArray(),
+            McpJson.Payload(schemas).GetProperty("schemas").EnumerateArray(),
             schema => schema.GetProperty("typeId").GetString() == "doc.note" &&
                       schema.GetProperty("schemaVersion").GetString() == "1.0");
 
         var relationTypes = await CallAsync(planner, 6, McpMethods.CallTool,
             new { name = "list_relation_types", arguments = new { } });
+        McpJson.AssertCallToolResult(relationTypes);
         Assert.Contains(
-            relationTypes.GetProperty("result").EnumerateArray(),
+            McpJson.Payload(relationTypes).GetProperty("relationTypes").EnumerateArray(),
             relation => relation.GetProperty("code").GetString() == relationCode);
 
         var channels = await CallAsync(executor, 7, McpMethods.CallTool,
             new { name = "list_channels", arguments = new { } });
+        McpJson.AssertCallToolResult(channels);
+        Assert.Equal(JsonValueKind.Object, channels.GetProperty("result").ValueKind);
         Assert.Contains(
-            channels.GetProperty("result").EnumerateArray(),
+            channels.GetProperty("result").GetProperty("channels").EnumerateArray(),
+            channel => channel.GetProperty("id").GetGuid() == channelId);
+        Assert.Contains(
+            McpJson.Payload(channels).GetProperty("channels").EnumerateArray(),
             channel => channel.GetProperty("id").GetGuid() == channelId);
 
-        var refused = await CallAsync(planner, 8, McpMethods.CallTool,
+        var messages = await CallAsync(executor, 8, McpMethods.CallTool,
+            new { name = "list_messages", arguments = new { channelId, afterSequence = 0, limit = 10 } });
+        McpJson.AssertCallToolResult(messages);
+        Assert.Equal(JsonValueKind.Array, McpJson.Payload(messages).GetProperty("messages").ValueKind);
+
+        var refused = await CallAsync(planner, 9, McpMethods.CallTool,
             new { name = "list_channels", arguments = new { } });
         Assert.Equal(-32003, refused.GetProperty("error").GetProperty("code").GetInt32());
 

@@ -166,12 +166,11 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
         Assert.Contains("propose_spec_decision", listed);
 
         using var resolved = await CallAsync(2, "resolve_spec", new { topic = "backend.language" });
-        Assert.Equal(JsonValueKind.Null, resolved.RootElement.GetProperty("error").ValueKind);
-        var binding = resolved.RootElement.GetProperty("result").GetProperty("binding");
+        var binding = McpJson.Payload(resolved.RootElement).GetProperty("binding");
         Assert.Equal("csharp", binding.GetProperty("choice").GetString());
 
         using var effective = await CallAsync(3, "get_effective_spec", new { });
-        Assert.Equal(0, effective.RootElement.GetProperty("result").GetProperty("undecidedTopics").GetArrayLength());
+        Assert.Equal(0, McpJson.Payload(effective.RootElement).GetProperty("undecidedTopics").GetArrayLength());
 
         using var bad = await CallAsync(4, "propose_spec_decision",
             new { topic = "db.engine", level = "project", choice = "oracle" });
@@ -179,11 +178,11 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
 
         using var good = await CallAsync(5, "propose_spec_decision",
             new { topic = "db.engine", level = "project", choice = "postgresql", @params = new { majorVersion = 17 } });
-        Assert.Equal(JsonValueKind.Null, good.RootElement.GetProperty("error").ValueKind);
+        McpJson.AssertNoError(good.RootElement);
 
         // A proposal from an agent never binds until a human approves it.
         using var after = await CallAsync(6, "resolve_spec", new { topic = "db.engine" });
-        Assert.Equal("predefined", after.RootElement.GetProperty("result").GetProperty("origin").GetString());
+        Assert.Equal("predefined", McpJson.Payload(after.RootElement).GetProperty("origin").GetString());
     }
 
     private const string Overlay = """
@@ -323,24 +322,24 @@ public sealed class SpecificationIntegrationTests : IClassFixture<IdentityTestFa
         }
 
         using var catalog = await CallAsync(1, "get_spec_catalog", new { });
-        Assert.Equal(JsonValueKind.Null, catalog.RootElement.GetProperty("error").ValueKind);
-        Assert.True(catalog.RootElement.GetProperty("result").GetProperty("topics").GetArrayLength() >= 10);
+        Assert.True(McpJson.Payload(catalog.RootElement).GetProperty("topics").GetArrayLength() >= 10);
 
         using var options = await CallAsync(2, "list_spec_options", new { topic = "backend.framework" });
-        var first = options.RootElement.GetProperty("result").GetProperty("options")[0];
+        var first = McpJson.Payload(options.RootElement).GetProperty("options")[0];
         Assert.Equal("aspnet-core", first.GetProperty("choice").GetProperty("id").GetString());
         Assert.True(first.GetProperty("recommended").GetBoolean());
 
         using var open = await CallAsync(3, "next_open_topics", new { });
-        Assert.Equal(JsonValueKind.Null, open.RootElement.GetProperty("error").ValueKind);
+        McpJson.AssertCallToolResult(open.RootElement);
+        Assert.Equal(JsonValueKind.Array, McpJson.Payload(open.RootElement).GetProperty("topics").ValueKind);
 
         using var overlay = await CallAsync(4, "propose_spec_overlay",
             new { overlay = JsonDocument.Parse(Overlay).RootElement, rationale = "Release rules" });
-        Assert.Equal(JsonValueKind.Null, overlay.RootElement.GetProperty("error").ValueKind);
+        McpJson.AssertNoError(overlay.RootElement);
 
         // The agent's proposal does not extend the catalog until a person approves it.
         using var after = await CallAsync(5, "list_spec_topics", new { });
-        Assert.DoesNotContain(after.RootElement.GetProperty("result").EnumerateArray(),
+        Assert.DoesNotContain(McpJson.Payload(after.RootElement).GetProperty("topics").EnumerateArray(),
             t => t.GetProperty("id").GetString() == "acme.release-window");
 
         using var bad = await CallAsync(6, "propose_spec_overlay",

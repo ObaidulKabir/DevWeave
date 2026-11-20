@@ -32,6 +32,7 @@ public static class McpToolAuthorization
         ["send_project_message"] = [AgentCapability.ExecuteWorkflow],
         ["send_message"] = [AgentCapability.ExecuteWorkflow],
         ["read_messages_after_cursor"] = [AgentCapability.ExecuteWorkflow],
+        ["list_messages"] = [AgentCapability.ExecuteWorkflow],
         ["acknowledge_messages"] = [AgentCapability.ExecuteWorkflow],
         ["open_channel"] = [AgentCapability.ExecuteWorkflow],
         ["list_channels"] = [AgentCapability.ExecuteWorkflow],

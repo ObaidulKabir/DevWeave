@@ -4,9 +4,19 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { formatWhen, shortId } from '../lib/format';
 import { campaignsStillOnOlderPlan } from '../lib/plan';
-import type { Campaign, PlanBaselineSummary, PlanStatus } from '../lib/types';
+import type { Campaign, CoordinationChannel, PlanBaselineSummary, PlanStatus } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
+
+function asChannelList(payload: unknown): CoordinationChannel[] {
+  if (Array.isArray(payload)) return payload as CoordinationChannel[];
+  if (payload && typeof payload === 'object') {
+    const record = payload as { channels?: CoordinationChannel[]; items?: CoordinationChannel[] };
+    return record.channels ?? record.items ?? [];
+  }
+  return [];
+}
 
 export function CoordinationPage() {
   const { tenantId, project, live, busy, run, campaigns, mcp, setCampaigns, refresh } = useWorkspace();
@@ -20,6 +30,7 @@ export function CoordinationPage() {
   const [confirmStart, setConfirmStart] = useState(false);
   const [baselines, setBaselines] = useState<PlanBaselineSummary[]>([]);
   const [planStatus, setPlanStatus] = useState<PlanStatus | null>(null);
+  const [channels, setChannels] = useState<CoordinationChannel[]>([]);
 
   const base = tenantId && project ? `/tenants/${tenantId}/projects/${project.id}/coordination` : undefined;
 
@@ -27,20 +38,24 @@ export function CoordinationPage() {
     if (!base) {
       setBaselines([]);
       setPlanStatus(null);
+      setChannels([]);
       return;
     }
     try {
-      const [list, status] = await Promise.all([
+      const [list, status, channelPayload] = await Promise.all([
         apiFetch<PlanBaselineSummary[]>(`${base}/baselines`),
         apiFetch<PlanStatus>(`${base}/plan-status`),
+        apiFetch<unknown>(`${base}/channels`).catch(() => []),
       ]);
       const safeList = Array.isArray(list) ? list : [];
       setBaselines(safeList);
       setPlanStatus(status && Array.isArray(status.campaigns) ? status : null);
+      setChannels(asChannelList(channelPayload));
       setForm((current) => (current.baselineId ? current : { ...current, baselineId: safeList[0]?.id ?? '' }));
     } catch {
       setBaselines([]);
       setPlanStatus(null);
+      setChannels([]);
     }
   }, [base]);
 
@@ -172,6 +187,31 @@ export function CoordinationPage() {
             )}
             <Link className="btn btn-ghost inline-flex text-xs" to="/plan-versions">Open Plan versions →</Link>
           </div>
+        </Panel>
+
+        <Panel
+          title="Channels"
+          subtitle="Durable agent messages. Knowledge/Relations/Work payloads here are logs, not published plan records."
+          actions={
+            <Link className="text-xs font-semibold text-[var(--signal)] hover:underline" to="/live">
+              Live operations →
+            </Link>
+          }
+        >
+          {channels.length === 0 ? (
+            <EmptyState label="No coordination channels yet. Execution agents create them with open_channel." />
+          ) : (
+            <div className="divide-y divide-[var(--line)]">
+              {channels.map((channel) => (
+                <Row
+                  key={channel.id}
+                  title={`${channel.channelType} · ${shortId(channel.id)}`}
+                  subtitle={`${channel.sequenceHighWatermark} messages · ${formatWhen(channel.createdAt)}`}
+                  meta={<StateBadge value={channel.visibility} />}
+                />
+              ))}
+            </div>
+          )}
         </Panel>
 
         <Panel title="Project MCP" subtitle="Mandatory agent-to-platform coordination interface.">

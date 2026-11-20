@@ -11,8 +11,12 @@ public record JsonRpcRequest(
 public record JsonRpcResponse(
     [property: JsonPropertyName("jsonrpc")] string JsonRpc,
     [property: JsonPropertyName("id")] object Id,
-    [property: JsonPropertyName("result")] object? Result,
-    [property: JsonPropertyName("error")] JsonRpcError? Error);
+    [property: JsonPropertyName("result")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    object? Result,
+    [property: JsonPropertyName("error")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    JsonRpcError? Error);
 
 public record JsonRpcError(
     [property: JsonPropertyName("code")] int Code,

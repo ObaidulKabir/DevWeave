@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
@@ -71,7 +72,12 @@ public sealed class McpServer
         _schemas = schemas;
         _relationTypes = relationTypes;
         _logger = logger;
-        _options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        _options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
     }
 
     public async Task<JsonRpcResponse> HandleRequestAsync(
@@ -178,6 +184,9 @@ public sealed class McpServer
             new { channelId = UuidProp(), messageType = StringProp(), payload = new { type = "object" }, idempotencyKey = StringProp() },
             new[] { "channelId", "messageType", "payload", "idempotencyKey" }),
         NamedTool("read_messages_after_cursor", "Replay durable channel messages after a sequence cursor",
+            new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
+            new[] { "channelId" }),
+        NamedTool("list_messages", "Alias of read_messages_after_cursor: list durable messages on a channel after a sequence cursor",
             new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
             new[] { "channelId" }),
         NamedTool("acknowledge_messages", "Acknowledge processed channel sequence for reconnect recovery",
@@ -319,10 +328,10 @@ public sealed class McpServer
         await McpToolAuthorization.EnsureCanCallAsync(
             _grants, scope.TenantId, scope.ProjectId, scope.ActorId, name, ct);
 
-        return name switch
+        object payload = name switch
         {
             "send_project_message" or "send_message" => await SendFromArgsAsync(scope, runtimeId, args, ct),
-            "read_messages_after_cursor" => await ReplayFromArgsAsync(scope, args, ct),
+            "read_messages_after_cursor" or "list_messages" => await ReplayFromArgsAsync(scope, args, ct),
             "acknowledge_messages" => await AckFromArgsAsync(scope, args, ct),
             "open_channel" => await OpenChannelFromArgsAsync(scope, args, ct),
             "list_channels" => await ListChannelsAsync(scope, ct),
@@ -331,7 +340,11 @@ public sealed class McpServer
             "request_assignment" => await AcquireLeaseFromArgsAsync(scope, runtimeId, args, ct),
             "list_ready_work" or "create_work_package" => await CreatePackageFromArgsAsync(scope, args, ct),
             "get_plan_status" => await _status.GetPlanStatusAsync(scope, ct),
-            "list_work_packages" => await _status.ListWorkPackagesAsync(scope, args.GetProperty("campaignId").GetGuid(), ct),
+            "list_work_packages" => new
+            {
+                workPackages = await _status.ListWorkPackagesAsync(
+                    scope, args.GetProperty("campaignId").GetGuid(), ct),
+            },
             "get_work_status" => await _status.GetWorkStatusAsync(scope, args.GetProperty("workPackageId").GetGuid(), ct),
             "release_lease" => await ReleaseLeaseFromArgsAsync(scope, args, ct),
             "submit_change_set" => await SubmitChangeSetFromArgsAsync(scope, args, ct),
@@ -356,74 +369,94 @@ public sealed class McpServer
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
-            "list_spec_topics" => (await _specs.CatalogAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct))
-                .Topics.Select(SpecProjection.Topic).ToArray(),
+            "list_spec_topics" => new
+            {
+                topics = (await _specs.CatalogAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct))
+                    .Topics.Select(SpecProjection.Topic).ToArray(),
+            },
             "get_spec_catalog" => SpecProjection.Catalog(await _specs.CatalogAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
             "list_spec_options" => SpecProjection.Options(await _specs.OptionsAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
-            "next_open_topics" => SpecProjection.OpenTopics(await _specs.OpenTopicsAsync(
-                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "next_open_topics" => new
+            {
+                topics = SpecProjection.OpenTopics(await _specs.OpenTopicsAsync(
+                    scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            },
             "propose_spec_overlay" => await ProposeOverlayFromArgsAsync(scope, args, ct),
             "propose_spec_profile" => await ProposeBundleFromArgsAsync(scope, args, ct),
-            "get_spec_pack_upgrades" => SpecProjection.Upgrades(await _specs.UpgradesAsync(
-                scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            "get_spec_pack_upgrades" => new
+            {
+                upgrades = SpecProjection.Upgrades(await _specs.UpgradesAsync(
+                    scope.TenantId, scope.ProjectId!, scope.ActorId, ct)),
+            },
             "propose_spec_decision" => await ProposeSpecFromArgsAsync(scope, args, ct),
             _ => throw new InvalidOperationException($"Unknown tool: {name}")
         };
+        return ToCallToolResult(payload);
     }
 
     private async Task<object> ListChannelsAsync(AuthorizedScope scope, CancellationToken ct)
     {
         var channels = await _coordination.ListChannelsByProjectAsync(scope.TenantId, scope.ProjectId!, ct);
-        return channels
-            .OrderByDescending(channel => channel.CreatedAt)
-            .Select(channel => new
-            {
-                id = channel.Id.Value,
-                campaignId = channel.CampaignId?.Value,
-                workPackageId = channel.WorkPackageId?.Value,
-                channelType = channel.ChannelType,
-                visibility = channel.Visibility,
-                sequenceHighWatermark = channel.SequenceHighWatermark,
-                createdAt = channel.CreatedAt,
-            })
-            .ToArray();
+        return new
+        {
+            channels = channels
+                .OrderByDescending(channel => channel.CreatedAt)
+                .Select(channel => new
+                {
+                    id = channel.Id.Value,
+                    type = channel.ChannelType,
+                    campaignId = channel.CampaignId?.Value,
+                    workPackageId = channel.WorkPackageId?.Value,
+                    channelType = channel.ChannelType,
+                    visibility = channel.Visibility,
+                    sequenceHighWatermark = channel.SequenceHighWatermark,
+                    createdAt = channel.CreatedAt,
+                })
+                .ToArray(),
+        };
     }
 
     private async Task<object> ListSchemasAsync(CancellationToken ct)
     {
         var schemas = await _schemas.ListAsync(ct);
-        return schemas
-            .Where(schema => schema.IsActive)
-            .OrderBy(schema => schema.Namespace, StringComparer.Ordinal)
-            .ThenBy(schema => schema.Version, StringComparer.Ordinal)
-            .Select(schema => new
-            {
-                id = schema.Id.Value,
-                typeId = schema.Namespace,
-                schemaVersion = schema.Version,
-                schema.Description,
-            })
-            .ToArray();
+        return new
+        {
+            schemas = schemas
+                .Where(schema => schema.IsActive)
+                .OrderBy(schema => schema.Namespace, StringComparer.Ordinal)
+                .ThenBy(schema => schema.Version, StringComparer.Ordinal)
+                .Select(schema => new
+                {
+                    id = schema.Id.Value,
+                    typeId = schema.Namespace,
+                    schemaVersion = schema.Version,
+                    schema.Description,
+                })
+                .ToArray(),
+        };
     }
 
     private async Task<object> ListRelationTypesAsync(CancellationToken ct)
     {
         var types = await _relationTypes.ListActiveAsync(ct);
-        return types
-            .OrderBy(type => type.Code, StringComparer.Ordinal)
-            .Select(type => new
-            {
-                id = type.Id.Value,
-                type.Code,
-                type.Name,
-                allowedSourceTypeIds = type.AllowedSourceTypeIds,
-                allowedTargetTypeIds = type.AllowedTargetTypeIds,
-                direction = type.Direction.ToString(),
-                cardinality = type.Cardinality.ToString(),
-            })
-            .ToArray();
+        return new
+        {
+            relationTypes = types
+                .OrderBy(type => type.Code, StringComparer.Ordinal)
+                .Select(type => new
+                {
+                    id = type.Id.Value,
+                    type.Code,
+                    type.Name,
+                    allowedSourceTypeIds = type.AllowedSourceTypeIds,
+                    allowedTargetTypeIds = type.AllowedTargetTypeIds,
+                    direction = type.Direction.ToString(),
+                    cardinality = type.Cardinality.ToString(),
+                })
+                .ToArray(),
+        };
     }
 
     private async Task<object> ProposeInitialPlanFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
@@ -517,7 +550,7 @@ public sealed class McpServer
         var channelId = doc.RootElement.GetProperty("channelId").GetGuid();
         var after = doc.RootElement.TryGetProperty("afterSequence", out var afterEl) ? afterEl.GetInt64() : 0L;
         var limit = doc.RootElement.TryGetProperty("limit", out var limitEl) ? limitEl.GetInt32() : 50;
-        return await _channels.ReplayAsync(scope, channelId, after, limit, ct);
+        return MessagePage(await _channels.ReplayAsync(scope, channelId, after, limit, ct));
     }
 
     private async Task<object> SendFromArgsAsync(AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)
@@ -538,8 +571,15 @@ public sealed class McpServer
         var channelId = args.GetProperty("channelId").GetGuid();
         var after = args.TryGetProperty("afterSequence", out var afterEl) ? afterEl.GetInt64() : 0L;
         var limit = args.TryGetProperty("limit", out var limitEl) ? limitEl.GetInt32() : 50;
-        return await _channels.ReplayAsync(scope, channelId, after, Math.Clamp(limit, 1, 200), ct);
+        return MessagePage(await _channels.ReplayAsync(scope, channelId, after, Math.Clamp(limit, 1, 200), ct));
     }
+
+    private static object MessagePage(Page<MessageView> page) => new
+    {
+        messages = page.Items,
+        items = page.Items,
+        nextCursor = page.NextCursor,
+    };
 
     private async Task<object> AckFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
     {
@@ -715,4 +755,59 @@ public sealed class McpServer
 
     private static object UuidProp() => new { type = "string", format = "uuid" };
     private static object StringProp() => new { type = "string" };
+
+    /// <summary>
+    /// MCP tools/call must return a CallToolResult object. JSON-RPC <c>result</c> cannot be a
+    /// JSON array; <c>structuredContent</c> also has to be an object. Named payload fields are
+    /// copied onto <c>result</c> so clients that read <c>result.channels</c> (instead of
+    /// <c>result.structuredContent.channels</c>) still work.
+    /// </summary>
+    private object ToCallToolResult(object payload)
+    {
+        var structured = EnsureStructuredObject(payload);
+        var json = JsonSerializer.SerializeToElement(structured, _options);
+        var result = new Dictionary<string, object?>
+        {
+            ["content"] = new object[]
+            {
+                new { type = "text", text = json.GetRawText() },
+            },
+            ["structuredContent"] = structured,
+            ["isError"] = false,
+        };
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in json.EnumerateObject())
+            {
+                if (property.Name is "content" or "structuredContent" or "isError")
+                    continue;
+                result[property.Name] = property.Value.Clone();
+            }
+        }
+
+        return result;
+    }
+
+    private static object EnsureStructuredObject(object payload)
+    {
+        switch (payload)
+        {
+            case JsonElement { ValueKind: JsonValueKind.Object }:
+                return payload;
+            case JsonElement { ValueKind: JsonValueKind.Array } array:
+                return new { items = array };
+            case JsonElement other:
+                return new { value = other };
+            case string text:
+                return new { value = text };
+            case IDictionary:
+                return payload;
+            case Array array:
+                return new { items = array };
+            case System.Collections.IEnumerable enumerable:
+                return new { items = enumerable };
+            default:
+                return payload;
+        }
+    }
 }

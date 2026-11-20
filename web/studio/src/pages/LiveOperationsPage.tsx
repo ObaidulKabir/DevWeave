@@ -70,11 +70,17 @@ function isActiveRuntime(runtime: Runtime, now: number): boolean {
   return Number.isFinite(hb) && now - hb < 90_000;
 }
 
-function pageItems<T>(payload: unknown): T[] {
+function pageItems<T>(payload: unknown, preferredKey?: string): T[] {
   if (Array.isArray(payload)) return payload as T[];
   if (payload && typeof payload === 'object') {
-    const record = payload as { items?: T[]; Items?: T[] };
-    return record.items ?? record.Items ?? [];
+    const record = payload as Record<string, unknown>;
+    const keys = preferredKey
+      ? [preferredKey, 'items', 'Items']
+      : ['items', 'Items'];
+    for (const key of keys) {
+      const value = record[key];
+      if (Array.isArray(value)) return value as T[];
+    }
   }
   return [];
 }
@@ -125,8 +131,8 @@ export function LiveOperationsPage() {
         ),
       ]);
 
-      const packages = packageBatches.flatMap((batch) => pageItems<WorkPackageStatus>(batch));
-      const channelList = pageItems<CoordinationChannel>(channels);
+      const packages = packageBatches.flatMap((batch) => pageItems<WorkPackageStatus>(batch, 'workPackages'));
+      const channelList = pageItems<CoordinationChannel>(channels, 'channels');
 
       const messagePages = await Promise.all(
         channelList
@@ -138,7 +144,7 @@ export function LiveOperationsPage() {
               `${base}/channels/${ch.id}/messages?afterSequence=${after}&limit=${MESSAGE_TAIL}`,
               null,
             );
-            return pageItems<CoordinationMessage>(page);
+            return pageItems<CoordinationMessage>(page, 'messages');
           }),
       );
 

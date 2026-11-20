@@ -69,14 +69,27 @@ Example call:
 
 ## 3. Empty project bootstrap (planning agent)
 
-When the remote project outline is empty (new app, or an existing codebase with no prior DevWeave knowledge):
+When `read_plan_outline` is empty (new app, or an existing codebase with no prior DevWeave knowledge):
 
-1. Design offline from the local repo (do **not** upload source).
-2. Call `propose_initial_plan` with an idempotent bundle: `knowledge[]`, `outline[]` (exactly one root with
-   `parentRef: null`), optional `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`.
-3. Defaults: `requireEmptyProject: true`. Tool success only stores a proposal; nothing is materialised yet.
-4. Ask the Owner to open Studio → **Plan import**, review the immutable payload, and **Approve**.
-5. After approval, `read_plan_outline` shows the published tree. Continue with `propose_plan_expansion` /
+1. Design offline from the local repo. Do **not** upload source. Do **not** `send_project_message`
+   Knowledge / Relations / Work payloads — those are Coordination logs and never appear on the
+   Knowledge, Relations, or Work tabs.
+2. Call `list_schemas`. Copy each item's `typeId` and `schemaVersion`. If `schemas` is empty, **stop**:
+   an Owner must register and publish at least one schema (for example `plan.goal`, `plan.requirement`,
+   `doc.note`). Agents cannot register schemas.
+3. If you will submit relations, call `list_relation_types` and use an active `code` as
+   `relationTypeCode`. `sourceRef` and `targetRef` must be knowledge `ref` values from this bundle,
+   not file paths.
+4. Call `propose_initial_plan` with a stable `idempotencyKey`, `requireEmptyProject: true` (default),
+   `knowledge[]`, and `outline[]` with **exactly one** root (`parentRef: null`). Optional:
+   `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`.
+   Each knowledge draft needs `ref`, `key`, `title`, `typeId`, `schemaVersion`, `classification`,
+   `representationKind` (not `SourceCode`), `content`, and `reason`. Work `priority` is
+   `Low` / `Normal` / `High` / `Critical`. `workLinks.knowledgeRef` must be in the outline.
+5. Tool success stores status `Proposed` and returns `id`. Nothing is materialised yet.
+6. Ask the Owner to open Studio → **Plan import**, review the immutable payload, and **Approve and
+   materialize**. You cannot approve your own proposal.
+7. After approval, `read_plan_outline` shows the published tree. Continue with `propose_plan_expansion` /
    `propose_spec_*` for incremental changes.
 
 Do not look for a submitted bundle under **Coordination**. Coordination contains execution channels,
@@ -125,7 +138,7 @@ stop and follow section 6.
 | Tool | Use it to | Key arguments |
 | --- | --- | --- |
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
-| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import) | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
+| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
 | `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import | none |
 | `list_relation_types` | Discover active relation codes, endpoint constraints, direction and cardinality | none |

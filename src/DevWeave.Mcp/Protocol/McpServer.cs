@@ -128,7 +128,7 @@ public sealed class McpServer
         serverInfo = new
         {
             name = "DevWeave-Coordination-Plane",
-            version = "1.1.0"
+            version = "1.2.0"
         },
         // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
         instructions =
@@ -143,7 +143,18 @@ public sealed class McpServer
             "Production humans authenticate via OIDC; agents use issued credentials and active project grants. " +
             "Use a Planning agent (ReadKnowledge/WriteKnowledge) for propose_initial_plan and design tools; " +
             "use an Execution agent (ExecuteWorkflow) for leases and change sets. " +
-            "Platform support access to tenant data requires a time-bounded TEN-009 grant (no standing access)."
+            "Platform support access to tenant data requires a time-bounded TEN-009 grant (no standing access). " +
+            "Empty-project Knowledge, Relations, outline, and Work are published only through propose_initial_plan " +
+            "plus Owner approval in Studio Plan import. send_project_message is a Coordination log and never " +
+            "materializes those tabs. Procedure: (1) read_plan_outline — if empty, import here; " +
+            "(2) list_schemas and copy typeId plus schemaVersion from an active published schema — if schemas is " +
+            "empty, stop and ask the Owner to register and publish schemas (agents cannot); " +
+            "(3) list_relation_types when submitting relations — use an active code; sourceRef and targetRef must " +
+            "be knowledge refs from this bundle, never file paths; " +
+            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], and " +
+            "outline[] with exactly one root (parentRef null); " +
+            "(5) success returns status Proposed — ask the Owner to Approve and materialize. You cannot approve " +
+            "your own proposal. After approval, use propose_plan_expansion for incremental children."
     };
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
@@ -180,7 +191,7 @@ public sealed class McpServer
 
     private static (string Name, object Descriptor)[] AllTools() =>
     [
-        NamedTool("send_project_message", "Send a durable coordination message to a channel",
+        NamedTool("send_project_message", "Send a durable coordination log to a channel. Does not create Knowledge, Relations, Work, or a Plan import proposal. Empty-project design must use propose_initial_plan on a Planning agent instead.",
             new { channelId = UuidProp(), messageType = StringProp(), payload = new { type = "object" }, idempotencyKey = StringProp() },
             new[] { "channelId", "messageType", "payload", "idempotencyKey" }),
         NamedTool("read_messages_after_cursor", "Replay durable channel messages after a sequence cursor",
@@ -258,27 +269,99 @@ public sealed class McpServer
         NamedTool("get_plan_baseline", "Describe a locked plan baseline as an export-style manifest (stable revision ids). Artifact checksum integrity is enforced on tenant export/import paths; do not invent checksums",
             new { baselineId = UuidProp() },
             new[] { "baselineId" }),
-        NamedTool("read_plan_outline", "Read the project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored)",
+        NamedTool("read_plan_outline", "Read the published project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored). If the outline is empty, submit design with propose_initial_plan — do not post it on Coordination.",
             new { }, Array.Empty<string>()),
-        NamedTool("propose_plan_expansion", "Submit a child Knowledge idea for human review; does not create or approve an item. Requires WriteKnowledge grant within your classification ceiling",
+        NamedTool("propose_plan_expansion", "Submit a child Knowledge idea under an already published parent for human review on Plan outline. Does not create or approve an item. Use propose_initial_plan instead when the project outline is empty. Requires WriteKnowledge grant within your classification ceiling",
             new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
             new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
-        NamedTool("propose_initial_plan", "Submit a full plan bundle (knowledge, outline, relations, milestones, work) for Owner approval. Use on empty projects or when importing design from a desktop agent. Does not materialize until a human approves in Studio. Requires WriteKnowledge",
+        NamedTool("propose_initial_plan",
+            "Publish a Knowledge/outline/Relations/Work bundle for Owner approval. This is the only MCP path that can populate those Studio tabs. send_project_message never creates plan records. " +
+            "Procedure: call read_plan_outline (empty tree => import here); call list_schemas and copy typeId/schemaVersion (if schemas is empty, stop — the Owner must publish schemas); call list_relation_types for relationTypeCode if you include relations (endpoints must be knowledge refs, not file paths); call this tool; then tell the Owner to open Studio → Plan import → Approve and materialize. Success returns id with status Proposed. You cannot approve your own proposal. Default requireEmptyProject is true. " +
+            "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Requires WriteKnowledge on a Planning agent.",
             new
             {
-                idempotencyKey = StringProp(),
-                requireEmptyProject = new { type = "boolean" },
-                knowledge = new { type = "array", items = new { type = "object" } },
-                outline = new { type = "array", items = new { type = "object" } },
-                relations = new { type = "array", items = new { type = "object" } },
-                milestones = new { type = "array", items = new { type = "object" } },
-                workItems = new { type = "array", items = new { type = "object" } },
-                workLinks = new { type = "array", items = new { type = "object" } },
+                idempotencyKey = StringProp("Stable client key. Repeating the same key with the same bundle returns the existing proposal."),
+                requireEmptyProject = new
+                {
+                    type = "boolean",
+                    description = "Default true. Refuse the import when the project already has outline nodes. Set false only to append to a non-empty project.",
+                },
+                knowledge = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            @ref = StringProp("Client-local id unique in this bundle (max 100 characters). Referenced by outline, relations, and workLinks."),
+                            key = StringProp("Stable knowledge key unique in the project."),
+                            title = StringProp(),
+                            typeId = StringProp("Must match list_schemas.typeId (schema namespace). Do not invent values."),
+                            schemaVersion = StringProp("Must match list_schemas.schemaVersion."),
+                            classification = StringProp("Public, Internal, Confidential, or Restricted. Must not exceed the agent grant ceiling."),
+                            representationKind = StringProp("Text, StructuredData, Diagram, Chart, Document, Media, or ExternalReference. SourceCode is refused."),
+                            content = StringProp("Item body. Not source code or secrets. Max 100000 characters."),
+                            reason = StringProp("Why this item belongs in the initial plan."),
+                            description = StringProp("Optional longer summary."),
+                        },
+                        ["ref", "key", "title", "typeId", "schemaVersion", "classification", "representationKind", "content", "reason"]),
+                    "At least one knowledge draft; at most 100."),
+                outline = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            itemRef = StringProp("Knowledge ref from this bundle."),
+                            parentRef = StringProp("Knowledge ref of the parent, or omit/null for the single root."),
+                            position = new { type = "integer", description = "Nonnegative sibling order." },
+                        },
+                        ["itemRef", "position"]),
+                    "Connected tree with exactly one root (parentRef null). At most 100 nodes."),
+                relations = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            sourceRef = StringProp("Knowledge ref from this bundle, not a file path."),
+                            targetRef = StringProp("Knowledge ref from this bundle, not a file path."),
+                            relationTypeCode = StringProp("Active code from list_relation_types."),
+                        },
+                        ["sourceRef", "targetRef", "relationTypeCode"]),
+                    "Optional. At most 200. Both endpoints must be knowledge refs."),
+                milestones = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            @ref = StringProp("Client-local milestone id unique in this bundle."),
+                            key = StringProp(),
+                            title = StringProp(),
+                            dueAt = StringProp("Optional ISO-8601 due date."),
+                        },
+                        ["ref", "key", "title"]),
+                    "Optional. At most 50."),
+                workItems = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            @ref = StringProp("Client-local work id unique in this bundle."),
+                            key = StringProp(),
+                            title = StringProp(),
+                            description = StringProp(),
+                            milestoneRef = StringProp("Optional milestone ref from this bundle."),
+                            priority = StringProp("Low, Normal, High, or Critical."),
+                            dependsOnRefs = new { type = "array", items = StringProp("Other work item refs in this bundle. Must be acyclic.") },
+                        },
+                        ["ref", "key", "title", "description", "priority"]),
+                    "Optional. At most 200."),
+                workLinks = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            workItemRef = StringProp("Work item ref from this bundle."),
+                            knowledgeRef = StringProp("Knowledge ref that also appears in outline."),
+                        },
+                        ["workItemRef", "knowledgeRef"]),
+                    "Optional links from work items to outline knowledge."),
             },
-            new[] { "idempotencyKey", "knowledge", "outline" }),
-        NamedTool("list_schemas", "List active published Knowledge schemas available to this planning agent. Use namespace as typeId and version as schemaVersion",
+            ["idempotencyKey", "knowledge", "outline"]),
+        NamedTool("list_schemas", "List active published Knowledge schemas. Call this before propose_initial_plan and copy typeId (namespace) and schemaVersion (version). An empty list means the Owner has not published schemas yet — do not invent typeIds.",
             new { }, Array.Empty<string>()),
-        NamedTool("list_relation_types", "List active relation types and endpoint constraints for plan-import relations",
+        NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
             new { }, Array.Empty<string>()),
         NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
             new { topic = StringProp() }, new[] { "topic" }),
@@ -755,6 +838,9 @@ public sealed class McpServer
 
     private static object UuidProp() => new { type = "string", format = "uuid" };
     private static object StringProp() => new { type = "string" };
+    private static object StringProp(string description) => new { type = "string", description };
+    private static object ArrayOf(object items, string description) => new { type = "array", description, items };
+    private static object ObjectSchema(object properties, string[] required) => new { type = "object", properties, required };
 
     /// <summary>
     /// MCP tools/call must return a CallToolResult object. JSON-RPC <c>result</c> cannot be a

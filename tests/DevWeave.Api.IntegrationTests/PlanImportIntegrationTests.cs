@@ -106,6 +106,44 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
     }
 
     [Fact]
+    public async Task Propose_initial_plan_tool_describes_import_procedure()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        using var listPlanner = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.ListTools, new { }));
+        using var listPlannerDoc = await listPlanner.Content.ReadFromJsonAsync<JsonDocument>();
+        var propose = listPlannerDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "propose_initial_plan");
+        var description = propose.GetProperty("description").GetString();
+        Assert.Contains("list_schemas", description, StringComparison.Ordinal);
+        Assert.Contains("Plan import", description, StringComparison.Ordinal);
+        Assert.Contains("send_project_message", description, StringComparison.Ordinal);
+        Assert.Contains("parentRef", description, StringComparison.Ordinal);
+
+        var knowledgeRequired = propose.GetProperty("inputSchema").GetProperty("properties")
+            .GetProperty("knowledge").GetProperty("items").GetProperty("required")
+            .EnumerateArray().Select(v => v.GetString()).ToHashSet();
+        Assert.Contains("ref", knowledgeRequired);
+        Assert.Contains("typeId", knowledgeRequired);
+        Assert.Contains("schemaVersion", knowledgeRequired);
+        Assert.Contains("content", knowledgeRequired);
+
+        var schemasTool = listPlannerDoc.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "list_schemas");
+        Assert.Contains("propose_initial_plan", schemasTool.GetProperty("description").GetString(), StringComparison.Ordinal);
+
+        using var listExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.ListTools, new { }));
+        using var listExecutorDoc = await listExecutor.Content.ReadFromJsonAsync<JsonDocument>();
+        var send = listExecutorDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "send_project_message");
+        Assert.Contains("propose_initial_plan", send.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("Does not create Knowledge", send.GetProperty("description").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MCP_discovery_lists_schemas_relations_and_channels_with_role_enforcement()
     {
         var seed = await SeedAsync(planning: true, execution: true);

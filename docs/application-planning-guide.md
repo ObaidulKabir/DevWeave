@@ -124,7 +124,7 @@ These routes have different authorization policies. Use the authenticated princi
 
 The project MCP endpoint is `/tenants/{tenantId}/projects/{projectId}/mcp/rpc` and requires an authenticated **agent** identity.
 
-**Planning agents** (`ReadKnowledge` + `WriteKnowledge`): use `read_plan_outline` to inspect the hierarchy; use `propose_initial_plan` to submit a full Knowledge/outline/Relations/Work bundle when the remote project is empty or needs a desktop-authored import; use `propose_plan_expansion` for incremental child ideas under a reviewed parent. None of these tools bind the plan until an Owner/Admin reviews them in Studio (**Plan import** for bundles, **Plan outline** for expansions).
+**Planning agents** (`ReadKnowledge` + `WriteKnowledge`): use `read_plan_outline` to inspect the hierarchy; when it is empty, call `list_schemas` (and `list_relation_types` if needed) then `propose_initial_plan` — never `send_project_message` — to submit a full Knowledge/outline/Relations/Work bundle; use `propose_plan_expansion` for incremental child ideas under a reviewed parent. None of these tools bind the plan until an Owner/Admin reviews them in Studio (**Plan import** for bundles, **Plan outline** for expansions). Channel messages are coordination logs, not published plan records.
 
 **Execution agents** (`ExecuteWorkflow`): after a baseline and campaign exist, register a runtime, lease work, and submit change-set references. They cannot call `propose_initial_plan`.
 

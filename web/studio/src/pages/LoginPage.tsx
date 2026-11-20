@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { BrandMark } from '../components/BrandMark';
 import { getEnvTenantId, getLastIdentity } from '../lib/session';
 
 const GUID_RE =
@@ -64,13 +65,16 @@ export function LoginPage() {
     <div className="login-page flex min-h-screen items-center justify-center px-4 py-10">
       <div className="login-panel w-full max-w-md">
         <div className="px-1">
-          <Link to="/" className="font-display text-3xl font-bold tracking-tight text-[var(--ink)] hover:opacity-90">
-            DevWeave
-          </Link>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--signal)]">
+          <BrandMark
+            variant="full"
+            to="/"
+            className="block max-w-xs"
+            imgClassName="h-auto w-full max-w-xs rounded-xl object-contain"
+          />
+          <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--signal)]">
             Tenant login
           </p>
-          <h1 className="mt-6 font-display text-2xl font-bold tracking-tight">Sign in</h1>
+          <h1 className="mt-4 font-display text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
             {oidcAuthorizeUrl
               ? 'Production sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'

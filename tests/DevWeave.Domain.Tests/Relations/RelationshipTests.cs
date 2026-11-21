@@ -29,6 +29,34 @@ public sealed class RelationshipTests
         Assert.NotEqual(relationship.SourceItemId, relationship.TargetItemId);
         Assert.Equal("contains", relationship.RelationTypeCode);
         Assert.Equal(RelationshipStatus.Active, relationship.Status);
+        Assert.Null(relationship.Rationale);
+        Assert.Null(relationship.SourceReference);
+        Assert.Null(relationship.ValidFrom);
+        Assert.Null(relationship.ValidTo);
+        Assert.Null(relationship.RevokedAt);
+    }
+
+    [Fact]
+    public void creation_accepts_optional_rationale_source_and_validity_window()
+    {
+        var from = DateTimeOffset.UtcNow.AddDays(-1);
+        var to = DateTimeOffset.UtcNow.AddDays(30);
+        var relationship = Relationship.Create(
+            TenantId.New(),
+            ProjectId.New(),
+            KnowledgeItemId.New(),
+            KnowledgeItemId.New(),
+            "satisfies",
+            PrincipalId.New(),
+            rationale: "ADR-12",
+            sourceReference: "docs/adr-12.md",
+            validFrom: from,
+            validTo: to);
+
+        Assert.Equal("ADR-12", relationship.Rationale);
+        Assert.Equal("docs/adr-12.md", relationship.SourceReference);
+        Assert.Equal(from, relationship.ValidFrom);
+        Assert.Equal(to, relationship.ValidTo);
     }
 
     [Fact]
@@ -57,6 +85,7 @@ public sealed class RelationshipTests
         relationship.Revoke();
 
         Assert.Equal(RelationshipStatus.Revoked, relationship.Status);
+        Assert.NotNull(relationship.RevokedAt);
         Assert.Throws<InvalidOperationException>(() => relationship.Revoke());
     }
 }

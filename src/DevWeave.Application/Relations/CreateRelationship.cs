@@ -43,7 +43,11 @@ public sealed class CreateRelationship
         KnowledgeItemId targetItemId,
         string relationTypeCode,
         PrincipalId createdBy,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? rationale = null,
+        string? sourceReference = null,
+        DateTimeOffset? validFrom = null,
+        DateTimeOffset? validTo = null)
     {
         // Only active project members who can edit (not Viewers) may change the plan's structure.
         await ProjectWorkAuthorization.EnsureMemberAsync(_memberships, tenantId, projectId, createdBy, reviewerOnly: false, ct);
@@ -79,7 +83,16 @@ public sealed class CreateRelationship
         await EnforceCardinalityAsync(relationType, tenantId, sourceItemId, targetItemId, ct);
 
         var relationship = Relationship.Create(
-            tenantId, projectId, sourceItemId, targetItemId, relationTypeCode, createdBy);
+            tenantId,
+            projectId,
+            sourceItemId,
+            targetItemId,
+            relationTypeCode,
+            createdBy,
+            rationale,
+            sourceReference,
+            validFrom,
+            validTo);
 
         await _relationships.AddAsync(relationship, ct);
         await _unitOfWork.SaveChangesAsync(ct);

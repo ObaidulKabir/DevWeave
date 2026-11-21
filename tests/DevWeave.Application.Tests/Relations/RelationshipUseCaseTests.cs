@@ -167,18 +167,18 @@ public sealed class RelationshipUseCaseTests
         await AddEdgeAsync(fakes, tenant, d, t);
         await AddEdgeAsync(fakes, tenant, i, t);
 
-        var traverse = new TraverseRelationships(fakes.Relationships, fakes.Items);
+        var traverse = CreateTraversal(fakes);
 
-        var depthOne = await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 1, 100);
+        var depthOne = await traverse.ExecuteAsync(tenant, r, PrincipalId.New(), TraversalDirection.Outgoing, 1, 100);
         Assert.Single(depthOne.Paths);
         Assert.Equal(d, depthOne.Paths[0].EndItemId);
 
-        var depthTwo = await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 2, 100);
+        var depthTwo = await traverse.ExecuteAsync(tenant, r, PrincipalId.New(), TraversalDirection.Outgoing, 2, 100);
         Assert.Equal(3, depthTwo.Paths.Count);
         Assert.False(depthTwo.Truncated);
 
         // The depth-3 path is fully explainable as an ordered edge chain (REL-005).
-        var depthThree = await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 3, 100);
+        var depthThree = await traverse.ExecuteAsync(tenant, r, PrincipalId.New(), TraversalDirection.Outgoing, 3, 100);
         Assert.Equal(4, depthThree.Paths.Count);
 
         var chain = depthThree.Paths.Single(p => p.Depth == 3 && p.EndItemId == t);
@@ -207,8 +207,8 @@ public sealed class RelationshipUseCaseTests
         await AddEdgeAsync(fakes, tenant, d, t);
         await AddEdgeAsync(fakes, tenant, i, t);
 
-        var traverse = new TraverseRelationships(fakes.Relationships, fakes.Items);
-        var limited = await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 3, 2);
+        var traverse = CreateTraversal(fakes);
+        var limited = await traverse.ExecuteAsync(tenant, r, PrincipalId.New(), TraversalDirection.Outgoing, 3, 2);
 
         Assert.Equal(2, limited.Paths.Count);
         Assert.True(limited.Truncated);
@@ -226,8 +226,8 @@ public sealed class RelationshipUseCaseTests
 
         await AddEdgeAsync(fakes, tenant, r, d);
 
-        var traverse = new TraverseRelationships(fakes.Relationships, fakes.Items);
-        var result = await traverse.ExecuteAsync(tenant, d, TraversalDirection.Incoming, 2, 100);
+        var traverse = CreateTraversal(fakes);
+        var result = await traverse.ExecuteAsync(tenant, d, PrincipalId.New(), TraversalDirection.Incoming, 2, 100);
 
         var path = Assert.Single(result.Paths);
         Assert.Equal(r, path.EndItemId);
@@ -250,8 +250,52 @@ public sealed class RelationshipUseCaseTests
             .ExecuteAsync(tenant, relationship.Id, PrincipalId.New(), "No longer needed");
         Assert.Single(fakes.Audit.Records);
 
-        var traverse = new TraverseRelationships(fakes.Relationships, fakes.Items);
-        Assert.Empty((await traverse.ExecuteAsync(tenant, r, TraversalDirection.Outgoing, 3, 10)).Paths);
+        var traverse = CreateTraversal(fakes);
+        Assert.Empty((await traverse.ExecuteAsync(
+            tenant,
+            r,
+            PrincipalId.New(),
+            TraversalDirection.Outgoing,
+            3,
+            10)).Paths);
+    }
+
+    [Fact]
+    public async Task relationship_reads_require_both_endpoints_to_be_visible()
+    {
+        var fakes = CreateFakes();
+        var tenant = TenantId.New();
+        var project = ProjectId.New();
+        var actor = PrincipalId.New();
+        var visible = await SeedItemAsync(fakes, tenant, project, "doc");
+        var hidden = await SeedItemAsync(
+            fakes,
+            tenant,
+            project,
+            "doc",
+            Classification.Restricted);
+        var relationship = await AddEdgeAsync(fakes, tenant, visible, hidden);
+        var authorization = CreateReadAuthorization(fakes);
+
+        var projectEdges = await new ListRelationshipsForProject(fakes.Relationships, authorization)
+            .ExecuteAsync(tenant, project, actor);
+        Assert.Empty(projectEdges);
+
+        var itemEdges = await new ListRelationshipsForItem(fakes.Relationships, authorization)
+            .ExecuteAsync(tenant, visible, actor);
+        Assert.Empty(itemEdges);
+
+        var fetched = await new GetRelationship(fakes.Relationships, authorization)
+            .ExecuteAsync(tenant, relationship.Id, actor);
+        Assert.Null(fetched);
+
+        var traversal = await new TraverseRelationships(fakes.Relationships, authorization)
+            .ExecuteAsync(tenant, visible, actor, TraversalDirection.Outgoing, 2, 10);
+        Assert.Empty(traversal.Paths);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            new TraverseRelationships(fakes.Relationships, authorization)
+                .ExecuteAsync(tenant, hidden, actor, TraversalDirection.Outgoing, 2, 10));
     }
 
     [Fact]
@@ -276,6 +320,12 @@ public sealed class RelationshipUseCaseTests
     private static CreateRelationship CreateUseCase(Fakes fakes) =>
         new(fakes.Relationships, fakes.RelationTypes, fakes.Items, fakes.Memberships, fakes.UnitOfWork);
 
+    private static TraverseRelationships CreateTraversal(Fakes fakes) =>
+        new(fakes.Relationships, CreateReadAuthorization(fakes));
+
+    private static RelationshipReadAuthorization CreateReadAuthorization(Fakes fakes) =>
+        new(fakes.Memberships, fakes.TenantMemberships, fakes.Items);
+
     private static async Task<RelationType> SeedRelationTypeAsync(
         InMemoryRelationTypeRepository repository,
         string code,
@@ -296,14 +346,19 @@ public sealed class RelationshipUseCaseTests
         return (source, target);
     }
 
-    private static async Task<KnowledgeItemId> SeedItemAsync(Fakes fakes, TenantId tenantId, ProjectId projectId, string typeId)
+    private static async Task<KnowledgeItemId> SeedItemAsync(
+        Fakes fakes,
+        TenantId tenantId,
+        ProjectId projectId,
+        string typeId,
+        Classification classification = Classification.Internal)
     {
         var item = KnowledgeItem.Create(
             tenantId,
             projectId,
             Guid.NewGuid().ToString("N"),
             "Item",
-            Classification.Internal,
+            classification,
             RepresentationKind.Text,
             typeId,
             "1.0",
@@ -330,6 +385,29 @@ public sealed class RelationshipUseCaseTests
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
         public RecordingAudit Audit { get; } = new();
         public MemberOfEveryItemProject Memberships => new(Items);
+        public IMembershipRepository TenantMemberships { get; } = new NoTenantMemberships();
+    }
+
+    private sealed class NoTenantMemberships : IMembershipRepository
+    {
+        public Task AddAsync(Membership membership, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<Membership?> GetByIdAsync(
+            TenantId tenantId,
+            MembershipId id,
+            CancellationToken ct = default) =>
+            Task.FromResult<Membership?>(null);
+
+        public Task<IReadOnlyList<Membership>> ListByTenantAsync(
+            TenantId tenantId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>([]);
+
+        public Task<IReadOnlyList<Membership>> ListByPrincipalAsync(
+            TenantId tenantId,
+            PrincipalId principalId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>([]);
     }
 
     /// <summary>These tests are about relation rules, not access: any principal edits any project that has items.</summary>

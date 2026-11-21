@@ -126,8 +126,34 @@ public sealed class KnowledgeItemTests
         Assert.Equal("{\"body\":\"hello\"}", revision.Content);
         Assert.Equal(actor, revision.Actor);
         Assert.NotEqual(default, revision.RecordedAt);
+        Assert.Null(revision.ValidFrom);
+        Assert.Null(revision.ValidTo);
+        Assert.Equal(revision.RecordedAt, revision.EffectiveValidFrom);
         Assert.Equal("initial capture", revision.Reason);
         Assert.Equal("doc-source-1", revision.SourceReference);
+    }
+
+    [Fact]
+    public void NFR_035_revision_accepts_valid_time_bounds_and_rejects_inverted_intervals()
+    {
+        var (tenant, project, actor) = Seed();
+        var item = CreateItem(tenant, project, actor);
+        var from = DateTimeOffset.UtcNow.AddDays(-1);
+        var to = DateTimeOffset.UtcNow.AddDays(7);
+
+        var revision = item.AddRevision(
+            "1.0", "{\"v\":1}", actor, "dated", null, null, 0, from, to);
+
+        Assert.Equal(from, revision.ValidFrom);
+        Assert.Equal(to, revision.ValidTo);
+        Assert.Equal(from, revision.EffectiveValidFrom);
+        Assert.True(revision.IsValidAt(from));
+        Assert.True(revision.IsValidAt(to));
+        Assert.False(revision.IsValidAt(from.AddSeconds(-1)));
+
+        Assert.Throws<ArgumentException>(() =>
+            KnowledgeRevision.Create(
+                tenant, item.Id, 1, "1.0", "{}", actor, "bad", null, null, to, from));
     }
 
     [Fact]

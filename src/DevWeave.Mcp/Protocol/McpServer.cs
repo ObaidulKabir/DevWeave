@@ -2,12 +2,17 @@ using System.Collections;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
 using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Specifications;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Identity;
+using DevWeave.Domain.Lifecycle;
+using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
 using Microsoft.Extensions.Logging;
 
 namespace DevWeave.Mcp.Protocol;
@@ -28,10 +33,13 @@ public sealed class McpServer
     private readonly IWorkStatusReader _status;
     private readonly PlanDesignService _planning;
     private readonly PlanImportService _planImport;
+    private readonly ListWorkItems _listWorkItems;
+    private readonly TransitionWorkItem _transitionWorkItem;
     private readonly SpecificationService _specs;
     private readonly IAgentGrantRepository _grants;
     private readonly ICoordinationRepository _coordination;
     private readonly ISchemaDefinitionRepository _schemas;
+    private readonly IKnowledgeTypeDefinitionRepository _knowledgeTypes;
     private readonly IRelationTypeRepository _relationTypes;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
@@ -49,10 +57,13 @@ public sealed class McpServer
         IWorkStatusReader status,
         PlanDesignService planning,
         PlanImportService planImport,
+        ListWorkItems listWorkItems,
+        TransitionWorkItem transitionWorkItem,
         SpecificationService specs,
         IAgentGrantRepository grants,
         ICoordinationRepository coordination,
         ISchemaDefinitionRepository schemas,
+        IKnowledgeTypeDefinitionRepository knowledgeTypes,
         IRelationTypeRepository relationTypes,
         ILogger<McpServer> logger)
     {
@@ -66,10 +77,13 @@ public sealed class McpServer
         _status = status;
         _planning = planning;
         _planImport = planImport;
+        _listWorkItems = listWorkItems;
+        _transitionWorkItem = transitionWorkItem;
         _specs = specs;
         _grants = grants;
         _coordination = coordination;
         _schemas = schemas;
+        _knowledgeTypes = knowledgeTypes;
         _relationTypes = relationTypes;
         _logger = logger;
         _options = new JsonSerializerOptions
@@ -128,7 +142,7 @@ public sealed class McpServer
         serverInfo = new
         {
             name = "DevWeave-Coordination-Plane",
-            version = "1.2.0"
+            version = "1.4.0"
         },
         // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
         instructions =
@@ -151,10 +165,14 @@ public sealed class McpServer
             "empty, stop and ask the Owner to register and publish schemas (agents cannot); " +
             "(3) list_relation_types when submitting relations — use an active code; sourceRef and targetRef must " +
             "be knowledge refs from this bundle, never file paths; " +
-            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], and " +
-            "outline[] with exactly one root (parentRef null); " +
+            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], " +
+            "outline[] with exactly one root (parentRef null), and optional codebaseTargets[] git identities " +
+            "(provider, owner/name or remote URL, branch, commit SHA — never clones, blobs, diffs, or source); " +
             "(5) success returns status Proposed — ask the Owner to Approve and materialize. You cannot approve " +
-            "your own proposal. After approval, use propose_plan_expansion for incremental children."
+            "your own proposal. After approval, use propose_plan_expansion for incremental children and " +
+            "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative. " +
+            "Planning agents update Work item status with list_work_items then report_work_item (reported/done) " +
+            "or update_work_item_plan_state (planned). Verify and approve stay human-only in Studio."
     };
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
@@ -277,7 +295,7 @@ public sealed class McpServer
         NamedTool("propose_initial_plan",
             "Publish a Knowledge/outline/Relations/Work bundle for Owner approval. This is the only MCP path that can populate those Studio tabs. send_project_message never creates plan records. " +
             "Procedure: call read_plan_outline (empty tree => import here); call list_schemas and copy typeId/schemaVersion (if schemas is empty, stop — the Owner must publish schemas); call list_relation_types for relationTypeCode if you include relations (endpoints must be knowledge refs, not file paths); call this tool; then tell the Owner to open Studio → Plan import → Approve and materialize. Success returns id with status Proposed. You cannot approve your own proposal. Default requireEmptyProject is true. " +
-            "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Requires WriteKnowledge on a Planning agent.",
+            "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Optional codebaseTargets[] record git-host identity only (provider, repositoryId, targetBranch, baseCommitSha). Requires WriteKnowledge on a Planning agent.",
             new
             {
                 idempotencyKey = StringProp("Stable client key. Repeating the same key with the same bundle returns the existing proposal."),
@@ -357,12 +375,58 @@ public sealed class McpServer
                         },
                         ["workItemRef", "knowledgeRef"]),
                     "Optional links from work items to outline knowledge."),
+                codebaseTargets = ArrayOf(
+                    ObjectSchema(
+                        new
+                        {
+                            @ref = StringProp("Client-local id unique in this bundle."),
+                            provider = StringProp("Git host, for example github."),
+                            repositoryId = StringProp("owner/name or a clean remote URL. No credentials, local paths, clones, or file contents."),
+                            targetBranch = StringProp("Protected or default branch name."),
+                            baseCommitSha = StringProp("7-40 character hex SHA currently observed."),
+                            reason = StringProp("Optional note for the Owner."),
+                        },
+                        ["ref", "provider", "repositoryId", "targetBranch", "baseCommitSha"]),
+                    "Optional git-host pointers. At most 10. Never source."),
             },
             ["idempotencyKey", "knowledge", "outline"]),
-        NamedTool("list_schemas", "List active published Knowledge schemas. Call this before propose_initial_plan and copy typeId (namespace) and schemaVersion (version). An empty list means the Owner has not published schemas yet — do not invent typeIds.",
+        NamedTool("list_codebase_targets", "List registered git repository pointers for this project (provider, repositoryId, branch, SHA, canonical ref, browse URL). References only — DevWeave never stores clones or source. Planning and execution agents may call this.",
+            new { }, Array.Empty<string>()),
+        NamedTool("register_codebase_target", "Record a git repository identity as a references-only codebase target. Accepts owner/name or a clean GitHub remote URL, plus branch and commit SHA. Never send clones, blobs, diffs, or source. Does not start a campaign. Idempotent for the same provider/repo/branch/SHA. Requires WriteKnowledge.",
+            new
+            {
+                provider = StringProp("Git host, for example github."),
+                repositoryId = StringProp("owner/name or https://github.com/owner/name.git — no credentials."),
+                targetBranch = StringProp(),
+                baseCommitSha = StringProp("7-40 character hex SHA."),
+            },
+            ["provider", "repositoryId", "targetBranch", "baseCommitSha"]),
+        NamedTool("list_schemas", "List active published Knowledge schemas plus catalogue metadata (isCanonical, storageKind). Prefer canonical typeIds such as requirements.functional / requirements.nonfunctional for new plans; legacy plan.* schemas remain valid. Call before propose_initial_plan and copy typeId (namespace) and schemaVersion. Aggregate-mapped catalogue concepts (planning.work-item, execution.activity-report, verification.result) are not Knowledge schemas.",
             new { }, Array.Empty<string>()),
         NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
             new { }, Array.Empty<string>()),
+        NamedTool("list_work_items", "List this project's Work items with independent planned, reported, verification, and approval states. Use after Owner Plan import. ReadKnowledge. Verify and approve are not MCP tools — humans do those in Studio.",
+            new { }, Array.Empty<string>()),
+        NamedTool("report_work_item", "Planning agent claim of Work item progress (reported state). Does not verify or approve. Pass workItemId or key from list_work_items. state: NotStarted, InProgress, Blocked, Completed, Failed; aliases done=Completed and not-done=reopen or leave unfinished. Legal jumps: NotStarted→InProgress|Blocked|Completed|Failed; InProgress/Blocked→Blocked|Completed|Failed|InProgress; Completed/Failed→InProgress only. Optional expectedVersion (defaults to current). Requires WriteKnowledge. Humans still verify and approve in Studio.",
+            new
+            {
+                workItemId = UuidProp(),
+                key = StringProp("Work item key from list_work_items or plan import."),
+                state = StringProp("ReportedExecutionState or done / not-done."),
+                reason = StringProp("Why this report is true. References only — no source or secrets."),
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+            },
+            ["state", "reason"]),
+        NamedTool("update_work_item_plan_state", "Planning agent update of Work item planned state (backlog/workflow, not execution claim). Pass workItemId or key. state: Planned, Ready, InProgress, Blocked, Cancelled. Legal jumps: Planned→Ready|Cancelled; Ready→Planned|InProgress|Cancelled; InProgress→Blocked|Cancelled; Blocked→InProgress|Cancelled; Cancelled→Planned. Optional expectedVersion. Requires WriteKnowledge. Verify and approve stay human-only.",
+            new
+            {
+                workItemId = UuidProp(),
+                key = StringProp("Work item key from list_work_items or plan import."),
+                state = StringProp("PlannedWorkState."),
+                reason = StringProp("Why the planned state is changing."),
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+            },
+            ["state", "reason"]),
         NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
             new { topic = StringProp() }, new[] { "topic" }),
         NamedTool("get_effective_spec", "Read every binding specification decision for this project, plus undecided topics and incompatibilities. Honors ReadKnowledge grant",
@@ -446,8 +510,13 @@ public sealed class McpServer
                 args.GetProperty("key").GetString()!, args.GetProperty("title").GetString()!,
                 args.GetProperty("typeId").GetString()!, args.GetProperty("rationale").GetString()!, ct)),
             "propose_initial_plan" => await ProposeInitialPlanFromArgsAsync(scope, args, ct),
+            "list_codebase_targets" => await ListCodebaseTargetsFromArgsAsync(scope, ct),
+            "register_codebase_target" => await RegisterCodebaseFromArgsAsync(scope, args, ct),
             "list_schemas" => await ListSchemasAsync(ct),
             "list_relation_types" => await ListRelationTypesAsync(ct),
+            "list_work_items" => await ListWorkItemsFromArgsAsync(scope, ct),
+            "report_work_item" => await ReportWorkItemFromArgsAsync(scope, args, ct),
+            "update_work_item_plan_state" => await UpdateWorkItemPlanStateFromArgsAsync(scope, args, ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(
                 scope.TenantId, scope.ProjectId!, scope.ActorId, args.GetProperty("topic").GetString()!, ct)),
             "get_effective_spec" => SpecProjection.Effective(await _specs.EffectiveAsync(
@@ -504,18 +573,38 @@ public sealed class McpServer
     private async Task<object> ListSchemasAsync(CancellationToken ct)
     {
         var schemas = await _schemas.ListAsync(ct);
+        var types = (await _knowledgeTypes.ListAsync(ct))
+            .ToDictionary(type => type.TypeId, StringComparer.Ordinal);
         return new
         {
             schemas = schemas
                 .Where(schema => schema.IsActive)
                 .OrderBy(schema => schema.Namespace, StringComparer.Ordinal)
                 .ThenBy(schema => schema.Version, StringComparer.Ordinal)
-                .Select(schema => new
+                .Select(schema =>
                 {
-                    id = schema.Id.Value,
-                    typeId = schema.Namespace,
-                    schemaVersion = schema.Version,
-                    schema.Description,
+                    types.TryGetValue(schema.Namespace, out var type);
+                    return new
+                    {
+                        id = schema.Id.Value,
+                        typeId = schema.Namespace,
+                        schemaVersion = schema.Version,
+                        schema.Description,
+                        isCanonical = type?.IsCanonical ?? false,
+                        storageKind = type?.StorageKind.ToString() ?? KnowledgeStorageKind.KnowledgeEnvelope.ToString(),
+                    };
+                })
+                .ToArray(),
+            knowledgeTypes = types.Values
+                .OrderByDescending(type => type.IsCanonical)
+                .ThenBy(type => type.TypeId, StringComparer.Ordinal)
+                .Select(type => new
+                {
+                    typeId = type.TypeId,
+                    type.Description,
+                    storageKind = type.StorageKind.ToString(),
+                    type.IsCanonical,
+                    defaultClassification = type.DefaultClassification.ToString(),
                 })
                 .ToArray(),
         };
@@ -557,6 +646,7 @@ public sealed class McpServer
             Milestones = payload.Milestones ?? Array.Empty<PlanImportMilestoneDraftV1>(),
             WorkItems = payload.WorkItems ?? Array.Empty<PlanImportWorkItemDraftV1>(),
             WorkLinks = payload.WorkLinks ?? Array.Empty<PlanImportWorkLinkDraftV1>(),
+            CodebaseTargets = payload.CodebaseTargets ?? Array.Empty<PlanImportCodebaseTargetDraftV1>(),
         };
         var proposal = await _planImport.ProposeAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, payload, ct);
         return new
@@ -568,6 +658,26 @@ public sealed class McpServer
             proposal.RequireEmptyProject,
             proposedAt = proposal.ProposedAt,
         };
+    }
+
+    private async Task<object> ListCodebaseTargetsFromArgsAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        var targets = await _codebases.ListAsync(scope, ct);
+        return new { codebaseTargets = targets };
+    }
+
+    private async Task<object> RegisterCodebaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var id = await _codebases.RegisterAsync(
+            scope,
+            args.GetProperty("provider").GetString()!,
+            args.GetProperty("repositoryId").GetString()!,
+            args.GetProperty("targetBranch").GetString()!,
+            args.GetProperty("baseCommitSha").GetString()!,
+            ct);
+        var listed = await _codebases.ListAsync(scope, ct);
+        var target = listed.First(t => t.Id == id);
+        return target;
     }
 
     private async Task<object> ProposeBundleFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
@@ -760,6 +870,7 @@ public sealed class McpServer
     {
         NotFoundException => new JsonRpcError(-32004, ex.Message, new { kind = "not-found" }),
         ConflictException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
+        WorkItemConcurrencyException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
         UnauthorizedTenantException => new JsonRpcError(-32003, ex.Message, new { kind = "forbidden" }),
         SpecDecisionRejectedException rejected => new JsonRpcError(-32602, ex.Message,
             new { kind = "invalid", issues = rejected.Issues.Select(i => new { i.Path, i.Message }) }),
@@ -769,6 +880,7 @@ public sealed class McpServer
             => new JsonRpcError(-32601, ex.Message, new { kind = "unknown-tool" }),
         InvalidOperationException when ex.Message.StartsWith("Method not found", StringComparison.Ordinal)
             => new JsonRpcError(-32601, ex.Message, new { kind = "method-not-found" }),
+        InvalidOperationException => new JsonRpcError(-32009, ex.Message, new { kind = "conflict" }),
         ArgumentException or KeyNotFoundException or FormatException => new JsonRpcError(-32602, ex.Message, new { kind = "invalid" }),
         _ => null,
     };
@@ -815,6 +927,176 @@ public sealed class McpServer
         args.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(v => v.GetGuid()).ToArray()
             : Array.Empty<Guid>();
+
+    private async Task<object> ListWorkItemsFromArgsAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        var items = await _listWorkItems.ExecuteAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct);
+        return new { workItems = items.Select(MapWorkItem).ToArray() };
+    }
+
+    private async Task<object> ReportWorkItemFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var details = await ResolveWorkItemFromArgsAsync(scope, args, ct);
+        var reason = RequireString(args, "reason");
+        var expectedVersion = OptionalInt(args, "expectedVersion") ?? details.Item.Version;
+        var target = ResolveReportedTarget(RequireString(args, "state"), details.Item.ReportedState);
+        if (target is null)
+            return MapWorkChange(details.Item, details.DependsOn, Array.Empty<WorkItemTransition>());
+
+        var change = await _transitionWorkItem.ReportAsync(
+            scope.TenantId, scope.ProjectId!, details.Item.Id, target.Value, scope.ActorId, reason, expectedVersion, ct);
+        return MapWorkChange(change);
+    }
+
+    private async Task<object> UpdateWorkItemPlanStateFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var details = await ResolveWorkItemFromArgsAsync(scope, args, ct);
+        var reason = RequireString(args, "reason");
+        var expectedVersion = OptionalInt(args, "expectedVersion") ?? details.Item.Version;
+        var target = ParsePlannedState(RequireString(args, "state"));
+        if (target == details.Item.PlannedState)
+            return MapWorkChange(details.Item, details.DependsOn, Array.Empty<WorkItemTransition>());
+
+        var change = await _transitionWorkItem.ChangePlannedAsync(
+            scope.TenantId, scope.ProjectId!, details.Item.Id, target, scope.ActorId, reason, expectedVersion, ct);
+        return MapWorkChange(change);
+    }
+
+    private async Task<WorkItemDetails> ResolveWorkItemFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        var listed = await _listWorkItems.ExecuteAsync(scope.TenantId, scope.ProjectId!, scope.ActorId, ct);
+        var id = OptionalGuid(args, "workItemId");
+        var key = OptionalString(args, "key");
+        if (id is null && string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Provide workItemId or key from list_work_items.");
+
+        WorkItemDetails? match = null;
+        if (id is Guid itemId)
+            match = listed.FirstOrDefault(row => row.Item.Id.Value == itemId);
+        if (match is null && !string.IsNullOrWhiteSpace(key))
+            match = listed.FirstOrDefault(row =>
+                string.Equals(row.Item.Key, key, StringComparison.OrdinalIgnoreCase));
+        return match ?? throw new NotFoundException(
+            $"Work item '{id?.ToString() ?? key}' was not found within project '{scope.ProjectId}'.");
+    }
+
+    private static ReportedExecutionState? ResolveReportedTarget(string raw, ReportedExecutionState current)
+    {
+        var token = NormalizeStateToken(raw);
+        if (token is "notdone")
+        {
+            return current is ReportedExecutionState.Completed or ReportedExecutionState.Failed
+                ? ReportedExecutionState.InProgress
+                : null;
+        }
+
+        var state = token switch
+        {
+            "completed" or "complete" or "done" => ReportedExecutionState.Completed,
+            "notstarted" or "todo" => ReportedExecutionState.NotStarted,
+            "inprogress" or "wip" or "started" => ReportedExecutionState.InProgress,
+            "blocked" => ReportedExecutionState.Blocked,
+            "failed" or "fail" => ReportedExecutionState.Failed,
+            _ => throw new ArgumentException(
+                $"Unknown reported state '{raw}'. Use NotStarted, InProgress, Blocked, Completed, Failed, done, or not-done."),
+        };
+        return state == current ? null : state;
+    }
+
+    private static PlannedWorkState ParsePlannedState(string raw)
+    {
+        var token = NormalizeStateToken(raw);
+        return token switch
+        {
+            "planned" => PlannedWorkState.Planned,
+            "ready" => PlannedWorkState.Ready,
+            "inprogress" or "wip" or "started" => PlannedWorkState.InProgress,
+            "blocked" => PlannedWorkState.Blocked,
+            "cancelled" or "canceled" => PlannedWorkState.Cancelled,
+            _ => throw new ArgumentException(
+                $"Unknown planned state '{raw}'. Use Planned, Ready, InProgress, Blocked, or Cancelled."),
+        };
+    }
+
+    private static string NormalizeStateToken(string raw) =>
+        raw.Trim().Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal)
+            .Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant();
+
+    private static object MapWorkItem(WorkItemDetails details) => MapWorkItem(details.Item, details.DependsOn);
+
+    private static object MapWorkItem(WorkItem item, IReadOnlyList<WorkItemId> dependsOn) => new
+    {
+        id = item.Id.Value,
+        key = item.Key,
+        title = item.Title,
+        description = item.Description,
+        milestoneId = item.MilestoneId?.Value,
+        ownerId = item.OwnerId?.Value,
+        dueAt = item.DueAt,
+        priority = item.Priority.ToString(),
+        plannedState = item.PlannedState.ToString(),
+        reportedState = item.ReportedState.ToString(),
+        verificationState = item.VerificationState.ToString(),
+        approvalState = item.ApprovalState.ToString(),
+        version = item.Version,
+        dependsOn = dependsOn.Select(d => d.Value).ToArray(),
+        createdAt = item.CreatedAt,
+        updatedAt = item.UpdatedAt,
+    };
+
+    private static object MapWorkChange(WorkItemChange change) =>
+        MapWorkChange(change.Item, change.DependsOn, change.Transitions);
+
+    private static object MapWorkChange(WorkItem item, IReadOnlyList<WorkItemId> dependsOn,
+        IReadOnlyList<WorkItemTransition> transitions) => new
+    {
+        item = MapWorkItem(item, dependsOn),
+        transitions = transitions.Select(t => new
+        {
+            id = t.Id.Value,
+            workItemId = t.WorkItemId.Value,
+            dimension = t.Dimension.ToString(),
+            fromState = t.FromState,
+            toState = t.ToState,
+            actorId = t.ActorId.Value,
+            reason = t.Reason,
+            recordedAt = t.RecordedAt,
+            version = t.Version,
+        }).ToArray(),
+    };
+
+    private static string RequireString(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(value.GetString()))
+            throw new ArgumentException($"{name} is required.");
+        return value.GetString()!;
+    }
+
+    private static string? OptionalString(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : throw new ArgumentException($"{name} must be a string.");
+    }
+
+    private static Guid? OptionalGuid(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (value.ValueKind == JsonValueKind.String)
+            return Guid.TryParse(value.GetString(), out var parsed)
+                ? parsed
+                : throw new ArgumentException($"{name} must be a UUID.");
+        return value.GetGuid();
+    }
+
+    private static int? OptionalInt(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        return value.GetInt32();
+    }
 
     private async Task<object> DescribeBaselineFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
     {

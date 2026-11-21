@@ -60,6 +60,11 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         Assert.Equal(2, await db.KnowledgeItems.CountAsync(i => i.TenantId == seed.Tenant.Id && i.ProjectId == seed.Project.Id));
         Assert.Equal(2, await db.PlanOutlineNodes.CountAsync(n => n.TenantId == seed.Tenant.Id && n.ProjectId == seed.Project.Id));
         Assert.Equal(1, await db.WorkItems.CountAsync(w => w.TenantId == seed.Tenant.Id && w.ProjectId == seed.Project.Id));
+        Assert.Equal(1, await db.CodebaseTargets.CountAsync(t => t.TenantId == seed.Tenant.Id && t.ProjectId == seed.Project.Id));
+        var target = await db.CodebaseTargets.SingleAsync(t => t.TenantId == seed.Tenant.Id && t.ProjectId == seed.Project.Id);
+        Assert.Equal("github", target.Provider);
+        Assert.Equal("acme/checkout", target.RepositoryId);
+        Assert.Equal("main", target.TargetBranch);
     }
 
     [Fact]
@@ -95,6 +100,9 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         var plannerTools = listPlannerDoc!.RootElement.GetProperty("result").GetProperty("tools")
             .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         Assert.Contains("propose_initial_plan", plannerTools);
+        Assert.Contains("list_work_items", plannerTools);
+        Assert.Contains("report_work_item", plannerTools);
+        Assert.Contains("update_work_item_plan_state", plannerTools);
         Assert.DoesNotContain("request_assignment", plannerTools);
 
         using var listExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 4, McpMethods.ListTools, new { }));
@@ -103,6 +111,8 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Select(t => t.GetProperty("name").GetString()).ToHashSet();
         Assert.Contains("request_assignment", executorTools);
         Assert.DoesNotContain("propose_initial_plan", executorTools);
+        Assert.DoesNotContain("report_work_item", executorTools);
+        Assert.DoesNotContain("update_work_item_plan_state", executorTools);
     }
 
     [Fact]
@@ -141,6 +151,173 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "send_project_message");
         Assert.Contains("propose_initial_plan", send.GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("Does not create Knowledge", send.GetProperty("description").GetString(), StringComparison.Ordinal);
+
+        var reportTool = listPlannerDoc.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "report_work_item");
+        Assert.Contains("WriteKnowledge", reportTool.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("verify", reportTool.GetProperty("description").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Planning_agent_updates_imported_work_item_status()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        var bundle = MinimalPlan($"work-status-{Guid.NewGuid():N}");
+        using var propose = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new { name = "propose_initial_plan", arguments = bundle }));
+        using var proposeDoc = await propose.Content.ReadFromJsonAsync<JsonDocument>();
+        var proposalId = McpJson.Payload(proposeDoc!.RootElement).GetProperty("id").GetGuid();
+
+        var basePath = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals";
+        using var approve = await ownerClient.PostAsJsonAsync($"{basePath}/{proposalId}/approve",
+            new DecideInitialPlanProposalRequest("Looks good"));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        using var listed = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
+            new { name = "list_work_items", arguments = new { } }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        var workItems = McpJson.Payload(listedDoc!.RootElement).GetProperty("workItems");
+        Assert.Equal(1, workItems.GetArrayLength());
+        var item = workItems[0];
+        Assert.Equal("Planned", item.GetProperty("plannedState").GetString());
+        Assert.Equal("NotStarted", item.GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", item.GetProperty("verificationState").GetString());
+        Assert.Equal("Pending", item.GetProperty("approvalState").GetString());
+        var key = item.GetProperty("key").GetString()!;
+
+        using var illegalPlan = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 3, McpMethods.CallTool,
+            new
+            {
+                name = "update_work_item_plan_state",
+                arguments = new { key, state = "InProgress", reason = "Skip ready" },
+            }));
+        using var illegalPlanDoc = await illegalPlan.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32009, illegalPlanDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var ready = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 4, McpMethods.CallTool,
+            new
+            {
+                name = "update_work_item_plan_state",
+                arguments = new { key, state = "Ready", reason = "Backlog triaged" },
+            }));
+        using var readyDoc = await ready.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("Ready", McpJson.Payload(readyDoc!.RootElement).GetProperty("item").GetProperty("plannedState").GetString());
+
+        using var done = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 5, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "done", reason = "Auth delivered in the demo app" },
+            }));
+        using var doneDoc = await done.Content.ReadFromJsonAsync<JsonDocument>();
+        var reported = McpJson.Payload(doneDoc!.RootElement);
+        Assert.Equal("Completed", reported.GetProperty("item").GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", reported.GetProperty("item").GetProperty("verificationState").GetString());
+        Assert.Equal("Pending", reported.GetProperty("item").GetProperty("approvalState").GetString());
+
+        using var reopen = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 6, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "not-done", reason = "Reopened after review notes" },
+            }));
+        using var reopenDoc = await reopen.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("InProgress", McpJson.Payload(reopenDoc!.RootElement).GetProperty("item").GetProperty("reportedState").GetString());
+
+        using var blockedExecutor = await executor.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 7, McpMethods.CallTool,
+            new
+            {
+                name = "report_work_item",
+                arguments = new { key, state = "Completed", reason = "Executor claim" },
+            }));
+        using var blockedExecutorDoc = await blockedExecutor.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedExecutorDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+
+        using var verifyMissing = await planner.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 8, McpMethods.CallTool,
+            new { name = "verify_work_item", arguments = new { key, reason = "Nope" } }));
+        using var verifyMissingDoc = await verifyMissing.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32601, verifyMissingDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+    }
+
+    [Fact]
+    public async Task Planning_agent_registers_and_lists_git_codebase_targets_without_source()
+    {
+        var seed = await SeedAsync(planning: true, execution: true);
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var executor = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var mcpUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var restUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination/codebase-targets";
+
+        using var registered = await planner.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 1, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "https://github.com/acme/checkout.git",
+                    targetBranch = "main",
+                    baseCommitSha = "Abc1234",
+                },
+            }));
+        using var registeredDoc = await registered.Content.ReadFromJsonAsync<JsonDocument>();
+        var target = McpJson.Payload(registeredDoc!.RootElement);
+        Assert.Equal("github", target.GetProperty("provider").GetString());
+        Assert.Equal("acme/checkout", target.GetProperty("repositoryId").GetString());
+        Assert.Equal("abc1234", target.GetProperty("baseCommitSha").GetString());
+        Assert.Equal("https://github.com/acme/checkout", target.GetProperty("browseUrl").GetString());
+        Assert.DoesNotContain("class ", target.GetRawText(), StringComparison.Ordinal);
+
+        using var again = await planner.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "acme/checkout",
+                    targetBranch = "main",
+                    baseCommitSha = "abc1234",
+                },
+            }));
+        using var againDoc = await again.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(target.GetProperty("id").GetGuid(), McpJson.Payload(againDoc!.RootElement).GetProperty("id").GetGuid());
+
+        using var listed = await executor.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 3, McpMethods.CallTool,
+            new { name = "list_codebase_targets", arguments = new { } }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        McpJson.AssertCallToolResult(listedDoc!.RootElement);
+        Assert.Contains(
+            McpJson.Payload(listedDoc.RootElement).GetProperty("codebaseTargets").EnumerateArray(),
+            row => row.GetProperty("repositoryId").GetString() == "acme/checkout");
+
+        using var rest = await owner.GetAsync(restUrl);
+        Assert.Equal(HttpStatusCode.OK, rest.StatusCode);
+        using var restDoc = await rest.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Contains(
+            restDoc!.RootElement.EnumerateArray(),
+            row => row.GetProperty("canonicalRef").GetString() == "github:acme/checkout@main#abc1234");
+
+        using var blocked = await executor.PostAsJsonAsync(mcpUrl, new JsonRpcRequest("2.0", 4, McpMethods.CallTool,
+            new
+            {
+                name = "register_codebase_target",
+                arguments = new
+                {
+                    provider = "github",
+                    repositoryId = "acme/other",
+                    targetBranch = "main",
+                    baseCommitSha = "def5678",
+                },
+            }));
+        using var blockedDoc = await blocked.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(-32003, blockedDoc!.RootElement.GetProperty("error").GetProperty("code").GetInt32());
     }
 
     [Fact]
@@ -339,6 +516,18 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         workLinks = new object[]
         {
             new { workItemRef = "w1", knowledgeRef = "req1" },
+        },
+        codebaseTargets = new object[]
+        {
+            new
+            {
+                @ref = "repo1",
+                provider = "github",
+                repositoryId = "https://github.com/acme/checkout.git",
+                targetBranch = "main",
+                baseCommitSha = "abc1234",
+                reason = "Local origin remote",
+            },
         },
     };
 

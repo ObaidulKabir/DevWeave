@@ -20,6 +20,19 @@ public sealed class GitHubReferenceAdapterTests
         Assert.Equal("github:acme/checkout@main#abc1234", resolved.CanonicalRef);
     }
 
+    [Theory]
+    [InlineData("https://github.com/acme/checkout", "acme/checkout")]
+    [InlineData("https://github.com/acme/checkout.git", "acme/checkout")]
+    [InlineData("git@github.com:acme/checkout.git", "acme/checkout")]
+    [InlineData("github:acme/checkout", "acme/checkout")]
+    [InlineData("https://github.com/acme/checkout/tree/main", "acme/checkout")]
+    public async Task ResolveAsync_normalizes_github_remotes(string input, string expected)
+    {
+        var resolved = await _adapter.ResolveAsync(input, "main", "abc1234");
+        Assert.Equal(expected, resolved.RepositoryId);
+        Assert.Equal("github:acme/checkout@main#abc1234", resolved.CanonicalRef);
+    }
+
     [Fact]
     public async Task ResolveAsync_rejects_invalid_repository_ids()
     {
@@ -27,6 +40,12 @@ public sealed class GitHubReferenceAdapterTests
             _adapter.ResolveAsync("not-a-repo", "main", "abc1234"));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             _adapter.ResolveAsync("../secrets", "main", "abc1234"));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _adapter.ResolveAsync("https://user:token@github.com/acme/checkout", "main", "abc1234"));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _adapter.ResolveAsync("file:///tmp/repo", "main", "abc1234"));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _adapter.ResolveAsync("C:\\src\\app", "main", "abc1234"));
     }
 
     [Fact]

@@ -17,8 +17,13 @@ public sealed class Relationship
     public KnowledgeItemId SourceItemId { get; }
     public KnowledgeItemId TargetItemId { get; }
     public string RelationTypeCode { get; }
+    public string? Rationale { get; }
+    public string? SourceReference { get; }
+    public DateTimeOffset? ValidFrom { get; }
+    public DateTimeOffset? ValidTo { get; }
     public RelationshipStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; }
+    public DateTimeOffset? RevokedAt { get; private set; }
     public PrincipalId CreatedBy { get; }
 
     private Relationship(
@@ -28,8 +33,13 @@ public sealed class Relationship
         KnowledgeItemId sourceItemId,
         KnowledgeItemId targetItemId,
         string relationTypeCode,
+        string? rationale,
+        string? sourceReference,
+        DateTimeOffset? validFrom,
+        DateTimeOffset? validTo,
         RelationshipStatus status,
         DateTimeOffset createdAt,
+        DateTimeOffset? revokedAt,
         PrincipalId createdBy)
     {
         Id = id;
@@ -38,8 +48,13 @@ public sealed class Relationship
         SourceItemId = sourceItemId;
         TargetItemId = targetItemId;
         RelationTypeCode = relationTypeCode;
+        Rationale = rationale;
+        SourceReference = sourceReference;
+        ValidFrom = validFrom;
+        ValidTo = validTo;
         Status = status;
         CreatedAt = createdAt;
+        RevokedAt = revokedAt;
         CreatedBy = createdBy;
     }
 
@@ -49,10 +64,20 @@ public sealed class Relationship
         KnowledgeItemId sourceItemId,
         KnowledgeItemId targetItemId,
         string relationTypeCode,
-        PrincipalId createdBy)
+        PrincipalId createdBy,
+        string? rationale = null,
+        string? sourceReference = null,
+        DateTimeOffset? validFrom = null,
+        DateTimeOffset? validTo = null)
     {
         if (string.IsNullOrWhiteSpace(relationTypeCode))
             throw new ArgumentException("Relation type code is required.", nameof(relationTypeCode));
+        if (validFrom is { } from && validTo is { } to && to < from)
+            throw new ArgumentException("ValidTo cannot precede ValidFrom.", nameof(validTo));
+        if (rationale is not null && string.IsNullOrWhiteSpace(rationale))
+            throw new ArgumentException("Rationale cannot be empty when provided.", nameof(rationale));
+        if (sourceReference is not null && string.IsNullOrWhiteSpace(sourceReference))
+            throw new ArgumentException("Source reference cannot be empty when provided.", nameof(sourceReference));
 
         return new Relationship(
             RelationshipId.New(),
@@ -60,9 +85,14 @@ public sealed class Relationship
             projectId,
             sourceItemId,
             targetItemId,
-            relationTypeCode,
+            relationTypeCode.Trim(),
+            rationale?.Trim(),
+            sourceReference?.Trim(),
+            validFrom,
+            validTo,
             RelationshipStatus.Active,
             DateTimeOffset.UtcNow,
+            revokedAt: null,
             createdBy);
     }
 
@@ -72,5 +102,6 @@ public sealed class Relationship
             throw new InvalidOperationException("Relationship is already revoked.");
 
         Status = RelationshipStatus.Revoked;
+        RevokedAt = DateTimeOffset.UtcNow;
     }
 }

@@ -221,6 +221,7 @@ app.MapSupportAccessEndpoints();
 
 // Project and lifecycle surface (SRS PRJ-001..PRJ-006, PRJ-009, LFC-001).
 app.MapProjectEndpoints();
+app.MapProjectionEndpoints();
 app.MapWorkPlanningEndpoints();
 
 // Knowledge item and revision surface (SRS KNW-001..KNW-013, REV-001..REV-008, BR-004..BR-009).
@@ -256,6 +257,9 @@ app.MapAgentEndpoints();
 
 // Commercial Pilot surface (SRS COM-001..COM-026).
 app.MapCommercialEndpoints();
+
+// Requirement impact analysis and plan rebase decisions (dynamic project state §6–§8).
+app.MapImpactEndpoints();
 
 // Coordination plane REST surface (SRS MCO / MCP foundations).
 app.MapCoordinationEndpoints();

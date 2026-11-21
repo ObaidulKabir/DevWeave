@@ -9,7 +9,8 @@ public sealed record InitialPlanProposalV1(
     IReadOnlyList<PlanImportRelationDraftV1> Relations,
     IReadOnlyList<PlanImportMilestoneDraftV1> Milestones,
     IReadOnlyList<PlanImportWorkItemDraftV1> WorkItems,
-    IReadOnlyList<PlanImportWorkLinkDraftV1>? WorkLinks = null);
+    IReadOnlyList<PlanImportWorkLinkDraftV1>? WorkLinks = null,
+    IReadOnlyList<PlanImportCodebaseTargetDraftV1>? CodebaseTargets = null);
 
 public sealed record PlanImportKnowledgeDraftV1(
     string Ref,
@@ -52,6 +53,15 @@ public sealed record PlanImportWorkLinkDraftV1(
     string WorkItemRef,
     string KnowledgeRef);
 
+/// <summary>Git-host identity only. Never include clones, blobs, diffs, or source.</summary>
+public sealed record PlanImportCodebaseTargetDraftV1(
+    string Ref,
+    string Provider,
+    string RepositoryId,
+    string TargetBranch,
+    string BaseCommitSha,
+    string? Reason = null);
+
 public sealed record InitialPlanProposalSummaryResponse(
     Guid Id,
     string IdempotencyKey,
@@ -67,7 +77,8 @@ public sealed record InitialPlanProposalSummaryResponse(
     int OutlineCount,
     int RelationCount,
     int MilestoneCount,
-    int WorkItemCount);
+    int WorkItemCount,
+    int CodebaseTargetCount = 0);
 
 public sealed record InitialPlanProposalDetailResponse(
     Guid Id,

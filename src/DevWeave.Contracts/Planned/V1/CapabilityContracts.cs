@@ -54,6 +54,15 @@ public sealed record BaselineDraft(string Goal, IReadOnlyList<ResourceRef> Appro
     IReadOnlyList<Guid> Dependencies, IReadOnlyList<string> AcceptanceCriteria, int ExpectedPlanVersion);
 public sealed record CodebaseTargetDraft(string Provider, string RepositoryId,
     string TargetBranch, string BaseCommitSha);
+public sealed record CodebaseTargetView(
+    Guid Id,
+    string Provider,
+    string RepositoryId,
+    string TargetBranch,
+    string BaseCommitSha,
+    string CanonicalRef,
+    string? BrowseUrl,
+    DateTimeOffset CreatedAt);
 public sealed record CampaignDraft(Guid BaselineId, IReadOnlyList<Guid> CodebaseTargetIds,
     string Objective, string ExecutionMode, string IdempotencyKey);
 public sealed record RuntimeRegistration(Guid AgentPrincipalId, string RuntimeClass,

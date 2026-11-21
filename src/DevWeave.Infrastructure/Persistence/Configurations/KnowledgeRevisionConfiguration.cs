@@ -53,6 +53,10 @@ internal sealed class KnowledgeRevisionConfiguration : IEntityTypeConfiguration<
         builder.Property(r => r.RecordedAt)
             .IsRequired();
 
+        // Nullable valid-time bounds (NFR-035). Legacy rows without ValidFrom interpret validity from RecordedAt.
+        builder.Property(r => r.ValidFrom);
+        builder.Property(r => r.ValidTo);
+
         builder.Property(r => r.Reason)
             .IsRequired()
             .HasMaxLength(1000);

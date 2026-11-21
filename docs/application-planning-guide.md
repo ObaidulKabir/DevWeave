@@ -131,7 +131,7 @@ The project MCP endpoint is `/tenants/{tenantId}/projects/{projectId}/mcp/rpc` a
 1. Prefer `propose_initial_plan` over retyping nodes in Studio. Identify client-local refs in the bundle; the approve response returns the server ID mapping.
 2. Owners approve the immutable payload in Studio → Plan import (no manual recreation of each node).
 3. After the human-controlled baseline is established, use `get_plan_baseline` to inspect its recorded snapshot. The tool named `list_ready_work` currently **creates a WorkPackage** under a campaign; it is not a read-only list of planned WorkItems.
-4. For execution, use a separate execution credential: `request_assignment`, `heartbeat_lease`, and durable messages/cursors. Do not send source code, patches, or secrets through the control plane.
+4. For execution, use a separate execution credential: `request_assignment`, `heartbeat_lease`, and durable messages/cursors. Do not send source code, patches, or secrets through the control plane. Git repository identity is a codebase target (`provider`, `owner/name` or remote URL, branch, commit SHA) recorded by `propose_initial_plan.codebaseTargets` or `register_codebase_target`; the git host remains authoritative for history and source.
 
 **Current enforcement caveat:** the baseline API currently persists supplied revision and dependency IDs without checking each revision's approval/project ownership in `LockAsync`. Treat those checks as a mandatory human/application precondition, not as a guarantee that the endpoint already enforces them.
 

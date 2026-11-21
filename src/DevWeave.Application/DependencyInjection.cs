@@ -12,7 +12,10 @@ using DevWeave.Application.Identity;
 using DevWeave.Application.Knowledge;
 using DevWeave.Application.Lifecycle;
 using DevWeave.Application.Planning;
+using DevWeave.Application.Projections;
+using DevWeave.Application.ProjectGraph;
 using DevWeave.Application.Projects;
+using DevWeave.Application.Security;
 using DevWeave.Application.Relations;
 using DevWeave.Application.Schema;
 using DevWeave.Application.Specifications;
@@ -79,10 +82,23 @@ public static class DependencyInjection
         services.AddScoped<DeprecateSchema>();
         services.AddScoped<GetSchema>();
         services.AddScoped<ListSchemas>();
+        services.AddScoped<ListKnowledgeTypes>();
         services.AddScoped<DiscoverSchemas>();
+
+        services.AddScoped<ImpactAnalysisService>();
+        services.AddScoped<RecordRequirementChangeSet>();
+        services.AddScoped<GetRequirementChangeSet>();
+        services.AddScoped<AnalyzeRequirementImpact>();
+        services.AddScoped<GetImpactAnalysisReport>();
+        services.AddScoped<ListImpactAnalysisReportsForProject>();
+        services.AddScoped<AuthorizePlanRebaseDecision>();
+        services.AddScoped<ListPlanRebaseDecisionsForImpactReport>();
+        services.AddScoped<RecordSemanticConflict>();
+        services.AddScoped<ResolveSemanticConflict>();
 
         services.AddScoped<CreateRelationship>();
         services.AddScoped<RevokeRelationship>();
+        services.AddScoped<RelationshipReadAuthorization>();
         services.AddScoped<GetRelationship>();
         services.AddScoped<ListRelationshipsForProject>();
         services.AddScoped<ListRelationshipsForItem>();
@@ -137,6 +153,10 @@ public static class DependencyInjection
         services.AddScoped<IAuditJournal, AuditJournal>();
         services.AddScoped<IPortableArchive, PortableArchive>();
         services.AddScoped<IProjectReporting, ProjectReporting>();
+        services.AddScoped<ResourcePolicyEngine>();
+        services.AddScoped<IResourcePolicy>(sp => sp.GetRequiredService<ResourcePolicyEngine>());
+        services.AddScoped<IProjectGraphProjection, ProjectGraphProjection>();
+        services.AddScoped<StakeholderProjectionService>();
 
         var coordinationService = typeof(CoordinationService);
         services.AddScoped<ICoordinationChannels>(sp => sp.GetRequiredService<CoordinationService>());

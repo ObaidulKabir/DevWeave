@@ -282,6 +282,33 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
         var baselineId = await baselines.LockAsync(scopeFor,
             draft with { ApprovedRevisions = new[] { new ResourceRef(seed.Root.Id.Value, seed.Root.CurrentRevisionId!.Value) } });
         Assert.NotEqual(Guid.Empty, baselineId);
+
+        var manifest = await ready.ServiceProvider
+            .GetRequiredService<IPlanBaselineManifestRepository>()
+            .GetByIdAsync(seed.Tenant.Id, seed.Project.Id, new BaselineId(baselineId));
+        Assert.NotNull(manifest);
+        Assert.Equal(BaselineHistoricalPrecision.Exact, manifest.HistoricalPrecision);
+        Assert.True(manifest.HasValidChecksum());
+        var pinned = Assert.Single(manifest.ApprovedRevisions);
+        Assert.Equal(seed.Root.Id.Value, pinned.ItemId);
+        Assert.Equal(seed.Root.CurrentRevisionId!.Value, pinned.RevisionId);
+
+        var events = await ready.ServiceProvider
+            .GetRequiredService<IProjectEventRepository>()
+            .ListAsync(seed.Tenant.Id, seed.Project.Id);
+        var locked = Assert.Single(events, projectEvent =>
+            projectEvent.EventType == "plan.baseline.locked" &&
+            projectEvent.BaselineId == new BaselineId(baselineId));
+        Assert.True(locked.Sequence > 0);
+        using var metadata = JsonDocument.Parse(locked.MetadataJson);
+        Assert.Equal(
+            manifest.ManifestChecksum,
+            metadata.RootElement.GetProperty("manifestChecksum").GetString());
+
+        var described = await baselines.DescribeAsync(scopeFor, baselineId);
+        Assert.Equal("2.0", described.FormatVersion);
+        Assert.Equal(seed.Root.Id.Value, Assert.Single(described.Revisions).Id);
+        Assert.Contains(manifest.ManifestChecksum, described.ArtifactChecksums);
     }
 
     [Fact]

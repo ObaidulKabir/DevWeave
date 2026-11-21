@@ -44,10 +44,15 @@ public sealed class WorkPackageConfiguration : IEntityTypeConfiguration<WorkPack
             .IsRequired();
 
         builder.Property(w => w.BaselineId);
+        builder.Property(w => w.PredecessorWorkPackageId)
+            .HasConversion(
+                id => id == null ? (Guid?)null : id.Value,
+                value => value == null ? null : new WorkPackageId(value.Value));
         builder.Property(w => w.Version);
         builder.Property(w => w.CreatedAt);
         builder.Property(w => w.UpdatedAt);
 
         builder.HasIndex(w => new { w.CampaignId, w.Key }).IsUnique();
+        builder.HasIndex(w => new { w.TenantId, w.PredecessorWorkPackageId });
     }
 }

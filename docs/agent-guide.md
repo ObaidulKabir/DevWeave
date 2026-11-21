@@ -42,8 +42,10 @@ collections:
 | --- | --- |
 | `list_channels` | `{ "channels": [ { "id", "type", "channelType", ... } ] }` |
 | `list_messages` / `read_messages_after_cursor` | `{ "messages": [ ... ], "nextCursor" }` |
-| `list_schemas` | `{ "schemas": [ ... ] }` |
+| `list_schemas` | `{ "schemas": [ { typeId, schemaVersion, isCanonical, storageKind } ], "knowledgeTypes": [ ... ] }` — prefer canonical ids such as `requirements.functional` / `requirements.nonfunctional`; legacy `plan.*` remains valid |
 | `list_relation_types` | `{ "relationTypes": [ ... ] }` |
+| `list_codebase_targets` | `{ "codebaseTargets": [ { "id", "provider", "repositoryId", "targetBranch", "baseCommitSha", "canonicalRef", "browseUrl" } ] }` |
+| `list_work_items` | `{ "workItems": [ { "id", "key", "plannedState", "reportedState", "verificationState", "approvalState", "version", ... } ] }` |
 | `list_work_packages` | `{ "workPackages": [ ... ] }` |
 | `list_spec_topics` / `next_open_topics` | `{ "topics": [ ... ] }` |
 
@@ -55,7 +57,7 @@ use `propose_initial_plan` and Owner Plan import for that.
 
 - Active membership in the project.
 - Use **two separate agents** (separate credentials):
-  - **Planning**: `ReadKnowledge` + `WriteKnowledge` (optional `TraverseRelations`) for outline/spec/`propose_initial_plan`.
+  - **Planning**: `ReadKnowledge` + `WriteKnowledge` (optional `TraverseRelations`) for outline/spec/`propose_initial_plan` and Work item status (`list_work_items`, `report_work_item`, `update_work_item_plan_state`).
   - **Execution**: `ReadKnowledge` + `AssembleContext` + `ExecuteWorkflow` for runtimes, leases, and change sets.
 - Tools are capability-gated: a planning key cannot take leases; an execution key cannot submit plan imports.
 - Your grant's classification ceiling limits which knowledge you can see.
@@ -82,7 +84,9 @@ When `read_plan_outline` is empty (new app, or an existing codebase with no prio
    not file paths.
 4. Call `propose_initial_plan` with a stable `idempotencyKey`, `requireEmptyProject: true` (default),
    `knowledge[]`, and `outline[]` with **exactly one** root (`parentRef: null`). Optional:
-   `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`.
+   `relations[]`, `milestones[]`, `workItems[]`, `workLinks[]`, and `codebaseTargets[]` git identities
+   (`provider`, `repositoryId` as `owner/name` or a clean remote URL, `targetBranch`, `baseCommitSha`).
+   Never send clones, blobs, diffs, or source; git hosting remains authoritative.
    Each knowledge draft needs `ref`, `key`, `title`, `typeId`, `schemaVersion`, `classification`,
    `representationKind` (not `SourceCode`), `content`, and `reason`. Work `priority` is
    `Low` / `Normal` / `High` / `Critical`. `workLinks.knowledgeRef` must be in the outline.
@@ -90,7 +94,11 @@ When `read_plan_outline` is empty (new app, or an existing codebase with no prio
 6. Ask the Owner to open Studio → **Plan import**, review the immutable payload, and **Approve and
    materialize**. You cannot approve your own proposal.
 7. After approval, `read_plan_outline` shows the published tree. Continue with `propose_plan_expansion` /
-   `propose_spec_*` for incremental changes.
+   `propose_spec_*` for incremental changes. Update Work item progress with `list_work_items` then
+   `report_work_item` (`done` / `Completed`, `not-done`, `InProgress`, `Blocked`, `Failed`) and
+   `update_work_item_plan_state` (`Planned` / `Ready` / `InProgress` / `Blocked` / `Cancelled`).
+   Those are planning claims. **Verify and approve stay human-only** in Studio Work — there is no MCP
+   verify/approve tool.
 
 Do not look for a submitted bundle under **Coordination**. Coordination contains execution channels,
 runtimes and packages; the pending bundle is under **Plan import**, and its Knowledge/Relations/Work become
@@ -138,10 +146,15 @@ stop and follow section 6.
 | Tool | Use it to | Key arguments |
 | --- | --- | --- |
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
-| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work |
+| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work/`codebaseTargets` |
+| `list_codebase_targets` | List registered git-host pointers (no source) | none |
+| `register_codebase_target` | Record a git identity (`owner/name` or clean remote URL + branch + SHA). Planning only. | `provider`, `repositoryId`, `targetBranch`, `baseCommitSha` |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
 | `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import | none |
 | `list_relation_types` | Discover active relation codes, endpoint constraints, direction and cardinality | none |
+| `list_work_items` | Read Work items and the four independent states | none |
+| `report_work_item` | Planning claim of reported progress (`done`/`Completed`, `not-done`, …). Not verification. | `workItemId` or `key`, `state`, `reason`, optional `expectedVersion` |
+| `update_work_item_plan_state` | Planning update of planned/backlog state | `workItemId` or `key`, `state`, `reason`, optional `expectedVersion` |
 
 The same schema vocabulary is available to the authenticated agent at
 `GET /tenants/{tenantId}/agents/{agentId}/capabilities`. Global `GET /schemas` is a human registry surface;

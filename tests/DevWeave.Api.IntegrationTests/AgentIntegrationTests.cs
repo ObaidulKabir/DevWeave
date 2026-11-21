@@ -646,7 +646,10 @@ public sealed class AgentIntegrationTests : IClassFixture<IdentityTestFactory>
                 "summarize architecture",
                 ActivityStatus.Completed,
                 DateTimeOffset.UtcNow,
-                DateTimeOffset.UtcNow),
+                DateTimeOffset.UtcNow,
+                "openai",
+                "gpt-test",
+                ModelVersion: "2024-01"),
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AgentExecutionResponse>(JsonOptions))!;

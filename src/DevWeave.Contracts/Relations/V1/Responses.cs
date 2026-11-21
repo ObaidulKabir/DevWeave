@@ -11,7 +11,12 @@ public sealed record RelationshipResponse(
     string RelationTypeCode,
     RelationshipStatus Status,
     DateTimeOffset CreatedAt,
-    Guid CreatedBy);
+    Guid CreatedBy,
+    string? Rationale = null,
+    string? SourceReference = null,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null,
+    DateTimeOffset? RevokedAt = null);
 
 public sealed record RelationTypeResponse(
     Guid Id,

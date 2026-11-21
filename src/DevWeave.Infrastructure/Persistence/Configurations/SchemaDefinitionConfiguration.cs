@@ -52,5 +52,21 @@ internal sealed class SchemaDefinitionConfiguration : IEntityTypeConfiguration<S
         // The registry identity is the (Namespace, Version) pair (SRS SCH-001).
         builder.HasIndex(s => new { s.Namespace, s.Version })
             .IsUnique();
+
+        builder.HasData(
+            CanonicalKnowledgeCatalogue.PublishedSchemas()
+                .Select(schema => new
+                {
+                    Id = schema.Id,
+                    schema.Namespace,
+                    schema.Version,
+                    schema.Owner,
+                    schema.Description,
+                    schema.Status,
+                    schema.Document,
+                    schema.CreatedAt,
+                    schema.PublishedAt,
+                })
+                .ToArray());
     }
 }

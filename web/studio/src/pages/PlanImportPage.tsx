@@ -24,6 +24,7 @@ type PlanImportSummary = {
   relationCount: number;
   milestoneCount: number;
   workItemCount: number;
+  codebaseTargetCount?: number;
 };
 
 type PlanImportDetail = PlanImportSummary & {
@@ -47,6 +48,14 @@ type PlanImportDetail = PlanImportSummary & {
     milestones: Array<{ ref: string; key: string; title: string }>;
     workItems: Array<{ ref: string; key: string; title: string; description: string; priority: string }>;
     workLinks?: Array<{ workItemRef: string; knowledgeRef: string }> | null;
+    codebaseTargets?: Array<{
+      ref: string;
+      provider: string;
+      repositoryId: string;
+      targetBranch: string;
+      baseCommitSha: string;
+      reason?: string | null;
+    }> | null;
   };
   resultMapping?: Record<string, string> | null;
 };
@@ -155,7 +164,8 @@ export function PlanImportPage() {
                     </div>
                     <span className="text-sm font-semibold text-[var(--ink)]">{row.idempotencyKey}</span>
                     <span className="text-[11px] text-[var(--muted)]">
-                      {row.knowledgeCount} knowledge · {row.workItemCount} work · {formatWhen(row.proposedAt)}
+                      {row.knowledgeCount} knowledge · {row.workItemCount} work
+                      {(row.codebaseTargetCount ?? 0) > 0 ? ` · ${row.codebaseTargetCount} git` : ''} · {formatWhen(row.proposedAt)}
                     </span>
                   </button>
                 </li>
@@ -227,7 +237,17 @@ export function PlanImportPage() {
                 <p className="mt-1 text-sm text-[var(--muted)]">
                   {detail.payload.relations.length} relations · {detail.payload.milestones.length} milestones ·{' '}
                   {detail.payload.workItems.length} work items · {(detail.payload.workLinks ?? []).length} work links
+                  · {(detail.payload.codebaseTargets ?? []).length} git pointers
                 </p>
+                {(detail.payload.codebaseTargets ?? []).length > 0 ? (
+                  <ul className="mt-2 space-y-1 font-mono text-xs text-[var(--muted)]">
+                    {(detail.payload.codebaseTargets ?? []).map((target) => (
+                      <li key={target.ref}>
+                        {target.provider}:{target.repositoryId} @ {target.targetBranch} #{target.baseCommitSha.slice(0, 12)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 <ul className="mt-2 space-y-1 text-sm">
                   {detail.payload.workItems.map((item) => (
                     <li key={item.ref}>

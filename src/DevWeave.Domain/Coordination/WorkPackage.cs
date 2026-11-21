@@ -25,6 +25,12 @@ public sealed class WorkPackage
     public string Objective { get; }
     public WorkPackageStatus Status { get; private set; }
 
+    /// <summary>
+    /// Prior package this continuation replaces. Null for original packages; never rewritten on the
+    /// predecessor itself.
+    /// </summary>
+    public WorkPackageId? PredecessorWorkPackageId { get; private set; }
+
     /// <summary>The exact approved knowledge revisions (from the package's baseline) this work implements.</summary>
     public IReadOnlyList<Guid> ScopeRevisionIds { get; private set; } = Array.Empty<Guid>();
 
@@ -49,7 +55,8 @@ public sealed class WorkPackage
         WorkPackageStatus status,
         long version,
         DateTimeOffset createdAt,
-        DateTimeOffset updatedAt)
+        DateTimeOffset updatedAt,
+        WorkPackageId? predecessorWorkPackageId = null)
     {
         Id = id;
         TenantId = tenantId;
@@ -62,6 +69,7 @@ public sealed class WorkPackage
         Version = version;
         CreatedAt = createdAt;
         UpdatedAt = updatedAt;
+        PredecessorWorkPackageId = predecessorWorkPackageId;
     }
 
     /// <summary>True when nothing is declared, so a plan change cannot be traced to this package.</summary>
@@ -133,5 +141,42 @@ public sealed class WorkPackage
         Status = WorkPackageStatus.Leased;
         UpdatedAt = DateTimeOffset.UtcNow;
         Version++;
+    }
+
+    /// <summary>
+    /// Creates a replacement package on a new baseline, linked to <paramref name="predecessor"/>. The
+    /// predecessor's historical baseline identity is left untouched.
+    /// </summary>
+    public static WorkPackage CreateContinuation(
+        WorkPackage predecessor,
+        Guid newBaselineId,
+        string continuationKey)
+    {
+        ArgumentNullException.ThrowIfNull(predecessor);
+        if (newBaselineId == Guid.Empty)
+            throw new ArgumentException("Continuation baseline is required.", nameof(newBaselineId));
+        if (string.IsNullOrWhiteSpace(continuationKey))
+            throw new ArgumentException("Continuation key is required.", nameof(continuationKey));
+        if (string.Equals(continuationKey, predecessor.Key, StringComparison.Ordinal))
+            throw new ArgumentException("Continuation key must differ from the predecessor key.");
+
+        var now = DateTimeOffset.UtcNow;
+        var package = new WorkPackage(
+            WorkPackageId.New(),
+            predecessor.TenantId,
+            predecessor.ProjectId,
+            predecessor.CampaignId,
+            newBaselineId,
+            continuationKey.Trim(),
+            predecessor.Objective,
+            WorkPackageStatus.Available,
+            1,
+            now,
+            now,
+            predecessor.Id);
+        package.ScopeRevisionIds = predecessor.ScopeRevisionIds.ToArray();
+        package.ScopeWorkItemIds = predecessor.ScopeWorkItemIds.ToArray();
+        package.ScopeSpecTopics = predecessor.ScopeSpecTopics.ToArray();
+        return package;
     }
 }

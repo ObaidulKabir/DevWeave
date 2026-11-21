@@ -6,16 +6,20 @@ using DevWeave.Domain.Projects;
 namespace DevWeave.Application.Activities;
 
 /// <summary>
-/// Exports a project's provenance timeline as a small PROV-O projection (W3C PROV-O mapping). The
-/// mapping is pure C# over the repository port and does not touch any serialization schema.
+/// Exports a project's provenance timeline as a PROV-O projection (W3C PROV-O mapping) including
+/// optional agent execution metadata (provider/model/configuration) when present.
 /// </summary>
 public sealed class ExportProvenance
 {
     private readonly IActivityRepository _activities;
+    private readonly IAgentExecutionMetadataRepository _metadata;
 
-    public ExportProvenance(IActivityRepository activities)
+    public ExportProvenance(
+        IActivityRepository activities,
+        IAgentExecutionMetadataRepository metadata)
     {
         _activities = activities;
+        _metadata = metadata;
     }
 
     public async Task<IReadOnlyList<ProvenanceRecord>> ExecuteAsync(
@@ -24,19 +28,38 @@ public sealed class ExportProvenance
         CancellationToken ct = default)
     {
         var activities = await _activities.ListForProjectAsync(tenantId, projectId, ct);
+        var metadata = await _metadata.ListForProjectActivitiesAsync(
+            tenantId,
+            activities.Select(a => a.Id).ToArray(),
+            ct);
+        var byActivity = metadata.ToDictionary(m => m.ActivityId);
 
-        return activities.Select(ToRecord).ToList();
+        return activities.Select(activity => ToRecord(
+            activity,
+            byActivity.TryGetValue(activity.Id, out var meta) ? meta : null)).ToList();
     }
 
-    public static ProvenanceRecord ToRecord(Activity activity) =>
+    public static ProvenanceRecord ToRecord(
+        Activity activity,
+        Domain.Agents.AgentExecutionMetadata? metadata = null) =>
         new(
-            activity.Id.Value,                 // prov:Activity
-            activity.Type.ToString(),          // prov:Activity type discriminator
-            activity.Actor.Value,              // prov:Agent
-            activity.Inputs                     // prov:used
+            activity.Id.Value,
+            activity.Type.ToString(),
+            activity.Actor.Value,
+            activity.Inputs
                 .Select(i => new ProvenanceRef(i.ItemId.Value, i.RevisionId.Value))
                 .ToList(),
-            activity.Outputs                    // prov:wasGeneratedBy
+            activity.Outputs
                 .Select(o => new ProvenanceRef(o.ItemId.Value, o.RevisionId.Value))
-                .ToList());
+                .ToList(),
+            metadata is null
+                ? null
+                : new AgentExecutionProvenance(
+                    metadata.Provider,
+                    metadata.Model,
+                    metadata.ModelVersion,
+                    metadata.ConfigurationFingerprint,
+                    metadata.ToolFingerprint,
+                    metadata.ExternalRunReference,
+                    metadata.AuthorizationContext));
 }

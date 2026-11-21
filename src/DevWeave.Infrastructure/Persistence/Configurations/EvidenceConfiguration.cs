@@ -2,6 +2,7 @@ using DevWeave.Domain.Activities;
 using DevWeave.Domain.Artifacts;
 using DevWeave.Domain.Evidence;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -57,9 +58,21 @@ internal sealed class EvidenceConfiguration : IEntityTypeConfiguration<Evidence>
                 id => id == null ? (Guid?)null : id.Value,
                 value => value == null ? null : new ArtifactId(value.Value));
 
+        builder.Property(e => e.CriterionItemId)
+            .HasConversion(
+                id => id == null ? (Guid?)null : id.Value,
+                value => value == null ? null : new KnowledgeItemId(value.Value));
+
+        builder.Property(e => e.CriterionRevisionId)
+            .HasConversion(
+                id => id == null ? (Guid?)null : id.Value,
+                value => value == null ? null : new KnowledgeRevisionId(value.Value));
+
         builder.Property(e => e.RelatedCriterion)
             .IsRequired()
             .HasMaxLength(200);
+
+        builder.HasIndex(e => new { e.TenantId, e.CriterionItemId, e.CriterionRevisionId });
 
         builder.Property(e => e.ReviewState)
             .HasConversion<int>()

@@ -8,7 +8,7 @@ import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
 import { channelMessageCount } from '../lib/coordination';
 import { formatWhen } from '../lib/format';
-import type { PlanImportProposalSummary } from '../lib/types';
+import type { CodebaseTarget, PlanImportProposalSummary } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function OverviewPage() {
@@ -16,6 +16,7 @@ export function OverviewPage() {
     useWorkspace();
   const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [pendingPlanImports, setPendingPlanImports] = useState(0);
+  const [codebaseTargets, setCodebaseTargets] = useState<CodebaseTarget[]>([]);
   const planningSteps = [
     {
       number: '01',
@@ -59,6 +60,7 @@ export function OverviewPage() {
     let cancelled = false;
     if (!live || !tenantId || !project) {
       setPendingPlanImports(0);
+      setCodebaseTargets([]);
       return;
     }
     apiFetch<PlanImportProposalSummary[]>(
@@ -73,6 +75,15 @@ export function OverviewPage() {
       })
       .catch(() => {
         if (!cancelled) setPendingPlanImports(0);
+      });
+    apiFetch<CodebaseTarget[]>(
+      `/tenants/${tenantId}/projects/${project.id}/coordination/codebase-targets`,
+    )
+      .then((rows) => {
+        if (!cancelled) setCodebaseTargets(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCodebaseTargets([]);
       });
     return () => {
       cancelled = true;
@@ -140,6 +151,34 @@ export function OverviewPage() {
         <PlanVersionStatusCard />
         <SpecStatusCard />
       </div>
+
+      <Panel
+        title="Linked repositories"
+        subtitle="Git-host identity only. Source and history stay in the remote. Campaigns pick a target on Coordination."
+      >
+        {codebaseTargets.length === 0 ? (
+          <EmptyState label="No git repositories registered yet. Planning agents send owner/name + branch + SHA via propose_initial_plan or register_codebase_target." />
+        ) : (
+          <div className="divide-y divide-[var(--line)]">
+            {codebaseTargets.map((target) => (
+              <Row
+                key={target.id}
+                title={`${target.provider}:${target.repositoryId}`}
+                subtitle={`${target.targetBranch} · ${target.baseCommitSha.slice(0, 12)}`}
+                meta={
+                  target.browseUrl ? (
+                    <a className="text-xs font-semibold text-[var(--signal)] hover:underline" href={target.browseUrl} target="_blank" rel="noreferrer">
+                      Open host
+                    </a>
+                  ) : (
+                    <span className="font-mono text-[11px] text-[var(--muted)]">{target.canonicalRef}</span>
+                  )
+                }
+              />
+            ))}
+          </div>
+        )}
+      </Panel>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((metric) => (

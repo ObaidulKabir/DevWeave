@@ -42,6 +42,8 @@ public sealed class TaskLeaseConfiguration : IEntityTypeConfiguration<TaskLease>
         builder.Property(l => l.ExpiresAt);
         builder.Property(l => l.CreatedAt);
 
-        builder.HasIndex(l => new { l.WorkPackageId, l.ResourceScope }).IsUnique();
+        builder.HasIndex(l => new { l.WorkPackageId, l.ResourceScope })
+            .IsUnique()
+            .HasFilter("\"Status\" = 'Active'");
     }
 }

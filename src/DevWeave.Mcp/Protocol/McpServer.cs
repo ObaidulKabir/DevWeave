@@ -172,7 +172,20 @@ public sealed class McpServer
             "your own proposal. After approval, use propose_plan_expansion for incremental children and " +
             "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative. " +
             "Planning agents update Work item status with list_work_items then report_work_item (reported/done) " +
-            "or update_work_item_plan_state (planned). Verify and approve stay human-only in Studio."
+            "or update_work_item_plan_state (planned). Verify and approve stay human-only in Studio. " +
+            "You are one desktop agent (Cursor, Claude, or similar) among many, on any device, sharing one git " +
+            "codebase. DevWeave is the control plane, not the IDE and not the git host. Pick one case: " +
+            "C0 connect — register_runtime, list_codebase_targets, then get_plan_status or read_plan_outline; " +
+            "C1 brainstorm and C3 empty plan — Planning only, propose_initial_plan, never send_project_message; " +
+            "C2 specifications — propose_spec_* and wait until a human binds them; " +
+            "C4 later design — propose_plan_expansion; " +
+            "C5 plan moved — if get_work_status says canProgress false, stop coding, report_workthrough Blocked, release_lease; " +
+            "C6 code — one execution agent, one live lease, one disjoint resourceScope, commit in git, never paste source here; " +
+            "C7 test and C8 quality — run locally, claim in report_workthrough or report_work_item; you cannot verify or approve; " +
+            "C9 handoff — release_lease, then send_project_message the SHA, paths, and remaining scope before another device continues; " +
+            "C10 integrate — request_integration queues a reference, it does not merge; " +
+            "C11 production — there is no deploy tool; deploy only after a human has verified and approved in Studio or the API. " +
+            "A second device must register its own runtime and must not heartbeat a lease held elsewhere."
     };
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
@@ -232,7 +245,7 @@ public sealed class McpServer
         NamedTool("heartbeat_lease", "Renew an exclusive work-package lease fencing token",
             new { leaseId = UuidProp(), expectedFence = new { type = "integer" }, expiresAt = StringProp() },
             new[] { "leaseId", "expectedFence", "expiresAt" }),
-        NamedTool("request_assignment", "Acquire an exclusive lease for a work package resource scope",
+        NamedTool("request_assignment", "Acquire an exclusive lease for one disjoint resourceScope. One desktop agent and one device hold it. Another agent or device must choose a different scope or wait. Do not code before this succeeds.",
             new { workPackageId = UuidProp(), resourceScope = StringProp(), expiresAt = StringProp(), idempotencyKey = StringProp() },
             new[] { "workPackageId", "resourceScope", "expiresAt", "idempotencyKey" }),
         NamedTool("get_plan_status", "Current plan version and every campaign with the plan version it runs on. Call at start-up and whenever a request is refused",
@@ -260,7 +273,7 @@ public sealed class McpServer
                 commitSha = StringProp(), changedPaths = new { type = "array", items = StringProp() },
             },
             new[] { "workPackageId", "codebaseTargetId", "providerRef", "commitSha" }),
-        NamedTool("report_workthrough", "Write a workthrough for a work package: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason, optional whatSucceeded for partial progress). Agent claim only — not verification or approval. Allowed even when canProgress is false. Do not paste source or secrets",
+        NamedTool("report_workthrough", "Case C7/C8 claim for a work package you leased: kind Succeeded (outcome + whatSucceeded) or Blocked (outcome + blockedReason). Use this for local test and quality results. Not verification, approval, merge, or production deploy. Allowed even when canProgress is false. Do not paste source, secrets, or secret-bearing logs",
             new
             {
                 workPackageId = UuidProp(),
@@ -483,7 +496,7 @@ public sealed class McpServer
             "open_channel" => await OpenChannelFromArgsAsync(scope, args, ct),
             "list_channels" => await ListChannelsAsync(scope, ct),
             "register_runtime" => await RegisterRuntimeFromArgsAsync(scope, args, ct),
-            "heartbeat_lease" => await RenewLeaseFromArgsAsync(scope, args, ct),
+            "heartbeat_lease" => await RenewLeaseFromArgsAsync(scope, runtimeId, args, ct),
             "request_assignment" => await AcquireLeaseFromArgsAsync(scope, runtimeId, args, ct),
             "list_ready_work" or "create_work_package" => await CreatePackageFromArgsAsync(scope, args, ct),
             "get_plan_status" => await _status.GetPlanStatusAsync(scope, ct),
@@ -493,7 +506,7 @@ public sealed class McpServer
                     scope, args.GetProperty("campaignId").GetGuid(), ct),
             },
             "get_work_status" => await _status.GetWorkStatusAsync(scope, args.GetProperty("workPackageId").GetGuid(), ct),
-            "release_lease" => await ReleaseLeaseFromArgsAsync(scope, args, ct),
+            "release_lease" => await ReleaseLeaseFromArgsAsync(scope, runtimeId, args, ct),
             "submit_change_set" => await SubmitChangeSetFromArgsAsync(scope, args, ct),
             "report_workthrough" => await ReportWorkthroughFromArgsAsync(scope, args, ct),
             "request_integration" => new
@@ -812,9 +825,15 @@ public sealed class McpServer
         return new { id };
     }
 
-    private async Task<object> ReleaseLeaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    private async Task<object> ReleaseLeaseFromArgsAsync(
+        AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)
     {
-        await _leases.ReleaseAsync(scope, args.GetProperty("leaseId").GetGuid(), args.GetProperty("expectedFence").GetInt64(), ct);
+        await _leases.ReleaseAsync(
+            scope,
+            args.GetProperty("leaseId").GetGuid(),
+            args.GetProperty("expectedFence").GetInt64(),
+            runtimeId,
+            ct);
         return new { released = true };
     }
 
@@ -885,12 +904,13 @@ public sealed class McpServer
         _ => null,
     };
 
-    private async Task<object> RenewLeaseFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    private async Task<object> RenewLeaseFromArgsAsync(
+        AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)
     {
         var leaseId = args.GetProperty("leaseId").GetGuid();
         var fence = args.GetProperty("expectedFence").GetInt64();
         var expiresAt = DateTimeOffset.Parse(args.GetProperty("expiresAt").GetString()!);
-        return await _leases.RenewAsync(scope, leaseId, fence, expiresAt, ct);
+        return await _leases.RenewAsync(scope, leaseId, fence, expiresAt, runtimeId, ct);
     }
 
     private async Task<object> AcquireLeaseFromArgsAsync(AuthorizedScope scope, Guid runtimeId, JsonElement args, CancellationToken ct)

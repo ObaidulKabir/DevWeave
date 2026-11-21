@@ -37,9 +37,10 @@ internal sealed class AgentExecutionMetadataRepository : IAgentExecutionMetadata
         if (activityIds.Count == 0)
             return Array.Empty<AgentExecutionMetadata>();
 
-        var ids = activityIds.Select(id => id.Value).ToArray();
+        // Compare the converted id itself. Contains on ActivityId.Value is not translated by EF.
+        var ids = activityIds.Distinct().ToArray();
         return await _db.AgentExecutionMetadata
-            .Where(m => m.TenantId == tenantId && ids.Contains(m.ActivityId.Value))
+            .Where(m => m.TenantId == tenantId && ids.Contains(m.ActivityId))
             .ToListAsync(ct);
     }
 }

@@ -515,7 +515,7 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             await Assert.ThrowsAsync<ConflictException>(() => leases.AcquireAsync(owner, new LeaseRequest(
                 packageId, runtimeId, "src/other", DateTimeOffset.UtcNow.AddMinutes(10), 0, "lease-2")));
             await Assert.ThrowsAsync<ConflictException>(() =>
-                leases.RenewAsync(owner, leaseId, fence, DateTimeOffset.UtcNow.AddMinutes(20)));
+                leases.RenewAsync(owner, leaseId, fence, DateTimeOffset.UtcNow.AddMinutes(20), runtimeId));
             await Assert.ThrowsAsync<ConflictException>(() => services.GetRequiredService<ICodebaseRegistry>()
                 .RecordChangeSetAsync(owner, new ChangeSetDraft(packageId, targetId, "github:pr/2", "aaa1111", ["src/app/x.cs"])));
 
@@ -524,7 +524,7 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             Assert.Contains("suspended", decision.Reason);
 
             // Releasing a lease is always allowed, so agents can let go cleanly.
-            await leases.ReleaseAsync(owner, leaseId, fence);
+            await leases.ReleaseAsync(owner, leaseId, fence, runtimeId);
         }
 
         // The REST surface Studio reads from reports the same status.

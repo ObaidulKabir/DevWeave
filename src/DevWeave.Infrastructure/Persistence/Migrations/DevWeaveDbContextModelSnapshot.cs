@@ -1198,7 +1198,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("WorkPackageId", "ResourceScope")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'Active'");
 
                     b.ToTable("task_leases", (string)null);
                 });

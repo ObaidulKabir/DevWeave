@@ -515,30 +515,34 @@ public static class CoordinationEndpoints
 
     private static async Task<IResult> RenewLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] RenewLeaseRequest request,
+        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             var lease = await leases.RenewAsync(
-                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, ct);
+                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, runtimeId, ct);
             return Results.Ok(lease);
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (UnauthorizedTenantException) { return Results.Forbid(); }
     }
 
     private static async Task<IResult> ReleaseLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] ReleaseLeaseRequest request,
+        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             await leases.ReleaseAsync(
-                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, ct);
+                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, runtimeId, ct);
             return Results.NoContent();
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (UnauthorizedTenantException) { return Results.Forbid(); }
     }
 
     private static async Task<IResult> OpenChannelAsync(

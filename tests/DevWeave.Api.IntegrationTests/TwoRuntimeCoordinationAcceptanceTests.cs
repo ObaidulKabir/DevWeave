@@ -119,6 +119,8 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
             new LeaseRequest(packageB, runtimeB, "paths:/ui", DateTimeOffset.UtcNow.AddHours(1), 0, "lease-b"), Json);
         Assert.Equal(HttpStatusCode.Created, leaseBResponse.StatusCode);
 
+        clientA.DefaultRequestHeaders.Remove("X-Runtime-Id");
+        clientA.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeA.ToString());
         var renew = await clientA.PostAsJsonAsync($"{basePath}/leases/{leaseA.Id}/renew",
             new { expectedFence = leaseA.Fence, expiresAt = DateTimeOffset.UtcNow.AddHours(2) }, Json);
         Assert.Equal(HttpStatusCode.OK, renew.StatusCode);

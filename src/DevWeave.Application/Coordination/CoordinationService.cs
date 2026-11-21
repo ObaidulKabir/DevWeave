@@ -267,13 +267,21 @@ public sealed class CoordinationService :
         return Map(lease);
     }
 
-    public async Task<LeaseView> RenewAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, DateTimeOffset expiresAt, CancellationToken ct = default)
+    public async Task<LeaseView> RenewAsync(
+        AuthorizedScope scope,
+        Guid leaseId,
+        long expectedFence,
+        DateTimeOffset expiresAt,
+        Guid runtimeId,
+        CancellationToken ct = default)
     {
         var lease = await _repository.GetLeaseByIdAsync(scope.TenantId, new LeaseId(leaseId), ct)
             ?? throw new NotFoundException("Lease not found.");
 
         if (lease.ProjectId != scope.ProjectId)
             throw new NotFoundException("Lease not found.");
+
+        EnsureHoldingRuntime(lease, runtimeId);
 
         // A lease cannot be kept alive on work the plan has moved away from; it is left to expire.
         await RequireOpenPackageAsync(scope, lease.WorkPackageId.Value, "continued", ct);
@@ -291,13 +299,20 @@ public sealed class CoordinationService :
         return Map(lease);
     }
 
-    public async Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, CancellationToken ct = default)
+    public async Task ReleaseAsync(
+        AuthorizedScope scope,
+        Guid leaseId,
+        long expectedFence,
+        Guid runtimeId,
+        CancellationToken ct = default)
     {
         var lease = await _repository.GetLeaseByIdAsync(scope.TenantId, new LeaseId(leaseId), ct)
             ?? throw new NotFoundException("Lease not found.");
 
         if (lease.ProjectId != scope.ProjectId)
             throw new NotFoundException("Lease not found.");
+
+        EnsureHoldingRuntime(lease, runtimeId);
 
         try
         {
@@ -309,6 +324,13 @@ public sealed class CoordinationService :
         }
 
         await _uow.SaveChangesAsync(ct);
+    }
+
+    private static void EnsureHoldingRuntime(TaskLease lease, Guid runtimeId)
+    {
+        if (runtimeId == Guid.Empty || lease.RuntimeId.Value != runtimeId)
+            throw new UnauthorizedTenantException(
+                "Only the runtime that holds this lease can renew or release it.");
     }
 
     // --- IPlanBaselines ---
@@ -1144,17 +1166,18 @@ public sealed class CoordinationService :
         if (!Enum.TryParse<WorkthroughKind>(kind, ignoreCase: true, out var parsedKind))
             throw new ArgumentException("kind must be Succeeded or Blocked.", nameof(kind));
 
+        // Identity is checked before the plan gate. An agent that never held a lease is forbidden even
+        // when the plan has also moved; a plan-change conflict is only for an agent that did the work.
+        // The lease may have expired, been released, or been stopped by a plan change: a final claim is
+        // still allowed, but one agent cannot overwrite what another reports about work it never touched.
+        if (!await ActorHeldLeaseAsync(scope, package.Id, ct))
+            throw new UnauthorizedTenantException(
+                "Only an agent that held a lease on this work package can report a workthrough for it.");
+
         // A success report is a progress transition and must pass the same eligibility gate as leases
         // and integration. A blocked/rejected-attempt report may still be recorded without moving Work.
         if (parsedKind == WorkthroughKind.Succeeded)
             await RequireOpenPackageAsync(scope, workPackageId, "reported", ct);
-
-        // Only an agent that actually held a lease on this package may report on it. The lease may have
-        // expired, been released, or been stopped by a plan change: a final claim is still allowed, but one
-        // agent cannot overwrite what another reports about work it never touched.
-        if (!await ActorHeldLeaseAsync(scope, package.Id, ct))
-            throw new UnauthorizedTenantException(
-                "Only an agent that held a lease on this work package can report a workthrough for it.");
 
         // The same content policy as every other free-text ingress: no secrets and no source code.
         var text = string.Join("\n", new[] { outcome, whatSucceeded, blockedReason }

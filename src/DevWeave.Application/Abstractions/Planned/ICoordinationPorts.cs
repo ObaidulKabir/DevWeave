@@ -81,8 +81,8 @@ public interface ILeaseAuthority
     Task<LeaseView> AcquireAsync(AuthorizedScope scope, LeaseRequest request,
         CancellationToken ct = default);
     Task<LeaseView> RenewAsync(AuthorizedScope scope, Guid leaseId, long expectedFence,
-        DateTimeOffset expiresAt, CancellationToken ct = default);
-    Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence,
+        DateTimeOffset expiresAt, Guid runtimeId, CancellationToken ct = default);
+    Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, Guid runtimeId,
         CancellationToken ct = default);
 }
 

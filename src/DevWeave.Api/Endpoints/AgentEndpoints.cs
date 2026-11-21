@@ -572,5 +572,8 @@ public static class AgentEndpoints
                     entry.RevisionId.Value,
                     entry.Position,
                     entry.Representation))
-                .ToList());
+                .ToList(),
+            package.IsStale,
+            package.StaleAt,
+            package.StaleReason);
 }

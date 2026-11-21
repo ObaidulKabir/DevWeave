@@ -1,5 +1,6 @@
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Projects;
 
 namespace DevWeave.Domain.Planning;
 
@@ -162,36 +163,76 @@ public enum SemanticConflictResolutionKind
     RequestRevision = 5,
 }
 
+public sealed record SemanticConflictId(Guid Value)
+{
+    public static SemanticConflictId New() => new(Guid.NewGuid());
+}
+
 /// <summary>
 /// A semantic conflict preserves both competing revisions until an authorized resolution is recorded.
 /// It never applies last-writer-wins.
 /// </summary>
 public sealed class SemanticConflict
 {
+    public SemanticConflictId Id { get; }
+    public TenantId TenantId { get; }
+    public ProjectId ProjectId { get; }
     public KnowledgeRevisionId LeftRevisionId { get; }
     public KnowledgeRevisionId RightRevisionId { get; }
     public string Reason { get; }
+    public PrincipalId RecordedBy { get; }
+    public DateTimeOffset RecordedAt { get; }
     public bool IsResolved { get; private set; }
     public SemanticConflictResolutionKind? Resolution { get; private set; }
     public PrincipalId? ResolvedBy { get; private set; }
     public DateTimeOffset? ResolvedAt { get; private set; }
     public string? ResolutionReason { get; private set; }
 
-    public SemanticConflict(
+    private SemanticConflict(
+        SemanticConflictId id,
+        TenantId tenantId,
+        ProjectId projectId,
         KnowledgeRevisionId leftRevisionId,
         KnowledgeRevisionId rightRevisionId,
-        string reason)
+        string reason,
+        PrincipalId recordedBy,
+        DateTimeOffset recordedAt)
+    {
+        Id = id;
+        TenantId = tenantId;
+        ProjectId = projectId;
+        LeftRevisionId = leftRevisionId;
+        RightRevisionId = rightRevisionId;
+        Reason = reason;
+        RecordedBy = recordedBy;
+        RecordedAt = recordedAt;
+    }
+
+    public static SemanticConflict Record(
+        TenantId tenantId,
+        ProjectId projectId,
+        KnowledgeRevisionId leftRevisionId,
+        KnowledgeRevisionId rightRevisionId,
+        string reason,
+        PrincipalId recordedBy)
     {
         ArgumentNullException.ThrowIfNull(leftRevisionId);
         ArgumentNullException.ThrowIfNull(rightRevisionId);
+        ArgumentNullException.ThrowIfNull(recordedBy);
         if (leftRevisionId == rightRevisionId)
             throw new ArgumentException("A semantic conflict requires two distinct revisions.");
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("Semantic conflict reason is required.", nameof(reason));
 
-        LeftRevisionId = leftRevisionId;
-        RightRevisionId = rightRevisionId;
-        Reason = reason.Trim();
+        return new SemanticConflict(
+            SemanticConflictId.New(),
+            tenantId,
+            projectId,
+            leftRevisionId,
+            rightRevisionId,
+            reason.Trim(),
+            recordedBy,
+            DateTimeOffset.UtcNow);
     }
 
     public void Resolve(
@@ -213,4 +254,7 @@ public sealed class SemanticConflict
         ResolvedAt = DateTimeOffset.UtcNow;
         ResolutionReason = reason.Trim();
     }
+
+    public bool InvolvesRevision(KnowledgeRevisionId revisionId) =>
+        LeftRevisionId == revisionId || RightRevisionId == revisionId;
 }

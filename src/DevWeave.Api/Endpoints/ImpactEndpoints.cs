@@ -31,6 +31,9 @@ public static class ImpactEndpoints
         group.MapPost("/impact-reports/{reportId:guid}/rebase-decisions", AuthorizeRebaseAsync);
         group.MapGet("/impact-reports/{reportId:guid}/rebase-decisions", ListRebaseDecisionsAsync);
 
+        group.MapPost("/semantic-conflicts", RecordConflictAsync);
+        group.MapPost("/semantic-conflicts/{conflictId:guid}/resolve", ResolveConflictAsync);
+
         return endpoints;
     }
 
@@ -234,6 +237,74 @@ public static class ImpactEndpoints
         }
     }
 
+    private static async Task<IResult> RecordConflictAsync(
+        Guid tenantId,
+        Guid projectId,
+        RecordSemanticConflictRequest request,
+        HttpContext http,
+        RecordSemanticConflict useCase,
+        CancellationToken ct)
+    {
+        try
+        {
+            var conflict = await useCase.ExecuteAsync(
+                new TenantId(tenantId),
+                new ProjectId(projectId),
+                new KnowledgeRevisionId(request.LeftRevisionId),
+                new KnowledgeRevisionId(request.RightRevisionId),
+                request.Reason,
+                AuthenticatedPrincipal.GetId(http),
+                ct);
+
+            return Results.Created(
+                $"/tenants/{tenantId}/projects/{projectId}/semantic-conflicts/{conflict.Id.Value}",
+                Map(conflict));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new ImpactError("invalid-conflict", ex.Message));
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static async Task<IResult> ResolveConflictAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid conflictId,
+        ResolveSemanticConflictRequest request,
+        HttpContext http,
+        ResolveSemanticConflict useCase,
+        CancellationToken ct)
+    {
+        try
+        {
+            var conflict = await useCase.ExecuteAsync(
+                new TenantId(tenantId),
+                new ProjectId(projectId),
+                new SemanticConflictId(conflictId),
+                request.Resolution,
+                request.Reason,
+                AuthenticatedPrincipal.GetId(http),
+                ct);
+            return Results.Ok(Map(conflict));
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+        catch (ConflictException ex)
+        {
+            return Results.Conflict(new ImpactError("invalid-resolution", ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new ImpactError("invalid-resolution", ex.Message));
+        }
+    }
+
     private static RequirementChangeSetResponse Map(RequirementChangeSet changeSet) =>
         new(
             changeSet.Id.Value,
@@ -282,5 +353,23 @@ public static class ImpactEndpoints
             decision.AuthorizedBy.Value,
             decision.AuthorizedAt,
             decision.Reason,
-            decision.AllowsCampaignResume);
+            decision.AllowsCampaignResume,
+            decision.ContinuationWorkPackageId?.Value,
+            decision.RequiresContextRefresh);
+
+    private static SemanticConflictResponse Map(SemanticConflict conflict) =>
+        new(
+            conflict.Id.Value,
+            conflict.TenantId.Value,
+            conflict.ProjectId.Value,
+            conflict.LeftRevisionId.Value,
+            conflict.RightRevisionId.Value,
+            conflict.Reason,
+            conflict.RecordedBy.Value,
+            conflict.RecordedAt,
+            conflict.IsResolved,
+            conflict.Resolution,
+            conflict.ResolvedBy?.Value,
+            conflict.ResolvedAt,
+            conflict.ResolutionReason);
 }

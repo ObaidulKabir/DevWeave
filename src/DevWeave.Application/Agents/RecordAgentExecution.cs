@@ -83,6 +83,13 @@ public sealed class RecordAgentExecution
         if (package.AgentId != agentId)
             throw new NotFoundException($"Context package '{packageId}' does not belong to agent '{agentId}'.");
 
+        if (package.IsStale)
+        {
+            throw new ConflictException(
+                $"Context package '{packageId}' is stale"
+                + (package.StaleReason is null ? "." : $": {package.StaleReason}"));
+        }
+
         var now = DateTimeOffset.UtcNow;
         var credentials = await _credentials.ListForAgentAsync(tenantId, agentId, ct);
         if (!credentials.Any(c => c.IsActive(now)))

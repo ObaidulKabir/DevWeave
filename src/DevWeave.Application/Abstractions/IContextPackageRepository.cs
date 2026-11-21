@@ -1,5 +1,6 @@
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 
 namespace DevWeave.Application.Abstractions;
@@ -19,5 +20,28 @@ public interface IContextPackageRepository
         ProjectId projectId,
         PrincipalId agentId,
         string idempotencyKey,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<ContextPackage>> ListCurrentByProjectAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        CancellationToken ct = default);
+
+    Task<ContextPackage?> GetLatestCurrentForTaskAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        string taskKey,
+        CancellationToken ct = default);
+
+    Task<ContextPackage?> GetLatestForTaskAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        string taskKey,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<ContextPackage>> ListCurrentPinningRevisionsAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        IReadOnlyCollection<KnowledgeRevisionId> revisionIds,
         CancellationToken ct = default);
 }

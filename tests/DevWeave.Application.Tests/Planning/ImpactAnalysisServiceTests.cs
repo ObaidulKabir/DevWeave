@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Planning;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
@@ -111,6 +112,118 @@ public sealed class ImpactAnalysisServiceTests
         Assert.Equal(ImpactDisposition.Orphaned, Assert.Single(report.Findings).Disposition);
     }
 
+    [Fact]
+    public async Task Analyze_split_reviews_historical_implements_links_without_copying_them()
+    {
+        var fakes = new Fakes();
+        var tenant = Tenant.Create("Impact Corp");
+        var actor = Principal.Create(tenant.Id, "owner@impact.test", PrincipalType.Human);
+        var project = Project.Create(tenant.Id, "Shop", "shop", null, LifecycleProfileId.New(), actor.Id);
+
+        var requirement = KnowledgeItem.Create(
+            tenant.Id, project.Id, "fr-1", "FR", Classification.Internal,
+            RepresentationKind.Text, "requirements.functional", "1.0", actor.Id);
+        var implementation = KnowledgeItem.Create(
+            tenant.Id, project.Id, "impl-1", "Impl", Classification.Internal,
+            RepresentationKind.Text, "implementation.component", "1.0", actor.Id);
+        var previous = requirement.AddRevision("1.0", "{\"v\":1}", actor.Id, "seed", null, null, 0);
+        var left = requirement.AddRevision("1.0", "{\"v\":2a}", actor.Id, "split-a", null, previous.Id, 1);
+        var right = KnowledgeItem.Create(
+            tenant.Id, project.Id, "fr-1b", "FR b", Classification.Internal,
+            RepresentationKind.Text, "requirements.functional", "1.0", actor.Id);
+        var rightRevision = right.AddRevision("1.0", "{\"v\":2b}", actor.Id, "split-b", null, null, 0);
+        var implRevision = implementation.AddRevision("1.0", "{\"v\":1}", actor.Id, "seed", null, null, 0);
+        await fakes.Items.AddAsync(requirement);
+        await fakes.Items.AddAsync(implementation);
+        await fakes.Items.AddAsync(right);
+        await fakes.Revisions.AddAsync(previous);
+        await fakes.Revisions.AddAsync(left);
+        await fakes.Revisions.AddAsync(rightRevision);
+        await fakes.Revisions.AddAsync(implRevision);
+
+        var historical = Relationship.Create(
+            tenant.Id, project.Id, implementation.Id, requirement.Id, RelationTypeCodes.Implements, actor.Id);
+        await fakes.Relationships.AddAsync(historical);
+
+        var changeSet = RequirementChangeSet.Create(
+            tenant.Id,
+            project.Id,
+            actor.Id,
+            [
+                new RequirementChangeDescriptor(
+                    RequirementChangeKind.Split,
+                    [previous.Id],
+                    [left.Id, rightRevision.Id],
+                    actor.Id,
+                    "split cart and checkout",
+                    DateTimeOffset.UtcNow,
+                    "split-1"),
+            ]);
+
+        var report = await new ImpactAnalysisService(fakes.Revisions, fakes.Items, fakes.Relationships)
+            .AnalyzeAsync(changeSet, actor.Id);
+
+        var finding = Assert.Single(report.Findings);
+        Assert.Equal(implementation.Id.Value, finding.ItemId);
+        Assert.Equal(ImpactDisposition.ReviewRequired, finding.Disposition);
+        Assert.Equal(RelationshipStatus.Active, historical.Status);
+        Assert.Equal(requirement.Id, historical.TargetItemId);
+    }
+
+    [Fact]
+    public async Task Analyze_includes_open_work_packages_whose_scope_pins_changed_revisions()
+    {
+        var fakes = new Fakes();
+        var tenant = Tenant.Create("Impact Corp");
+        var actor = Principal.Create(tenant.Id, "owner@impact.test", PrincipalType.Human);
+        var project = Project.Create(tenant.Id, "Shop", "shop", null, LifecycleProfileId.New(), actor.Id);
+
+        var requirement = KnowledgeItem.Create(
+            tenant.Id, project.Id, "fr-1", "FR", Classification.Internal,
+            RepresentationKind.Text, "requirements.functional", "1.0", actor.Id);
+        var previousA = requirement.AddRevision("1.0", "{\"v\":1}", actor.Id, "seed-a", null, null, 0);
+        var previousB = requirement.AddRevision("1.0", "{\"v\":1b}", actor.Id, "seed-b", null, previousA.Id, 1);
+        var merged = requirement.AddRevision("1.0", "{\"v\":2}", actor.Id, "merge", null, previousB.Id, 2);
+        await fakes.Items.AddAsync(requirement);
+        await fakes.Revisions.AddAsync(previousA);
+        await fakes.Revisions.AddAsync(previousB);
+        await fakes.Revisions.AddAsync(merged);
+
+        var campaign = ExecutionCampaign.Create(tenant.Id, project.Id, Guid.NewGuid(), "ship", "Mediated");
+        var affected = WorkPackage.Create(
+            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-a", "implement A",
+            scopeRevisionIds: [previousA.Id.Value]);
+        var outside = WorkPackage.Create(
+            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-b", "unrelated",
+            scopeRevisionIds: [Guid.NewGuid()]);
+        fakes.WorkPackages.Items.Add(affected);
+        fakes.WorkPackages.Items.Add(outside);
+
+        var changeSet = RequirementChangeSet.Create(
+            tenant.Id,
+            project.Id,
+            actor.Id,
+            [
+                new RequirementChangeDescriptor(
+                    RequirementChangeKind.Merged,
+                    [previousA.Id, previousB.Id],
+                    [merged.Id],
+                    actor.Id,
+                    "merge checkout flows",
+                    DateTimeOffset.UtcNow,
+                    "merge-1"),
+            ]);
+
+        var report = await new ImpactAnalysisService(
+                fakes.Revisions, fakes.Items, fakes.Relationships, fakes.WorkPackages)
+            .AnalyzeAsync(changeSet, actor.Id);
+
+        var packageFinding = Assert.Single(report.Findings, finding => finding.ResourceKind == "work.package");
+        Assert.Equal(affected.Id.Value, packageFinding.ItemId);
+        Assert.Equal(ImpactDisposition.ReviewRequired, packageFinding.Disposition);
+        Assert.DoesNotContain(report.Findings, finding => finding.ItemId == outside.Id.Value);
+    }
+
     private sealed class Fakes
     {
         public InMemoryPrincipalRepository Principals { get; } = new();
@@ -118,6 +231,18 @@ public sealed class ImpactAnalysisServiceTests
         public InMemoryKnowledgeItemRepository Items { get; } = new();
         public InMemoryKnowledgeRevisionRepository Revisions { get; } = new();
         public InMemoryRelationshipRepository Relationships { get; } = new();
+        public InMemoryWorkPackageImpactSource WorkPackages { get; } = new();
+    }
+
+    private sealed class InMemoryWorkPackageImpactSource : IWorkPackageImpactSource
+    {
+        public List<WorkPackage> Items { get; } = new();
+
+        public Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            CancellationToken ct = default) =>
+            Task.FromResult(Items.Where(package => package.TenantId == tenantId && package.ProjectId == projectId).ToList());
     }
 
     private sealed class InMemoryPrincipalRepository : IPrincipalRepository

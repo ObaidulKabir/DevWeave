@@ -86,7 +86,10 @@ public sealed record ContextPackageResponse(
     Guid AgentId,
     string? IdempotencyKey,
     DateTimeOffset CreatedAt,
-    IReadOnlyList<ContextPackageEntryResponse> Entries);
+    IReadOnlyList<ContextPackageEntryResponse> Entries,
+    bool IsStale = false,
+    DateTimeOffset? StaleAt = null,
+    string? StaleReason = null);
 
 /// <summary>The append-only activity created when an agent execution is recorded (AGT-005).</summary>
 public sealed record AgentExecutionResponse(

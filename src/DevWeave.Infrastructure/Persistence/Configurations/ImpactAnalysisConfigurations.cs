@@ -1,5 +1,6 @@
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Planning;
 using DevWeave.Domain.Projects;
 using Microsoft.EntityFrameworkCore;
@@ -133,6 +134,10 @@ internal sealed class PlanRebaseDecisionConfiguration : IEntityTypeConfiguration
             .HasConversion(id => id.Value, value => new PrincipalId(value));
         builder.Property(decision => decision.AuthorizedAt);
         builder.Property(decision => decision.Reason).HasMaxLength(2000).IsRequired();
+        builder.Property(decision => decision.ContinuationWorkPackageId)
+            .HasConversion(
+                id => id == null ? (Guid?)null : id.Value,
+                value => value == null ? null : new WorkPackageId(value.Value));
 
         builder.HasIndex(decision => new { decision.TenantId, decision.WorkPackageId, decision.AuthorizedAt });
         builder.HasIndex(decision => new { decision.TenantId, decision.ImpactReportId });
@@ -143,6 +148,49 @@ internal sealed class PlanRebaseDecisionConfiguration : IEntityTypeConfiguration
         builder.HasOne<Project>()
             .WithMany()
             .HasForeignKey(decision => decision.ProjectId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+internal sealed class SemanticConflictConfiguration : IEntityTypeConfiguration<SemanticConflict>
+{
+    public void Configure(EntityTypeBuilder<SemanticConflict> builder)
+    {
+        builder.ToTable("semantic_conflicts");
+        builder.HasKey(conflict => conflict.Id);
+
+        builder.Property(conflict => conflict.Id)
+            .HasConversion(id => id.Value, value => new SemanticConflictId(value))
+            .ValueGeneratedNever();
+        builder.Property(conflict => conflict.TenantId)
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        builder.Property(conflict => conflict.ProjectId)
+            .HasConversion(id => id.Value, value => new ProjectId(value));
+        builder.Property(conflict => conflict.LeftRevisionId)
+            .HasConversion(id => id.Value, value => new KnowledgeRevisionId(value));
+        builder.Property(conflict => conflict.RightRevisionId)
+            .HasConversion(id => id.Value, value => new KnowledgeRevisionId(value));
+        builder.Property(conflict => conflict.Reason).HasMaxLength(2000).IsRequired();
+        builder.Property(conflict => conflict.RecordedBy)
+            .HasConversion(id => id.Value, value => new PrincipalId(value));
+        builder.Property(conflict => conflict.RecordedAt);
+        builder.Property(conflict => conflict.IsResolved);
+        builder.Property(conflict => conflict.Resolution).HasConversion<int?>();
+        builder.Property(conflict => conflict.ResolvedBy)
+            .HasConversion(
+                id => id == null ? (Guid?)null : id.Value,
+                value => value == null ? null : new PrincipalId(value.Value));
+        builder.Property(conflict => conflict.ResolvedAt);
+        builder.Property(conflict => conflict.ResolutionReason).HasMaxLength(2000);
+
+        builder.HasIndex(conflict => new { conflict.TenantId, conflict.ProjectId, conflict.IsResolved });
+        builder.HasOne<Tenant>()
+            .WithMany()
+            .HasForeignKey(conflict => conflict.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Project>()
+            .WithMany()
+            .HasForeignKey(conflict => conflict.ProjectId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

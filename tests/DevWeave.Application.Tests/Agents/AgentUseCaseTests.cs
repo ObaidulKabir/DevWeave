@@ -612,6 +612,32 @@ public sealed class AgentUseCaseTests
     }
 
     [Fact]
+    public async Task AGT_005_record_execution_refuses_stale_context_without_changing_work()
+    {
+        var fakes = CreateFakes();
+        var seed = await SeedAuthorizedScenarioAsync(fakes);
+
+        var grant = AgentGrant.Propose(seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, AgentCapability.ReadKnowledge, null);
+        grant.Approve(seed.Approver.Id);
+        await fakes.Grants.AddAsync(grant);
+
+        var package = await AssembleUseCase(fakes).ExecuteAsync(
+            seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, "review", "idem-1",
+            new[] { seed.TextItem.Id });
+        package.MarkStale("requirement change invalidated pinned revisions");
+
+        var before = fakes.Activities.Items.Count;
+        var record = CreateRecordExecution(fakes);
+        var error = await Assert.ThrowsAsync<ConflictException>(() => record.ExecuteAsync(
+            seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, package.Id, "summarize",
+            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            "openai", "gpt-test"));
+
+        Assert.Contains("stale", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, fakes.Activities.Items.Count);
+    }
+
+    [Fact]
     public async Task reads_never_disclose_cross_tenant_agent_records()
     {
         var fakes = CreateFakes();
@@ -846,7 +872,51 @@ public sealed class AgentUseCaseTests
 
         public Task<ContextPackage?> FindByIdempotencyKeyAsync(TenantId tenantId, ProjectId projectId, PrincipalId agentId, string idempotencyKey, CancellationToken ct = default) =>
             Task.FromResult(Packages.FirstOrDefault(p =>
-                p.TenantId == tenantId && p.ProjectId == projectId && p.AgentId == agentId && p.IdempotencyKey == idempotencyKey));
+                p.TenantId == tenantId
+                && p.ProjectId == projectId
+                && p.AgentId == agentId
+                && p.IdempotencyKey == idempotencyKey
+                && !p.IsStale));
+
+        public Task<IReadOnlyList<ContextPackage>> ListCurrentByProjectAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ContextPackage>>(
+                Packages.Where(p => p.TenantId == tenantId && p.ProjectId == projectId && !p.IsStale).ToList());
+
+        public Task<ContextPackage?> GetLatestCurrentForTaskAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            string taskKey,
+            CancellationToken ct = default) =>
+            Task.FromResult(Packages
+                .Where(p => p.TenantId == tenantId && p.ProjectId == projectId && p.TaskKey == taskKey && !p.IsStale)
+                .OrderByDescending(p => p.CreatedAt)
+                .FirstOrDefault());
+
+        public Task<ContextPackage?> GetLatestForTaskAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            string taskKey,
+            CancellationToken ct = default) =>
+            Task.FromResult(Packages
+                .Where(p => p.TenantId == tenantId && p.ProjectId == projectId && p.TaskKey == taskKey)
+                .OrderByDescending(p => p.CreatedAt)
+                .FirstOrDefault());
+
+        public Task<IReadOnlyList<ContextPackage>> ListCurrentPinningRevisionsAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            IReadOnlyCollection<KnowledgeRevisionId> revisionIds,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ContextPackage>>(
+                Packages.Where(p =>
+                        p.TenantId == tenantId
+                        && p.ProjectId == projectId
+                        && !p.IsStale
+                        && revisionIds.Any(p.PinsRevision))
+                    .ToList());
     }
 
     private sealed class FakeSecretHasher : ISecretHasher

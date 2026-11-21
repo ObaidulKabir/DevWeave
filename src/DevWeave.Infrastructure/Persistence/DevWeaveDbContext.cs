@@ -83,6 +83,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<RequirementChangeSet> RequirementChangeSets => Set<RequirementChangeSet>();
     public DbSet<ImpactAnalysisReport> ImpactAnalysisReports => Set<ImpactAnalysisReport>();
     public DbSet<PlanRebaseDecision> PlanRebaseDecisions => Set<PlanRebaseDecision>();
+    public DbSet<SemanticConflict> SemanticConflicts => Set<SemanticConflict>();
     public DbSet<Integration> Integrations => Set<Integration>();
     public DbSet<InboundEvent> InboundEvents => Set<InboundEvent>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();

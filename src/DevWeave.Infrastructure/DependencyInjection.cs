@@ -62,12 +62,14 @@ public static class DependencyInjection
         services.AddScoped<IAuditRepository, AuditRepository>();
         services.AddScoped<IArtifactRepository, ArtifactRepository>();
         services.AddScoped<ICoordinationRepository, CoordinationRepository>();
+        services.AddScoped<IWorkPackageImpactSource>(sp => sp.GetRequiredService<ICoordinationRepository>());
         services.AddScoped<IPlanBaselineManifestRepository, PlanBaselineManifestRepository>();
         services.AddScoped<ICommercialRepository, CommercialRepository>();
         services.AddScoped<IEvidenceRepository, EvidenceRepository>();
         services.AddScoped<IRequirementChangeSetRepository, RequirementChangeSetRepository>();
         services.AddScoped<IImpactAnalysisReportRepository, ImpactAnalysisReportRepository>();
         services.AddScoped<IPlanRebaseDecisionRepository, PlanRebaseDecisionRepository>();
+        services.AddScoped<ISemanticConflictRepository, SemanticConflictRepository>();
         services.AddScoped<IPayloadValidator, JsonSchemaPayloadValidator>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IAgentGrantRepository, AgentGrantRepository>();

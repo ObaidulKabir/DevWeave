@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Application.Projections;
 using DevWeave.Application.Security;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
@@ -27,12 +28,11 @@ public interface IProjectGraphProjection
 
 /// <summary>
 /// Builds an authorization-filtered graph without copying canonical payloads. Policy is applied to
-/// nodes before any edge can enter the caller-visible projection.
+/// each node before any edge or traversal step can enter the caller-visible projection.
 /// </summary>
 public sealed class ProjectGraphProjection(
     IProjectGraphSource source,
-    IProjectMembershipRepository projectMemberships,
-    IMembershipRepository tenantMemberships)
+    ResourcePolicyEngine policy)
     : IProjectGraphProjection
 {
     public async Task<ProjectGraphSnapshot> BuildAsync(
@@ -44,24 +44,30 @@ public sealed class ProjectGraphProjection(
         if (scope.ProjectId is null)
             throw new ArgumentException("A project-scoped graph projection requires a project ID.", nameof(scope));
 
-        var role = await TenantProjectAccess.ResolveProjectRoleAsync(
-            projectMemberships,
-            scope.TenantId,
-            scope.ProjectId,
-            scope.ActorId,
-            ct,
-            tenantMemberships)
-            ?? throw new NotFoundException("Project was not found.");
+        var asOfInstant = asOf ?? DateTimeOffset.UtcNow;
+        await policy.EnsureProjectAccessAsync(scope, asOfInstant, ct);
 
         var snapshot = await source.LoadAsync(
             scope.TenantId,
             scope.ProjectId,
-            asOf ?? DateTimeOffset.UtcNow,
+            asOfInstant,
             ct,
             asOfValid);
-        var nodes = snapshot.Nodes
-            .Where(node => ClassificationAccess.Allows(role, node.Classification))
-            .ToArray();
+        var nodes = new List<ProjectGraphNode>();
+        foreach (var node in snapshot.Nodes)
+        {
+            if (await policy.AllowsNodeAsync(
+                    scope,
+                    node,
+                    StakeholderProfile.Owner,
+                    "read",
+                    asOfInstant,
+                    ct))
+            {
+                nodes.Add(node);
+            }
+        }
+
         var visibleKeys = nodes
             .Select(node => node.Resource.CanonicalKey)
             .ToHashSet(StringComparer.Ordinal);

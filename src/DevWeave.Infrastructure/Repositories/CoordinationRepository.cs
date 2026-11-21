@@ -125,6 +125,14 @@ public sealed class CoordinationRepository : ICoordinationRepository
             .ToListAsync(ct);
     }
 
+    public async Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default)
+    {
+        return await _context.WorkPackages
+            .Where(w => w.TenantId == tenantId && w.ProjectId == projectId)
+            .OrderByDescending(w => w.CreatedAt)
+            .ToListAsync(ct);
+    }
+
     public async Task AddWorkthroughAsync(WorkPackageWorkthrough workthrough, CancellationToken ct = default)
     {
         await _context.WorkPackageWorkthroughs.AddAsync(workthrough, ct);

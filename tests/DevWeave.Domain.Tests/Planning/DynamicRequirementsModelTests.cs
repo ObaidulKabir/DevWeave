@@ -1,6 +1,7 @@
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Planning;
+using DevWeave.Domain.Projects;
 
 namespace DevWeave.Domain.Tests.Planning;
 
@@ -107,7 +108,13 @@ public sealed class DynamicRequirementsModelTests
     {
         var left = KnowledgeRevisionId.New();
         var right = KnowledgeRevisionId.New();
-        var conflict = new SemanticConflict(left, right, "Competing architecture decisions");
+        var conflict = SemanticConflict.Record(
+            TenantId.New(),
+            ProjectId.New(),
+            left,
+            right,
+            "Competing architecture decisions",
+            PrincipalId.New());
 
         Assert.Equal(left, conflict.LeftRevisionId);
         Assert.Equal(right, conflict.RightRevisionId);

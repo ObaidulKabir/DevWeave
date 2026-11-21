@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
@@ -12,7 +13,7 @@ namespace DevWeave.Application.Tests.Planning;
 public sealed class AuthorizePlanRebaseDecisionTests
 {
     [Fact]
-    public async Task Authorize_continue_resumes_suspended_campaign()
+    public async Task Authorize_continue_creates_continuation_and_resumes_campaign()
     {
         var fakes = new Fakes();
         var tenant = Tenant.Create("Rebase Corp");
@@ -20,13 +21,24 @@ public sealed class AuthorizePlanRebaseDecisionTests
         var project = Project.Create(tenant.Id, "Shop", "shop", null, LifecycleProfileId.New(), actor.Id);
         fakes.Memberships.GrantOwner(tenant.Id, project.Id, actor.Id);
 
-        var campaign = ExecutionCampaign.Create(tenant.Id, project.Id, Guid.NewGuid(), "ship", "Mediated");
+        var baseline = PlanBaseline.Lock(
+            tenant.Id,
+            project.Id,
+            "goal",
+            [Guid.NewGuid()],
+            Array.Empty<Guid>(),
+            Array.Empty<string>(),
+            expectedPlanVersion: 1);
+        fakes.Coordination.Baselines.Add(baseline);
+
+        var campaign = ExecutionCampaign.Create(tenant.Id, project.Id, baseline.Id.Value, "ship", "Mediated");
         campaign.Activate();
         campaign.Suspend();
         fakes.Coordination.Campaigns.Add(campaign);
 
         var package = WorkPackage.Create(
-            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-1", "implement cart");
+            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-1", "implement cart",
+            scopeRevisionIds: [Guid.NewGuid()]);
         fakes.Coordination.Packages.Add(package);
 
         var report = ImpactAnalysisReport.Create(
@@ -50,6 +62,7 @@ public sealed class AuthorizePlanRebaseDecisionTests
                 fakes.Reports,
                 fakes.Decisions,
                 fakes.Coordination,
+                fakes.Outbox,
                 fakes.Memberships,
                 fakes.UnitOfWork)
             .ExecuteAsync(
@@ -62,8 +75,12 @@ public sealed class AuthorizePlanRebaseDecisionTests
                 "refresh after NFR tighten");
 
         Assert.True(decision.AllowsCampaignResume);
+        Assert.True(decision.RequiresContextRefresh);
+        Assert.NotNull(decision.ContinuationWorkPackageId);
         Assert.Equal(CampaignStatus.Active, campaign.Status);
-        Assert.Single(fakes.Decisions.Items);
+        Assert.Equal(WorkPackageStatus.Cancelled, package.Status);
+        Assert.Contains(fakes.Coordination.Packages, p => p.Id == decision.ContinuationWorkPackageId);
+        Assert.Contains(fakes.Outbox.Events, e => e.EventType == "plan.rebase.authorized");
     }
 
     [Fact]
@@ -81,7 +98,8 @@ public sealed class AuthorizePlanRebaseDecisionTests
         fakes.Coordination.Campaigns.Add(campaign);
 
         var package = WorkPackage.Create(
-            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-1", "implement cart");
+            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-1", "implement cart",
+            scopeRevisionIds: [Guid.NewGuid()]);
         fakes.Coordination.Packages.Add(package);
 
         var report = ImpactAnalysisReport.Create(
@@ -105,6 +123,7 @@ public sealed class AuthorizePlanRebaseDecisionTests
                 fakes.Reports,
                 fakes.Decisions,
                 fakes.Coordination,
+                fakes.Outbox,
                 fakes.Memberships,
                 fakes.UnitOfWork)
             .ExecuteAsync(
@@ -117,7 +136,57 @@ public sealed class AuthorizePlanRebaseDecisionTests
                 "blocked until replan");
 
         Assert.False(decision.AllowsCampaignResume);
+        Assert.Null(decision.ContinuationWorkPackageId);
         Assert.Equal(CampaignStatus.Suspended, campaign.Status);
+    }
+
+    [Fact]
+    public async Task Authorize_rejects_unscoped_continue_without_replan()
+    {
+        var fakes = new Fakes();
+        var tenant = Tenant.Create("Rebase Corp");
+        var actor = Principal.Create(tenant.Id, "owner@rebase.test", PrincipalType.Human);
+        var project = Project.Create(tenant.Id, "Shop", "shop", null, LifecycleProfileId.New(), actor.Id);
+        fakes.Memberships.GrantOwner(tenant.Id, project.Id, actor.Id);
+
+        var campaign = ExecutionCampaign.Create(tenant.Id, project.Id, Guid.NewGuid(), "ship", "Mediated");
+        fakes.Coordination.Campaigns.Add(campaign);
+        var package = WorkPackage.Create(
+            tenant.Id, project.Id, campaign.Id, campaign.BaselineId, "wp-open", "unscoped work");
+        fakes.Coordination.Packages.Add(package);
+
+        var report = ImpactAnalysisReport.Create(
+            tenant.Id,
+            project.Id,
+            RequirementChangeSetId.New(),
+            actor.Id,
+            [
+                ImpactFinding.Create(
+                    0,
+                    KnowledgeItemId.New(),
+                    KnowledgeRevisionId.New(),
+                    "requirements.functional",
+                    ImpactDisposition.ReviewRequired,
+                    "Clarified",
+                    "test"),
+            ]);
+        fakes.Reports.Items.Add(report);
+
+        await Assert.ThrowsAsync<ConflictException>(() => new AuthorizePlanRebaseDecision(
+                fakes.Reports,
+                fakes.Decisions,
+                fakes.Coordination,
+                fakes.Outbox,
+                fakes.Memberships,
+                fakes.UnitOfWork)
+            .ExecuteAsync(
+                tenant.Id,
+                project.Id,
+                report.Id,
+                package.Id,
+                PlanRebaseDecisionKind.ContinueUnchanged,
+                actor.Id,
+                "outside closure"));
     }
 
     private sealed class Fakes
@@ -125,8 +194,25 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public InMemoryImpactAnalysisReportRepository Reports { get; } = new();
         public InMemoryPlanRebaseDecisionRepository Decisions { get; } = new();
         public StubCoordinationRepository Coordination { get; } = new();
+        public RecordingOutbox Outbox { get; } = new();
         public OwnerMembershipRepository Memberships { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
+    }
+
+    private sealed class RecordingOutbox : ITransactionalOutbox
+    {
+        public List<(string EventType, string Payload)> Events { get; } = new();
+
+        public Task EnqueueAsync(
+            AuthorizedScope scope,
+            string eventType,
+            string schemaVersion,
+            string allowlistedPayloadJson,
+            CancellationToken ct = default)
+        {
+            Events.Add((eventType, allowlistedPayloadJson));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class InMemoryImpactAnalysisReportRepository : IImpactAnalysisReportRepository
@@ -230,6 +316,13 @@ public sealed class AuthorizePlanRebaseDecisionTests
     {
         public List<ExecutionCampaign> Campaigns { get; } = new();
         public List<WorkPackage> Packages { get; } = new();
+        public List<PlanBaseline> Baselines { get; } = new();
+
+        public Task AddWorkPackageAsync(WorkPackage workPackage, CancellationToken ct = default)
+        {
+            Packages.Add(workPackage);
+            return Task.CompletedTask;
+        }
 
         public Task<WorkPackage?> GetWorkPackageByIdAsync(
             TenantId tenantId,
@@ -243,6 +336,12 @@ public sealed class AuthorizePlanRebaseDecisionTests
             CancellationToken ct = default) =>
             Task.FromResult(Campaigns.FirstOrDefault(campaign => campaign.TenantId == tenantId && campaign.Id == id));
 
+        public Task<List<PlanBaseline>> ListBaselinesByProjectAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            CancellationToken ct = default) =>
+            Task.FromResult(Baselines.Where(b => b.TenantId == tenantId && b.ProjectId == projectId).ToList());
+
         public Task AddChannelAsync(CoordinationChannel channel, CancellationToken ct = default) => Unsupported();
         public Task<CoordinationChannel?> GetChannelByIdAsync(TenantId tenantId, ChannelId id, CancellationToken ct = default) => Unsupported<CoordinationChannel?>();
         public Task<List<CoordinationChannel>> ListChannelsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<CoordinationChannel>>();
@@ -252,7 +351,6 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task<CoordinationMessage?> GetMessageByIdempotencyKeyAsync(TenantId tenantId, string idempotencyKey, CancellationToken ct = default) => Unsupported<CoordinationMessage?>();
         public Task UpsertCursorAsync(CoordinationCursor cursor, CancellationToken ct = default) => Unsupported();
         public Task<CoordinationCursor?> GetCursorAsync(TenantId tenantId, ChannelId channelId, PrincipalId principalId, CancellationToken ct = default) => Unsupported<CoordinationCursor?>();
-        public Task AddWorkPackageAsync(WorkPackage workPackage, CancellationToken ct = default) => Unsupported();
         public Task<WorkPackage?> GetWorkPackageByKeyAsync(TenantId tenantId, CampaignId campaignId, string key, CancellationToken ct = default) => Unsupported<WorkPackage?>();
         public Task AddLeaseAsync(TaskLease lease, CancellationToken ct = default) => Unsupported();
         public Task<TaskLease?> GetLeaseByIdAsync(TenantId tenantId, LeaseId id, CancellationToken ct = default) => Unsupported<TaskLease?>();
@@ -265,7 +363,6 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task<AgentRuntimeInstance?> GetRuntimeBySessionKeyAsync(string sessionKey, CancellationToken ct = default) => Unsupported<AgentRuntimeInstance?>();
         public Task AddBaselineAsync(PlanBaseline baseline, CancellationToken ct = default) => Unsupported();
         public Task<PlanBaseline?> GetBaselineByIdAsync(TenantId tenantId, BaselineId id, CancellationToken ct = default) => Unsupported<PlanBaseline?>();
-        public Task<List<PlanBaseline>> ListBaselinesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<PlanBaseline>>();
         public Task AddCodebaseTargetAsync(CodebaseTarget target, CancellationToken ct = default) => Unsupported();
         public Task<CodebaseTarget?> GetCodebaseTargetByIdAsync(TenantId tenantId, CodebaseTargetId id, CancellationToken ct = default) => Unsupported<CodebaseTarget?>();
         public Task<List<CodebaseTarget>> ListCodebaseTargetsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<CodebaseTarget>>();
@@ -283,6 +380,8 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task<List<ExecutionCampaign>> ListCampaignsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<ExecutionCampaign>>();
         public Task AddCampaignAsync(ExecutionCampaign campaign, CancellationToken ct = default) => Unsupported();
         public Task<List<WorkPackage>> ListWorkPackagesByCampaignAsync(TenantId tenantId, CampaignId campaignId, CancellationToken ct = default) => Unsupported<List<WorkPackage>>();
+        public Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult(Packages.Where(package => package.TenantId == tenantId && package.ProjectId == projectId).ToList());
         public Task AddWorkthroughAsync(WorkPackageWorkthrough workthrough, CancellationToken ct = default) => Unsupported();
         public Task<WorkPackageWorkthrough?> GetLatestWorkthroughAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default) => Unsupported<WorkPackageWorkthrough?>();
         public Task<List<WorkPackageWorkthrough>> ListWorkthroughsAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default) => Unsupported<List<WorkPackageWorkthrough>>();

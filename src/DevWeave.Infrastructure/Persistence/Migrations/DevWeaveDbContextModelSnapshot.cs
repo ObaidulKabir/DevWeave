@@ -229,8 +229,18 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<bool>("IsStale")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("StaleAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StaleReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<string>("TaskKey")
                         .IsRequired()
@@ -247,6 +257,10 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProjectId");
 
                     b.HasIndex("TenantId", "ProjectId", "IdempotencyKey");
+
+                    b.HasIndex("TenantId", "ProjectId", "IsStale", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ProjectId", "TaskKey", "IsStale", "CreatedAt");
 
                     b.ToTable("context_packages", (string)null);
                 });
@@ -1213,6 +1227,9 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<Guid?>("PredecessorWorkPackageId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -1246,6 +1263,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CampaignId", "Key")
                         .IsUnique();
+
+                    b.HasIndex("TenantId", "PredecessorWorkPackageId");
 
                     b.ToTable("work_packages", (string)null);
                 });
@@ -2205,6 +2224,9 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AuthorizedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ContinuationWorkPackageId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("ImpactReportId")
                         .HasColumnType("uuid");
 
@@ -2304,6 +2326,59 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "ProjectId");
 
                     b.ToTable("requirement_change_sets", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.SemanticConflict", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("LeftRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RecordedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("Resolution")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolutionReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RightRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ProjectId", "IsResolved");
+
+                    b.ToTable("semantic_conflicts", (string)null);
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Projects.Project", b =>
@@ -4043,6 +4118,21 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("Changes");
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.SemanticConflict", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Projects.Project", b =>

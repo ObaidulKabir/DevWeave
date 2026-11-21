@@ -160,6 +160,7 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
                path.EndsWith("/review", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/revoke", StringComparison.OrdinalIgnoreCase) ||
                path.Contains("/rebase-decisions", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/semantic-conflicts", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/analyze", StringComparison.OrdinalIgnoreCase);
     }
 

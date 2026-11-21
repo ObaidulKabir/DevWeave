@@ -71,6 +71,32 @@ public sealed record PlanRebaseDecisionResponse(
     Guid AuthorizedBy,
     DateTimeOffset AuthorizedAt,
     string Reason,
-    bool AllowsCampaignResume);
+    bool AllowsCampaignResume,
+    Guid? ContinuationWorkPackageId = null,
+    bool RequiresContextRefresh = false);
+
+public sealed record RecordSemanticConflictRequest(
+    Guid LeftRevisionId,
+    Guid RightRevisionId,
+    string Reason);
+
+public sealed record ResolveSemanticConflictRequest(
+    SemanticConflictResolutionKind Resolution,
+    string Reason);
+
+public sealed record SemanticConflictResponse(
+    Guid Id,
+    Guid TenantId,
+    Guid ProjectId,
+    Guid LeftRevisionId,
+    Guid RightRevisionId,
+    string Reason,
+    Guid RecordedBy,
+    DateTimeOffset RecordedAt,
+    bool IsResolved,
+    SemanticConflictResolutionKind? Resolution,
+    Guid? ResolvedBy,
+    DateTimeOffset? ResolvedAt,
+    string? ResolutionReason);
 
 public sealed record ImpactError(string Code, string Message);

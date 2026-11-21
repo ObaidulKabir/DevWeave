@@ -40,6 +40,16 @@ public sealed record ImpactFinding(
             disposition,
             relationPath,
             rule);
+
+    public static ImpactFinding ForResource(
+        int position,
+        Guid resourceId,
+        Guid? revisionId,
+        string resourceKind,
+        ImpactDisposition disposition,
+        string relationPath,
+        string rule) =>
+        new(position, resourceId, revisionId, resourceKind, disposition, relationPath, rule);
 }
 
 /// <summary>
@@ -160,6 +170,7 @@ public sealed class PlanRebaseDecision
     public PrincipalId AuthorizedBy { get; }
     public DateTimeOffset AuthorizedAt { get; }
     public string Reason { get; }
+    public WorkPackageId? ContinuationWorkPackageId { get; private set; }
 
     private PlanRebaseDecision(
         PlanRebaseDecisionId id,
@@ -211,8 +222,23 @@ public sealed class PlanRebaseDecision
             reason.Trim());
     }
 
+    public void AttachContinuation(WorkPackageId continuationWorkPackageId)
+    {
+        ArgumentNullException.ThrowIfNull(continuationWorkPackageId);
+        if (ContinuationWorkPackageId is not null)
+            throw new InvalidOperationException("Continuation package is already attached.");
+        if (!CreatesContinuation)
+            throw new InvalidOperationException($"Decision kind '{Kind}' does not create a continuation package.");
+
+        ContinuationWorkPackageId = continuationWorkPackageId;
+    }
+
     public bool AllowsCampaignResume =>
         Kind is PlanRebaseDecisionKind.ContinueUnchanged
             or PlanRebaseDecisionKind.ContinueAfterContextRefresh
             or PlanRebaseDecisionKind.Supersede;
+
+    public bool CreatesContinuation => AllowsCampaignResume;
+
+    public bool RequiresContextRefresh => Kind == PlanRebaseDecisionKind.ContinueAfterContextRefresh;
 }

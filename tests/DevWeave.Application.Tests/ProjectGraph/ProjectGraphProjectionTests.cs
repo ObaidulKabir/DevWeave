@@ -1,6 +1,8 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.ProjectGraph;
+using DevWeave.Application.Security;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -14,7 +16,7 @@ public sealed class ProjectGraphProjectionTests
     {
         var tenant = TenantId.New();
         var project = ProjectId.New();
-        var actor = PrincipalId.New();
+        var actor = Principal.Create(tenant, "member@graph.test", PrincipalType.Human);
         var revision = ProjectResourceRef.Local(ProjectResourceKind.KnowledgeRevision, Guid.NewGuid());
         var activity = ProjectResourceRef.Local(ProjectResourceKind.Activity, Guid.NewGuid());
         var evidence = ProjectResourceRef.Local(ProjectResourceKind.Evidence, Guid.NewGuid());
@@ -32,15 +34,14 @@ public sealed class ProjectGraphProjectionTests
                 new(activity, evidence, "generated_evidence"),
                 new(evidence, hiddenArtifact, "supported_by"),
             ]);
-        var memberships = new ProjectMemberships(
-            ProjectMembership.Grant(tenant, project, actor, ProjectRole.Member));
         var projection = new ProjectGraphProjection(
             new StaticGraphSource(snapshot),
-            memberships,
-            new EmptyTenantMemberships());
+            CreatePolicy(
+                actor,
+                ProjectMembership.Grant(tenant, project, actor.Id, ProjectRole.Member)));
 
         var visible = await projection.BuildAsync(
-            new AuthorizedScope(tenant, actor, project, "Inspect graph", "correlation"));
+            new AuthorizedScope(tenant, actor.Id, project, "Inspect graph", "correlation"));
 
         Assert.Equal(3, visible.Nodes.Count);
         Assert.Equal(2, visible.Edges.Count);
@@ -58,19 +59,29 @@ public sealed class ProjectGraphProjectionTests
     {
         var tenant = TenantId.New();
         var project = ProjectId.New();
+        var outsider = Principal.Create(tenant, "outsider@graph.test", PrincipalType.Human);
         var projection = new ProjectGraphProjection(
             new StaticGraphSource(new ProjectGraphSnapshot(DateTimeOffset.UtcNow, [], [])),
-            new ProjectMemberships(),
-            new EmptyTenantMemberships());
+            CreatePolicy(outsider));
 
         await Assert.ThrowsAsync<NotFoundException>(() => projection.BuildAsync(
             new AuthorizedScope(
                 tenant,
-                PrincipalId.New(),
+                outsider.Id,
                 project,
                 "Inspect graph",
                 "correlation")));
     }
+
+    private static ResourcePolicyEngine CreatePolicy(
+        Principal actor,
+        params ProjectMembership[] memberships) =>
+        new(
+            new PrincipalStore(actor),
+            new ProjectMemberships(memberships),
+            new EmptyTenantMemberships(),
+            new GrantStore(),
+            new ItemStore());
 
     private sealed class StaticGraphSource(ProjectGraphSnapshot snapshot) : IProjectGraphSource
     {
@@ -81,6 +92,25 @@ public sealed class ProjectGraphProjectionTests
             CancellationToken ct = default,
             DateTimeOffset? asOfValid = null) =>
             Task.FromResult(snapshot);
+    }
+
+    private sealed class PrincipalStore(params Principal[] principals) : IPrincipalRepository
+    {
+        public Task AddAsync(Principal principal, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<Principal?> GetByIdAsync(
+            TenantId tenantId,
+            PrincipalId id,
+            CancellationToken ct = default) =>
+            Task.FromResult(principals.SingleOrDefault(candidate =>
+                candidate.TenantId == tenantId && candidate.Id == id));
+
+        public Task<IReadOnlyList<Principal>> ListByTenantAndTypeAsync(
+            TenantId tenantId,
+            PrincipalType type,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Principal>>(
+                principals.Where(candidate => candidate.TenantId == tenantId && candidate.Type == type).ToArray());
     }
 
     private sealed class ProjectMemberships(params ProjectMembership[] memberships)
@@ -139,5 +169,51 @@ public sealed class ProjectGraphProjectionTests
             PrincipalId principalId,
             CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Membership>>([]);
+    }
+
+    private sealed class GrantStore : IAgentGrantRepository
+    {
+        public Task AddAsync(AgentGrant grant, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<AgentGrant?> GetByIdAsync(
+            TenantId tenantId,
+            AgentGrantId id,
+            CancellationToken ct = default) =>
+            Task.FromResult<AgentGrant?>(null);
+
+        public Task<IReadOnlyList<AgentGrant>> ListForAgentAsync(
+            TenantId tenantId,
+            PrincipalId agentId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<AgentGrant>>([]);
+    }
+
+    private sealed class ItemStore : IKnowledgeItemRepository
+    {
+        public Task AddAsync(KnowledgeItem item, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<KnowledgeItem?> GetByIdAsync(
+            TenantId tenantId,
+            KnowledgeItemId id,
+            CancellationToken ct = default) =>
+            Task.FromResult<KnowledgeItem?>(null);
+
+        public Task<IReadOnlyList<KnowledgeItem>> ListByProjectAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeItem>>([]);
+
+        public Task<IReadOnlyList<KnowledgeItem>> ListByTenantAsync(
+            TenantId tenantId,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeItem>>([]);
+
+        public Task<bool> KeyExistsAsync(
+            TenantId tenantId,
+            ProjectId projectId,
+            string key,
+            CancellationToken ct = default) =>
+            Task.FromResult(false);
     }
 }

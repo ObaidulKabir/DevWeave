@@ -6,11 +6,13 @@ using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Planning;
 using DevWeave.Domain.Projects;
 using DevWeave.Domain.Relations;
 using DevWeave.Domain.Specifications;
@@ -47,6 +49,9 @@ public sealed class CoordinationService :
     private readonly IRelationshipRepository _relationships;
     private readonly IProjectRepository _projects;
     private readonly ILifecycleProfileRepository _lifecycleProfiles;
+    private readonly IPlanRebaseDecisionRepository _rebaseDecisions;
+    private readonly IContextPackageRepository _contexts;
+    private readonly ISemanticConflictRepository _semanticConflicts;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -65,7 +70,10 @@ public sealed class CoordinationService :
         IProjectEventRepository projectEvents,
         IRelationshipRepository relationships,
         IProjectRepository projects,
-        ILifecycleProfileRepository lifecycleProfiles)
+        ILifecycleProfileRepository lifecycleProfiles,
+        IPlanRebaseDecisionRepository rebaseDecisions,
+        IContextPackageRepository contexts,
+        ISemanticConflictRepository semanticConflicts)
     {
         _repository = repository;
         _uow = uow;
@@ -84,6 +92,9 @@ public sealed class CoordinationService :
         _relationships = relationships;
         _projects = projects;
         _lifecycleProfiles = lifecycleProfiles;
+        _rebaseDecisions = rebaseDecisions;
+        _contexts = contexts;
+        _semanticConflicts = semanticConflicts;
     }
 
     // --- IRuntimeRegistry ---
@@ -1133,6 +1144,11 @@ public sealed class CoordinationService :
         if (!Enum.TryParse<WorkthroughKind>(kind, ignoreCase: true, out var parsedKind))
             throw new ArgumentException("kind must be Succeeded or Blocked.", nameof(kind));
 
+        // A success report is a progress transition and must pass the same eligibility gate as leases
+        // and integration. A blocked/rejected-attempt report may still be recorded without moving Work.
+        if (parsedKind == WorkthroughKind.Succeeded)
+            await RequireOpenPackageAsync(scope, workPackageId, "reported", ct);
+
         // Only an agent that actually held a lease on this package may report on it. The lease may have
         // expired, been released, or been stopped by a plan change: a final claim is still allowed, but one
         // agent cannot overwrite what another reports about work it never touched.
@@ -1278,6 +1294,42 @@ public sealed class CoordinationService :
             return $"its campaign is {campaign.Status}.";
         if (await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.Campaign, campaign.Id.Value, ct))
             return "its campaign has been stopped by a kill switch.";
+
+        var unresolved = await _semanticConflicts.ListUnresolvedByProjectAsync(
+            scope.TenantId, package.ProjectId, ct);
+        if (unresolved.Any(conflict =>
+                package.ScopeRevisionIds.Count == 0
+                || package.ScopeRevisionIds.Any(revisionId =>
+                    conflict.InvolvesRevision(new KnowledgeRevisionId(revisionId)))))
+        {
+            return "an unresolved semantic conflict blocks dependent execution.";
+        }
+
+        var latestDecision = await _rebaseDecisions.GetLatestForWorkPackageAsync(
+            scope.TenantId, package.Id, ct);
+        if (latestDecision is null && package.PredecessorWorkPackageId is { } predecessorId)
+        {
+            latestDecision = await _rebaseDecisions.GetLatestForWorkPackageAsync(
+                scope.TenantId, predecessorId, ct);
+            if (latestDecision?.ContinuationWorkPackageId != package.Id)
+                latestDecision = null;
+        }
+
+        var latestContext = await _contexts.GetLatestForTaskAsync(
+            scope.TenantId, package.ProjectId, package.Key, ct);
+        if (latestContext is { IsStale: true })
+            return "its context package is stale. Assemble a new context after an approved rebase/replan.";
+
+        if (latestDecision?.RequiresContextRefresh == true)
+        {
+            var context = await _contexts.GetLatestCurrentForTaskAsync(
+                scope.TenantId, package.ProjectId, package.Key, ct);
+            if (context is null || context.CreatedAt < latestDecision.AuthorizedAt)
+            {
+                return "its rebase decision requires a refreshed context package before work can continue.";
+            }
+        }
+
         return null;
     }
 

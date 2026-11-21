@@ -68,9 +68,24 @@ public sealed class ProjectGraphSnapshot
         ProjectResourceRef start,
         ProjectGraphDirection direction,
         int maxDepth,
-        int maxResults)
+        int maxResults) =>
+        TraverseAllowed(start, direction, maxDepth, maxResults, static _ => true, static _ => true);
+
+    /// <summary>
+    /// Walks only nodes and edges that pass the supplied predicates. Unauthorized vertices are never
+    /// entered, so path counts cannot leak their existence.
+    /// </summary>
+    public IReadOnlyList<ProjectGraphPath> TraverseAllowed(
+        ProjectResourceRef start,
+        ProjectGraphDirection direction,
+        int maxDepth,
+        int maxResults,
+        Func<ProjectGraphNode, bool> nodeAllowed,
+        Func<ProjectGraphEdge, bool> edgeAllowed)
     {
-        if (!_nodesByKey.ContainsKey(start.CanonicalKey))
+        ArgumentNullException.ThrowIfNull(nodeAllowed);
+        ArgumentNullException.ThrowIfNull(edgeAllowed);
+        if (!_nodesByKey.TryGetValue(start.CanonicalKey, out var startNode) || !nodeAllowed(startNode))
             return [];
         if (maxDepth < 1)
             throw new ArgumentOutOfRangeException(nameof(maxDepth));
@@ -104,6 +119,8 @@ public sealed class ProjectGraphSnapshot
                     current.Edges.Any(pathEdge =>
                         pathEdge.From.CanonicalKey == next.CanonicalKey ||
                         pathEdge.To.CanonicalKey == next.CanonicalKey))
+                    continue;
+                if (!nodeAllowed(_nodesByKey[next.CanonicalKey]) || !edgeAllowed(edge))
                     continue;
 
                 var path = new ProjectGraphPath(

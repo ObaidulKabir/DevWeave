@@ -4,7 +4,12 @@ using DevWeave.Domain.Projects;
 
 namespace DevWeave.Application.Abstractions;
 
-public interface ICoordinationRepository
+public interface IWorkPackageImpactSource
+{
+    Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
+}
+
+public interface ICoordinationRepository : IWorkPackageImpactSource
 {
     // Channels
     Task AddChannelAsync(CoordinationChannel channel, CancellationToken ct = default);

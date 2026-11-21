@@ -58,6 +58,11 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
             Assert.Equal(RelationDirection.Forward, t.Direction);
             Assert.Equal(RelationCardinality.ManyToMany, t.Cardinality);
         });
+
+        var satisfies = Assert.Single(types, t => t.Code == "satisfies");
+        Assert.Contains("architecture.decision", satisfies.AllowedSourceTypeIds);
+        Assert.Contains("requirements.functional", satisfies.AllowedTargetTypeIds);
+        Assert.Empty(Assert.Single(types, t => t.Code == "references").AllowedSourceTypeIds);
     }
 
     [Fact]
@@ -76,6 +81,25 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = (await response.Content.ReadFromJsonAsync<RelationshipError>(JsonOptions))!;
         Assert.Equal("unknown-relation-type", body.Code);
+    }
+
+    [Fact]
+    public async Task REL_002_endpoint_type_allowlists_reject_disallowed_satisfies_edges()
+    {
+        var tenant = await CreateTenantAsync("Alpha Corp");
+        var principal = await CreatePrincipalAsync(tenant.Id, "a@alphacorp.com", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "agile", "Agile", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "shop-api", profile.Id, principal.Id);
+        // architecture.mmd is outside the satisfies Appendix B allowlists.
+        var source = await CreateKnowledgeItemAsync(tenant.Id, project.Id, "architecture", principal.Id);
+        var target = await CreateKnowledgeItemAsync(tenant.Id, project.Id, "requirement", principal.Id);
+
+        var response = await TryCreateRelationshipAsync(
+            tenant.Id, project.Id, source.Id, target.Id, "satisfies", principal.Id);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<RelationshipError>(JsonOptions))!;
+        Assert.Equal("endpoint-type-not-allowed", body.Code);
     }
 
     [Fact]
@@ -112,7 +136,13 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         await CreateRelationshipAsync(tenant.Id, project.Id, r.Id, d.Id, "references", principal.Id);
         await CreateRelationshipAsync(tenant.Id, project.Id, d.Id, i.Id, "references", principal.Id);
 
-        var result = await TraverseAsync(tenant.Id, r.Id, TraversalDirection.Outgoing, 2, 100);
+        var result = await TraverseAsync(
+            tenant.Id,
+            r.Id,
+            principal.Id,
+            TraversalDirection.Outgoing,
+            2,
+            100);
 
         Assert.False(result.Truncated);
         Assert.Equal(2, result.Paths.Count);
@@ -150,9 +180,9 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         var edgeB = await CreateRelationshipAsync(beta.Id, projectB.Id, sourceB.Id, targetB.Id, "references", principalB.Id);
 
         // HTTP read paths must yield zero/404 for tenant A.
-        Assert.NotEmpty(await ListRelationshipsForProjectAsync(beta.Id, projectB.Id));
-        Assert.Empty(await ListRelationshipsForProjectAsync(alpha.Id, projectB.Id));
-        Assert.Null(await GetRelationshipAsync(alpha.Id, edgeB.Id));
+        Assert.NotEmpty(await ListRelationshipsForProjectAsync(beta.Id, projectB.Id, principalB.Id));
+        Assert.Empty(await ListRelationshipsForProjectAsync(alpha.Id, projectB.Id, principalA.Id));
+        Assert.Null(await GetRelationshipAsync(alpha.Id, edgeB.Id, principalA.Id));
 
         // Repository read paths: negative disclosure across every read method.
         using var scope = _factory.Services.CreateScope();
@@ -162,6 +192,66 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         Assert.Empty(await relationships.ListByProjectAsync(new TenantId(alpha.Id), new ProjectId(projectB.Id)));
         Assert.Empty(await relationships.ListOutgoingAsync(new TenantId(alpha.Id), new KnowledgeItemId(sourceB.Id)));
         Assert.Empty(await relationships.ListIncomingAsync(new TenantId(alpha.Id), new KnowledgeItemId(targetB.Id)));
+    }
+
+    [Fact]
+    public async Task relationship_reads_and_traversal_hide_edges_with_a_restricted_endpoint()
+    {
+        var tenant = await CreateTenantAsync("Classification Corp");
+        var owner = await CreatePrincipalAsync(tenant.Id, "owner@classification.test", PrincipalType.Human);
+        var member = await CreatePrincipalAsync(tenant.Id, "member@classification.test", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "secure", "Secure", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "classified-project", profile.Id, owner.Id);
+
+        using (var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id))
+        {
+            using var grant = await ownerClient.PostAsJsonAsync(
+                $"/tenants/{tenant.Id}/projects/{project.Id}/members",
+                new GrantProjectMembershipRequest(member.Id, ProjectRole.Member),
+                JsonOptions);
+            grant.EnsureSuccessStatusCode();
+        }
+
+        var visible = await CreateKnowledgeItemAsync(
+            tenant.Id,
+            project.Id,
+            "visible-item",
+            owner.Id,
+            Classification.Internal);
+        var hidden = await CreateKnowledgeItemAsync(
+            tenant.Id,
+            project.Id,
+            "hidden-item",
+            owner.Id,
+            Classification.Restricted);
+        var relationship = await CreateRelationshipAsync(
+            tenant.Id,
+            project.Id,
+            visible.Id,
+            hidden.Id,
+            "references",
+            owner.Id);
+
+        Assert.Single(await ListRelationshipsForProjectAsync(tenant.Id, project.Id, owner.Id));
+        Assert.Empty(await ListRelationshipsForProjectAsync(tenant.Id, project.Id, member.Id));
+        Assert.Empty(await ListRelationshipsForItemAsync(tenant.Id, visible.Id, member.Id));
+        Assert.Null(await GetRelationshipAsync(tenant.Id, relationship.Id, member.Id));
+
+        var traversal = await TraverseAsync(
+            tenant.Id,
+            visible.Id,
+            member.Id,
+            TraversalDirection.Outgoing,
+            2,
+            100);
+        Assert.Empty(traversal.Paths);
+
+        using var memberClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, member.Id);
+        using var hiddenStart = await memberClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/knowledge/{hidden.Id}/relationships/traverse",
+            new TraverseRelationshipsRequest(TraversalDirection.Outgoing, 2, 100),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.NotFound, hiddenStart.StatusCode);
     }
 
     [Fact]
@@ -252,7 +342,12 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         return (await response.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
     }
 
-    private async Task<KnowledgeItemResponse> CreateKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, Guid createdBy)
+    private async Task<KnowledgeItemResponse> CreateKnowledgeItemAsync(
+        Guid tenantId,
+        Guid projectId,
+        string key,
+        Guid createdBy,
+        Classification classification = Classification.Public)
     {
         await SeedArchitectureSchemaAsync();
 
@@ -262,7 +357,7 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
             new CreateKnowledgeItemRequest(
                 key,
                 "Architecture Overview",
-                Classification.Public,
+                classification,
                 RepresentationKind.Text,
                 "architecture.mmd",
                 "1.0",
@@ -311,16 +406,24 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         return (await response.Content.ReadFromJsonAsync<List<RelationTypeResponse>>(JsonOptions))!;
     }
 
-    private async Task<List<RelationshipResponse>> ListRelationshipsForProjectAsync(Guid tenantId, Guid projectId)
+    private async Task<List<RelationshipResponse>> ListRelationshipsForProjectAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid actorId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/relationships");
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/relationships");
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<RelationshipResponse>>(JsonOptions))!;
     }
 
-    private async Task<RelationshipResponse?> GetRelationshipAsync(Guid tenantId, Guid relationshipId)
+    private async Task<RelationshipResponse?> GetRelationshipAsync(
+        Guid tenantId,
+        Guid relationshipId,
+        Guid actorId)
     {
-        using var response = await _client.GetAsync($"/tenants/{tenantId}/relationships/{relationshipId}");
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.GetAsync($"/tenants/{tenantId}/relationships/{relationshipId}");
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -330,14 +433,28 @@ public sealed class RelationshipIntegrationTests : IClassFixture<IdentityTestFac
         return await response.Content.ReadFromJsonAsync<RelationshipResponse>(JsonOptions);
     }
 
+    private async Task<List<RelationshipResponse>> ListRelationshipsForItemAsync(
+        Guid tenantId,
+        Guid itemId,
+        Guid actorId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.GetAsync(
+            $"/tenants/{tenantId}/knowledge/{itemId}/relationships");
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<List<RelationshipResponse>>(JsonOptions))!;
+    }
+
     private async Task<TraversalResponse> TraverseAsync(
         Guid tenantId,
         Guid itemId,
+        Guid actorId,
         TraversalDirection direction,
         int maxDepth,
         int maxResults)
     {
-        using var response = await _client.PostAsJsonAsync(
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge/{itemId}/relationships/traverse",
             new TraverseRelationshipsRequest(direction, maxDepth, maxResults),
             JsonOptions);

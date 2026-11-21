@@ -1,7 +1,9 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Agents;
 using DevWeave.Api.Security;
+using DevWeave.Contracts.Activities.V1;
 using DevWeave.Contracts.Agents.V1;
+using DevWeave.Domain.Activities;
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
@@ -452,6 +454,13 @@ public static class AgentEndpoints
     {
         try
         {
+            var outputs = (request.Outputs ?? Array.Empty<ActivityOutputRequest>())
+                .Select(o => new ActivityOutput(
+                    new KnowledgeItemId(o.ItemId),
+                    new KnowledgeRevisionId(o.RevisionId),
+                    o.Position))
+                .ToList();
+
             var activity = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new ProjectId(projectId),
@@ -461,7 +470,15 @@ public static class AgentEndpoints
                 request.Status,
                 request.StartedAt,
                 request.EndedAt,
-                ct);
+                request.Provider,
+                request.Model,
+                ct,
+                request.ModelVersion,
+                request.ConfigurationFingerprint,
+                request.ToolFingerprint,
+                request.ExternalRunReference,
+                request.AuthorizationContext,
+                outputs);
 
             return Results.Created(
                 $"/tenants/{tenantId}/projects/{projectId}/agent-executions/{activity.Id}",
@@ -470,7 +487,10 @@ public static class AgentEndpoints
                     request.ContextPackageId,
                     activity.Status,
                     activity.StartedAt,
-                    activity.EndedAt));
+                    activity.EndedAt,
+                    request.Provider,
+                    request.Model,
+                    request.ModelVersion));
         }
         catch (NotFoundException)
         {

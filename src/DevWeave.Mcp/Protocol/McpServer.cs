@@ -12,6 +12,7 @@ using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
 using Microsoft.Extensions.Logging;
 
 namespace DevWeave.Mcp.Protocol;
@@ -38,6 +39,7 @@ public sealed class McpServer
     private readonly IAgentGrantRepository _grants;
     private readonly ICoordinationRepository _coordination;
     private readonly ISchemaDefinitionRepository _schemas;
+    private readonly IKnowledgeTypeDefinitionRepository _knowledgeTypes;
     private readonly IRelationTypeRepository _relationTypes;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
@@ -61,6 +63,7 @@ public sealed class McpServer
         IAgentGrantRepository grants,
         ICoordinationRepository coordination,
         ISchemaDefinitionRepository schemas,
+        IKnowledgeTypeDefinitionRepository knowledgeTypes,
         IRelationTypeRepository relationTypes,
         ILogger<McpServer> logger)
     {
@@ -80,6 +83,7 @@ public sealed class McpServer
         _grants = grants;
         _coordination = coordination;
         _schemas = schemas;
+        _knowledgeTypes = knowledgeTypes;
         _relationTypes = relationTypes;
         _logger = logger;
         _options = new JsonSerializerOptions
@@ -397,7 +401,7 @@ public sealed class McpServer
                 baseCommitSha = StringProp("7-40 character hex SHA."),
             },
             ["provider", "repositoryId", "targetBranch", "baseCommitSha"]),
-        NamedTool("list_schemas", "List active published Knowledge schemas. Call this before propose_initial_plan and copy typeId (namespace) and schemaVersion (version). An empty list means the Owner has not published schemas yet — do not invent typeIds.",
+        NamedTool("list_schemas", "List active published Knowledge schemas plus catalogue metadata (isCanonical, storageKind). Prefer canonical typeIds such as requirements.functional / requirements.nonfunctional for new plans; legacy plan.* schemas remain valid. Call before propose_initial_plan and copy typeId (namespace) and schemaVersion. Aggregate-mapped catalogue concepts (planning.work-item, execution.activity-report, verification.result) are not Knowledge schemas.",
             new { }, Array.Empty<string>()),
         NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
             new { }, Array.Empty<string>()),
@@ -569,18 +573,38 @@ public sealed class McpServer
     private async Task<object> ListSchemasAsync(CancellationToken ct)
     {
         var schemas = await _schemas.ListAsync(ct);
+        var types = (await _knowledgeTypes.ListAsync(ct))
+            .ToDictionary(type => type.TypeId, StringComparer.Ordinal);
         return new
         {
             schemas = schemas
                 .Where(schema => schema.IsActive)
                 .OrderBy(schema => schema.Namespace, StringComparer.Ordinal)
                 .ThenBy(schema => schema.Version, StringComparer.Ordinal)
-                .Select(schema => new
+                .Select(schema =>
                 {
-                    id = schema.Id.Value,
-                    typeId = schema.Namespace,
-                    schemaVersion = schema.Version,
-                    schema.Description,
+                    types.TryGetValue(schema.Namespace, out var type);
+                    return new
+                    {
+                        id = schema.Id.Value,
+                        typeId = schema.Namespace,
+                        schemaVersion = schema.Version,
+                        schema.Description,
+                        isCanonical = type?.IsCanonical ?? false,
+                        storageKind = type?.StorageKind.ToString() ?? KnowledgeStorageKind.KnowledgeEnvelope.ToString(),
+                    };
+                })
+                .ToArray(),
+            knowledgeTypes = types.Values
+                .OrderByDescending(type => type.IsCanonical)
+                .ThenBy(type => type.TypeId, StringComparer.Ordinal)
+                .Select(type => new
+                {
+                    typeId = type.TypeId,
+                    type.Description,
+                    storageKind = type.StorageKind.ToString(),
+                    type.IsCanonical,
+                    defaultClassification = type.DefaultClassification.ToString(),
                 })
                 .ToArray(),
         };

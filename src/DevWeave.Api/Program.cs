@@ -257,6 +257,9 @@ app.MapAgentEndpoints();
 // Commercial Pilot surface (SRS COM-001..COM-026).
 app.MapCommercialEndpoints();
 
+// Requirement impact analysis and plan rebase decisions (dynamic project state §6–§8).
+app.MapImpactEndpoints();
+
 // Coordination plane REST surface (SRS MCO / MCP foundations).
 app.MapCoordinationEndpoints();
 

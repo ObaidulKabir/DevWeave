@@ -94,7 +94,10 @@ public sealed record AgentExecutionResponse(
     Guid ContextPackageId,
     ActivityStatus Status,
     DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt);
+    DateTimeOffset? EndedAt,
+    string? Provider = null,
+    string? Model = null,
+    string? ModelVersion = null);
 
 /// <summary>A structured agent error body with a machine-readable code (mapped to 403/409).</summary>
 public sealed record AgentError(string Code, string Message);

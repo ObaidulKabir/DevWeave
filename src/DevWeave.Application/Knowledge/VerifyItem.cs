@@ -62,7 +62,9 @@ public sealed class VerifyItem
                      && a.Outputs.Any(o => o.ItemId == item.Id && o.RevisionId == currentRevisionId)))
         {
             var evidence = await _evidence.ListForClaimAsync(tenantId, claim.Id, ct);
-            if (EvidenceRecord.ClaimIsVerified(evidence))
+            if (EvidenceRecord.ClaimIsVerified(
+                    evidence,
+                    criterionId => criterionId == item.Id ? currentRevisionId : null))
                 return true;
         }
 

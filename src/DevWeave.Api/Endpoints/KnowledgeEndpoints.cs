@@ -138,7 +138,9 @@ public static class KnowledgeEndpoints
                 request.Reason,
                 request.SourceReference,
                 request.SupersededRevisionId is { } superseded ? new KnowledgeRevisionId(superseded) : null,
-                ct);
+                ct,
+                request.ValidFrom,
+                request.ValidTo);
 
             return Results.Created(
                 $"/tenants/{tenantId}/revisions/{revision.Id}",
@@ -356,5 +358,7 @@ public static class KnowledgeEndpoints
             revision.RecordedAt,
             revision.Reason,
             revision.SourceReference,
-            revision.SupersededRevisionId?.Value);
+            revision.SupersededRevisionId?.Value,
+            revision.ValidFrom,
+            revision.ValidTo);
 }

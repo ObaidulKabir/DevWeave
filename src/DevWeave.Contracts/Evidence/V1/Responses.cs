@@ -2,7 +2,7 @@ using DevWeave.Domain.Evidence;
 
 namespace DevWeave.Contracts.Evidence.V1;
 
-/// <summary>A piece of evidence with its origin, time, type, integrity and governed review state (SRS PRO-006).</summary>
+/// <summary>A piece of evidence with its origin, time, type, integrity, criterion pin and governed review state (SRS PRO-006).</summary>
 public sealed record EvidenceResponse(
     Guid Id,
     Guid TenantId,
@@ -12,6 +12,8 @@ public sealed record EvidenceResponse(
     string Type,
     string? IntegrityHash,
     Guid? RelatedArtifactId,
+    Guid? CriterionItemId,
+    Guid? CriterionRevisionId,
     string RelatedCriterion,
     EvidenceReviewState ReviewState,
     Guid? ReviewedBy,

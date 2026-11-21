@@ -570,14 +570,16 @@ public sealed class AgentUseCaseTests
             seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, "review", "idem-1",
             new[] { seed.TextItem.Id });
 
-        var record = new RecordAgentExecution(fakes.Activities, fakes.Packages, fakes.Principals, fakes.Projects, fakes.Credentials, fakes.Grants, fakes.UnitOfWork);
+        var record = CreateRecordExecution(fakes);
         var activity = await record.ExecuteAsync(
             seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, package.Id, "summarize",
-            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            "openai", "gpt-test");
 
         Assert.Equal(package.Id.ToString(), activity.CorrelationId);
         Assert.Equal(seed.TextRevision.Id, Assert.Single(activity.Inputs).RevisionId);
         Assert.Single(fakes.Activities.Items);
+        Assert.Equal("openai", Assert.Single(fakes.ExecutionMetadata.Items).Provider);
     }
 
     [Fact]
@@ -594,16 +596,19 @@ public sealed class AgentUseCaseTests
             seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, "review", "idem-1",
             new[] { seed.TextItem.Id });
 
-        var record = new RecordAgentExecution(fakes.Activities, fakes.Packages, fakes.Principals, fakes.Projects, fakes.Credentials, fakes.Grants, fakes.UnitOfWork);
+        var record = CreateRecordExecution(fakes);
         var first = await record.ExecuteAsync(
             seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, package.Id, "summarize",
-            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            "openai", "gpt-test");
         var second = await record.ExecuteAsync(
             seed.Tenant.Id, seed.Project.Id, seed.Agent.Id, package.Id, "summarize",
-            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            ActivityStatus.Completed, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            "openai", "gpt-test");
 
         Assert.Equal(first.Id, second.Id);
         Assert.Single(fakes.Activities.Items);
+        Assert.Single(fakes.ExecutionMetadata.Items);
     }
 
     [Fact]
@@ -626,6 +631,9 @@ public sealed class AgentUseCaseTests
 
     private static AssembleContextPackage AssembleUseCase(Fakes fakes) =>
         new(fakes.Packages, fakes.Grants, fakes.Principals, fakes.Projects, fakes.Items, fakes.Revisions, fakes.Credentials, fakes.ProjectMemberships, fakes.Inspector, fakes.UnitOfWork);
+
+    private static RecordAgentExecution CreateRecordExecution(Fakes fakes) =>
+        new(fakes.Activities, fakes.ExecutionMetadata, fakes.Packages, fakes.Principals, fakes.Projects, fakes.Credentials, fakes.Grants, fakes.UnitOfWork);
 
     private static Fakes CreateFakes() => new();
 
@@ -713,6 +721,7 @@ public sealed class AgentUseCaseTests
         public InMemoryKnowledgeItemRepository Items { get; } = new();
         public InMemoryKnowledgeRevisionRepository Revisions { get; } = new();
         public InMemoryActivityRepository Activities { get; } = new();
+        public InMemoryAgentExecutionMetadataRepository ExecutionMetadata { get; } = new();
         public InMemoryAgentGrantRepository Grants { get; } = new();
         public InMemoryAgentCredentialRepository Credentials { get; } = new();
         public InMemoryProjectMembershipRepository ProjectMemberships { get; } = new();
@@ -948,6 +957,30 @@ public sealed class AgentUseCaseTests
 
         public Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<KnowledgeRevision>>(Revisions.Where(r => r.TenantId == tenantId).ToList());
+    }
+
+    private sealed class InMemoryAgentExecutionMetadataRepository : IAgentExecutionMetadataRepository
+    {
+        public List<AgentExecutionMetadata> Items { get; } = new();
+
+        public Task AddAsync(AgentExecutionMetadata metadata, CancellationToken ct = default)
+        {
+            Items.Add(metadata);
+            return Task.CompletedTask;
+        }
+
+        public Task<AgentExecutionMetadata?> GetByActivityIdAsync(
+            TenantId tenantId,
+            ActivityId activityId,
+            CancellationToken ct = default) =>
+            Task.FromResult(Items.FirstOrDefault(m => m.TenantId == tenantId && m.ActivityId == activityId));
+
+        public Task<IReadOnlyList<AgentExecutionMetadata>> ListForProjectActivitiesAsync(
+            TenantId tenantId,
+            IReadOnlyCollection<ActivityId> activityIds,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<AgentExecutionMetadata>>(
+                Items.Where(m => m.TenantId == tenantId && activityIds.Contains(m.ActivityId)).ToList());
     }
 
     private sealed class InMemoryActivityRepository : IActivityRepository

@@ -1,3 +1,4 @@
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Schema;
 
 namespace DevWeave.Contracts.Schema.V1;
@@ -11,13 +12,28 @@ public sealed record SchemaResponse(
     SchemaStatus Status,
     string Document,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? PublishedAt);
+    DateTimeOffset? PublishedAt,
+    KnowledgeTypeMetadataResponse? Type = null);
 
 /// <summary>
 /// Discovery projection returned by <c>GET /schemas/discover</c> (SRS KNW-008): only the identity of
 /// an active schema, not its document.
 /// </summary>
-public sealed record SchemaDiscoveryItemResponse(string Namespace, string Version);
+public sealed record SchemaDiscoveryItemResponse(
+    string Namespace,
+    string Version,
+    bool IsCanonical = false,
+    string? StorageKind = null);
+
+public sealed record KnowledgeTypeMetadataResponse(
+    string TypeId,
+    string Owner,
+    string Description,
+    string StorageKind,
+    string LifecyclePolicy,
+    Classification DefaultClassification,
+    bool IsCanonical,
+    string MigrationStrategy);
 
 /// <summary>
 /// A single path-specific validation failure (SRS KNW-004).

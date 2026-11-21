@@ -194,6 +194,8 @@ export interface EvidenceItem {
   id: string;
   type: string;
   relatedCriterion: string;
+  criterionItemId?: string | null;
+  criterionRevisionId?: string | null;
   reviewState: string;
   recordedAt?: string;
   integrityHash?: string | null;

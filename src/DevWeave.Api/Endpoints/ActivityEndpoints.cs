@@ -126,16 +126,25 @@ public static class ActivityEndpoints
         Guid tenantId,
         Guid projectId,
         DateTimeOffset? at,
+        DateTimeOffset? asOfValid,
         ReconstructProjectState useCase,
         CancellationToken ct)
     {
-        var result = await useCase.ExecuteAsync(new TenantId(tenantId), new ProjectId(projectId), at, ct);
+        // `at` remains the recorded-time as-of (REV-007); `asOfValid` is optional valid-time filter (NFR-035).
+        var result = await useCase.ExecuteAsync(
+            new TenantId(tenantId),
+            new ProjectId(projectId),
+            asOfRecorded: at,
+            asOfValid: asOfValid,
+            ct);
 
         return Results.Ok(new ProjectStateReconstructionResponse(
             result.Activities.Select(Map).ToList(),
             result.Items
                 .Select(i => new ItemVersionSnapshotResponse(i.ItemId.Value, i.RevisionId?.Value, i.RevisionNumber))
-                .ToList()));
+                .ToList(),
+            result.Relationships.Select(r => r.Id.Value).ToList(),
+            result.Evidence.Select(e => e.Id.Value).ToList()));
     }
 
     private static async Task<IResult> ExportProvenanceAsync(
@@ -151,7 +160,17 @@ public static class ActivityEndpoints
             r.ActivityType,
             r.Agent,
             r.Used.Select(u => new ProvenanceRefResponse(u.ItemId, u.RevisionId)).ToList(),
-            r.Generated.Select(g => new ProvenanceRefResponse(g.ItemId, g.RevisionId)).ToList())).ToList());
+            r.Generated.Select(g => new ProvenanceRefResponse(g.ItemId, g.RevisionId)).ToList(),
+            r.AgentExecution is null
+                ? null
+                : new AgentExecutionProvenanceResponse(
+                    r.AgentExecution.Provider,
+                    r.AgentExecution.Model,
+                    r.AgentExecution.ModelVersion,
+                    r.AgentExecution.ConfigurationFingerprint,
+                    r.AgentExecution.ToolFingerprint,
+                    r.AgentExecution.ExternalRunReference,
+                    r.AgentExecution.AuthorizationContext))).ToList());
     }
 
     private static ActivityResponse Map(Activity activity) =>

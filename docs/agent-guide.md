@@ -42,7 +42,7 @@ collections:
 | --- | --- |
 | `list_channels` | `{ "channels": [ { "id", "type", "channelType", ... } ] }` |
 | `list_messages` / `read_messages_after_cursor` | `{ "messages": [ ... ], "nextCursor" }` |
-| `list_schemas` | `{ "schemas": [ ... ] }` |
+| `list_schemas` | `{ "schemas": [ { typeId, schemaVersion, isCanonical, storageKind } ], "knowledgeTypes": [ ... ] }` — prefer canonical ids such as `requirements.functional` / `requirements.nonfunctional`; legacy `plan.*` remains valid |
 | `list_relation_types` | `{ "relationTypes": [ ... ] }` |
 | `list_codebase_targets` | `{ "codebaseTargets": [ { "id", "provider", "repositoryId", "targetBranch", "baseCommitSha", "canonicalRef", "browseUrl" } ] }` |
 | `list_work_items` | `{ "workItems": [ { "id", "key", "plannedState", "reportedState", "verificationState", "approvalState", "version", ... } ] }` |

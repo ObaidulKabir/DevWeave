@@ -158,7 +158,9 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
                path.EndsWith("/reject", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/verify", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/review", StringComparison.OrdinalIgnoreCase) ||
-               path.EndsWith("/revoke", StringComparison.OrdinalIgnoreCase);
+               path.EndsWith("/revoke", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/rebase-decisions", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith("/analyze", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ProjectId?> ResolveProjectIdAsync(

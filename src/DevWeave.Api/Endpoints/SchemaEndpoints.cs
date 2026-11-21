@@ -24,6 +24,7 @@ public static class SchemaEndpoints
         group.MapPost("/{id:guid}/deprecate", DeprecateSchemaAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
         group.MapGet("", ListSchemasAsync);
+        group.MapGet("/types", ListKnowledgeTypesAsync);
         group.MapGet("/discover", DiscoverSchemasAsync);
         group.MapGet("/{id:guid}", GetSchemaAsync);
 
@@ -89,36 +90,56 @@ public static class SchemaEndpoints
 
     private static async Task<IResult> ListSchemasAsync(
         ListSchemas useCase,
+        IKnowledgeTypeDefinitionRepository types,
         CancellationToken ct)
     {
         var schemas = await useCase.ExecuteAsync(ct);
+        var typeById = (await types.ListAsync(ct)).ToDictionary(type => type.TypeId, StringComparer.Ordinal);
+        return Results.Ok(schemas.Select(schema => Map(schema, typeById.GetValueOrDefault(schema.Namespace))).ToList());
+    }
 
-        return Results.Ok(schemas.Select(Map).ToList());
+    private static async Task<IResult> ListKnowledgeTypesAsync(
+        ListKnowledgeTypes useCase,
+        CancellationToken ct)
+    {
+        var types = await useCase.ExecuteAsync(ct);
+        return Results.Ok(types.Select(Map).ToList());
     }
 
     private static async Task<IResult> DiscoverSchemasAsync(
         DiscoverSchemas useCase,
+        IKnowledgeTypeDefinitionRepository types,
         CancellationToken ct)
     {
         var schemas = await useCase.ExecuteAsync(ct);
-
+        var typeById = (await types.ListAsync(ct)).ToDictionary(type => type.TypeId, StringComparer.Ordinal);
         return Results.Ok(
-            schemas.Select(s => new SchemaDiscoveryItemResponse(s.Namespace, s.Version)).ToList());
+            schemas.Select(schema =>
+            {
+                typeById.TryGetValue(schema.Namespace, out var type);
+                return new SchemaDiscoveryItemResponse(
+                    schema.Namespace,
+                    schema.Version,
+                    type?.IsCanonical ?? false,
+                    type?.StorageKind.ToString());
+            }).ToList());
     }
 
     private static async Task<IResult> GetSchemaAsync(
         Guid id,
         GetSchema useCase,
+        IKnowledgeTypeDefinitionRepository types,
         CancellationToken ct)
     {
         var schema = await useCase.ExecuteAsync(new SchemaDefinitionId(id), ct);
+        if (schema is null)
+            return Results.NotFound();
 
-        return schema is null
-            ? Results.NotFound()
-            : Results.Ok(Map(schema));
+        var type = await types.GetByTypeIdAsync(schema.Namespace, ct);
+        return Results.Ok(Map(schema, type));
     }
 
-    private static SchemaResponse Map(SchemaDefinition schema) =>
+    private static SchemaResponse Map(SchemaDefinition schema, KnowledgeTypeDefinition? type = null) =>
         new(
             schema.Id.Value,
             schema.Namespace,
@@ -128,5 +149,17 @@ public static class SchemaEndpoints
             schema.Status,
             schema.Document,
             schema.CreatedAt,
-            schema.PublishedAt);
+            schema.PublishedAt,
+            type is null ? null : Map(type));
+
+    private static KnowledgeTypeMetadataResponse Map(KnowledgeTypeDefinition type) =>
+        new(
+            type.TypeId,
+            type.Owner,
+            type.Description,
+            type.StorageKind.ToString(),
+            type.LifecyclePolicy,
+            type.DefaultClassification,
+            type.IsCanonical,
+            type.MigrationStrategy);
 }

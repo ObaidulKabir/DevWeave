@@ -48,7 +48,9 @@ public sealed class AddRevision
         string reason,
         string? sourceReference,
         KnowledgeRevisionId? supersededRevisionId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        DateTimeOffset? validFrom = null,
+        DateTimeOffset? validTo = null)
     {
         var item = await _items.GetByIdAsync(tenantId, itemId, ct)
             ?? throw new NotFoundException($"Knowledge item '{itemId}' was not found within tenant '{tenantId}'.");
@@ -101,7 +103,9 @@ public sealed class AddRevision
                 reason,
                 sourceReference,
                 supersededRevisionId,
-                expectedCurrentRevisionNumber);
+                expectedCurrentRevisionNumber,
+                validFrom,
+                validTo);
 
             await _revisions.AddAsync(revision, ct);
             await _unitOfWork.SaveChangesAsync(ct);
@@ -109,6 +113,10 @@ public sealed class AddRevision
             return revision;
         }
         catch (StaleRevisionException ex)
+        {
+            throw new ConflictException(ex.Message);
+        }
+        catch (ArgumentException ex)
         {
             throw new ConflictException(ex.Message);
         }

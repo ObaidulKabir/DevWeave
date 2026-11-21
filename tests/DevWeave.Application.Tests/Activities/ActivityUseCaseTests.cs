@@ -6,6 +6,8 @@ using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Relations;
+using EvidenceRecord = DevWeave.Domain.Evidence.Evidence;
 
 namespace DevWeave.Application.Tests.Activities;
 
@@ -142,7 +144,7 @@ public sealed class ActivityUseCaseTests
         var fakes = CreateFakes();
         var seed = await SeedItemWithRevisionsAsync(fakes);
 
-        var result = await new ReconstructProjectState(fakes.Activities, fakes.Items, fakes.Revisions)
+        var result = await CreateReconstruct(fakes)
             .ExecuteAsync(seed.Tenant, seed.Project);
 
         var snapshot = Assert.Single(result.Items);
@@ -158,17 +160,48 @@ public sealed class ActivityUseCaseTests
 
         var asOf = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
 
-        var result = await new ReconstructProjectState(fakes.Activities, fakes.Items, fakes.Revisions)
+        var result = await CreateReconstruct(fakes)
             .ExecuteAsync(seed.Tenant, seed.Project, asOf);
 
         var snapshot = Assert.Single(result.Items);
         Assert.Equal(2, snapshot.RevisionNumber);
 
         // A timestamp before any revision yields an empty snapshot.
-        var before = await new ReconstructProjectState(fakes.Activities, fakes.Items, fakes.Revisions)
+        var before = await CreateReconstruct(fakes)
             .ExecuteAsync(seed.Tenant, seed.Project, new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
         Assert.Equal(0, Assert.Single(before.Items).RevisionNumber);
         Assert.Null(Assert.Single(before.Items).RevisionId);
+    }
+
+    [Fact]
+    public async Task NFR_035_reconstruct_honours_valid_time_when_asOfValid_is_supplied()
+    {
+        var fakes = CreateFakes();
+        var tenant = Tenant.Create("Alpha Corp");
+        var project = await SeedProjectAsync(fakes, tenant.Id, "shop-api");
+        var actor = await SeedPrincipalAsync(fakes, tenant.Id, "a@alphacorp.com");
+        var item = KnowledgeItem.Create(
+            tenant.Id, project.Id, "req-1", "Requirement", Classification.Internal,
+            RepresentationKind.Text, "requirements.functional", "1.0", actor.Id);
+        await fakes.Items.AddAsync(item);
+
+        var early = item.AddRevision(
+            "1.0", "{\"v\":1}", actor.Id, "v1", null, null, 0,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 1, 10, 0, 0, 0, TimeSpan.Zero));
+        var late = item.AddRevision(
+            "1.0", "{\"v\":2}", actor.Id, "v2", null, early.Id, 1,
+            new DateTimeOffset(2026, 1, 11, 0, 0, 0, TimeSpan.Zero),
+            null);
+        await fakes.Revisions.AddAsync(early);
+        await fakes.Revisions.AddAsync(late);
+
+        var mid = new DateTimeOffset(2026, 1, 5, 0, 0, 0, TimeSpan.Zero);
+        var result = await CreateReconstruct(fakes)
+            .ExecuteAsync(tenant.Id, project.Id, asOfRecorded: null, asOfValid: mid);
+
+        Assert.Equal(1, Assert.Single(result.Items).RevisionNumber);
+        Assert.Equal(early.Id, Assert.Single(result.Items).RevisionId);
     }
 
     [Fact]
@@ -193,7 +226,7 @@ public sealed class ActivityUseCaseTests
         await fakes.Activities.AddAsync(late);
 
         var asOf = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero);
-        var result = await new ReconstructProjectState(fakes.Activities, fakes.Items, fakes.Revisions)
+        var result = await CreateReconstruct(fakes)
             .ExecuteAsync(tenant.Id, project.Id, asOf);
 
         Assert.Single(result.Activities);
@@ -217,7 +250,8 @@ public sealed class ActivityUseCaseTests
                 new[] { new ActivityInput(KnowledgeItemId.New(), inputRevision, 0) },
                 new[] { new ActivityOutput(KnowledgeItemId.New(), outputRevision, 0) });
 
-        var exported = await new ExportProvenance(fakes.Activities).ExecuteAsync(tenant.Id, project.Id);
+        var exported = await new ExportProvenance(fakes.Activities, fakes.ExecutionMetadata)
+            .ExecuteAsync(tenant.Id, project.Id);
 
         var record = Assert.Single(exported);
         Assert.Equal("Generated", record.ActivityType);
@@ -227,6 +261,9 @@ public sealed class ActivityUseCaseTests
     }
 
     private static Fakes CreateFakes() => new();
+
+    private static ReconstructProjectState CreateReconstruct(Fakes fakes) =>
+        new(fakes.Activities, fakes.Items, fakes.Revisions, fakes.Relationships, fakes.Evidence);
 
     private static async Task<Project> SeedProjectAsync(Fakes fakes, TenantId tenantId, string key)
     {
@@ -284,10 +321,13 @@ public sealed class ActivityUseCaseTests
     private sealed class Fakes
     {
         public InMemoryActivityRepository Activities { get; } = new();
+        public InMemoryAgentExecutionMetadataRepository ExecutionMetadata { get; } = new();
         public InMemoryPrincipalRepository Principals { get; } = new();
         public InMemoryProjectRepository Projects { get; } = new();
         public InMemoryKnowledgeItemRepository Items { get; } = new();
         public InMemoryKnowledgeRevisionRepository Revisions { get; } = new();
+        public InMemoryRelationshipRepository Relationships { get; } = new();
+        public InMemoryEvidenceRepository Evidence { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
     }
 
@@ -319,6 +359,30 @@ public sealed class ActivityUseCaseTests
         public Task<Activity?> FindByCorrelationIdAsync(TenantId tenantId, ProjectId projectId, PrincipalId actorId, string correlationId, CancellationToken ct = default) =>
             Task.FromResult(Items.FirstOrDefault(a =>
                 a.TenantId == tenantId && a.ProjectId == projectId && a.Actor == actorId && a.CorrelationId == correlationId));
+    }
+
+    private sealed class InMemoryAgentExecutionMetadataRepository : IAgentExecutionMetadataRepository
+    {
+        public List<DevWeave.Domain.Agents.AgentExecutionMetadata> Items { get; } = new();
+
+        public Task AddAsync(DevWeave.Domain.Agents.AgentExecutionMetadata metadata, CancellationToken ct = default)
+        {
+            Items.Add(metadata);
+            return Task.CompletedTask;
+        }
+
+        public Task<DevWeave.Domain.Agents.AgentExecutionMetadata?> GetByActivityIdAsync(
+            TenantId tenantId,
+            ActivityId activityId,
+            CancellationToken ct = default) =>
+            Task.FromResult(Items.FirstOrDefault(m => m.TenantId == tenantId && m.ActivityId == activityId));
+
+        public Task<IReadOnlyList<DevWeave.Domain.Agents.AgentExecutionMetadata>> ListForProjectActivitiesAsync(
+            TenantId tenantId,
+            IReadOnlyCollection<ActivityId> activityIds,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<DevWeave.Domain.Agents.AgentExecutionMetadata>>(
+                Items.Where(m => m.TenantId == tenantId && activityIds.Contains(m.ActivityId)).ToList());
     }
 
     private sealed class InMemoryPrincipalRepository : IPrincipalRepository
@@ -403,6 +467,54 @@ public sealed class ActivityUseCaseTests
 
         public Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<KnowledgeRevision>>(Revisions.Where(r => r.TenantId == tenantId).ToList());
+    }
+
+    private sealed class InMemoryRelationshipRepository : IRelationshipRepository
+    {
+        public List<Relationship> Items { get; } = new();
+
+        public Task AddAsync(Relationship relationship, CancellationToken ct = default)
+        {
+            Items.Add(relationship);
+            return Task.CompletedTask;
+        }
+
+        public Task<Relationship?> GetByIdAsync(TenantId tenantId, RelationshipId id, CancellationToken ct = default) =>
+            Task.FromResult(Items.FirstOrDefault(r => r.TenantId == tenantId && r.Id == id));
+
+        public Task<IReadOnlyList<Relationship>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Relationship>>(
+                Items.Where(r => r.TenantId == tenantId && r.ProjectId == projectId).ToList());
+
+        public Task<IReadOnlyList<Relationship>> ListOutgoingAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Relationship>>(
+                Items.Where(r => r.TenantId == tenantId && r.SourceItemId == itemId).ToList());
+
+        public Task<IReadOnlyList<Relationship>> ListIncomingAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Relationship>>(
+                Items.Where(r => r.TenantId == tenantId && r.TargetItemId == itemId).ToList());
+    }
+
+    private sealed class InMemoryEvidenceRepository : IEvidenceRepository
+    {
+        public List<EvidenceRecord> Items { get; } = new();
+
+        public Task AddAsync(EvidenceRecord evidence, CancellationToken ct = default)
+        {
+            Items.Add(evidence);
+            return Task.CompletedTask;
+        }
+
+        public Task<EvidenceRecord?> GetByIdAsync(TenantId tenantId, DevWeave.Domain.Evidence.EvidenceId id, CancellationToken ct = default) =>
+            Task.FromResult(Items.FirstOrDefault(e => e.TenantId == tenantId && e.Id == id));
+
+        public Task<IReadOnlyList<EvidenceRecord>> ListForClaimAsync(TenantId tenantId, ActivityId originActivityId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<EvidenceRecord>>(
+                Items.Where(e => e.TenantId == tenantId && e.OriginActivityId == originActivityId).ToList());
+
+        public Task<IReadOnlyList<EvidenceRecord>> ListForProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<EvidenceRecord>>(
+                Items.Where(e => e.TenantId == tenantId && e.ProjectId == projectId).ToList());
     }
 
     private sealed class InMemoryUnitOfWork : IUnitOfWork

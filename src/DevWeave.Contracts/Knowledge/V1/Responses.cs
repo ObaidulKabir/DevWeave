@@ -33,7 +33,9 @@ public sealed record KnowledgeRevisionResponse(
     DateTimeOffset RecordedAt,
     string Reason,
     string? SourceReference,
-    Guid? SupersededRevisionId);
+    Guid? SupersededRevisionId,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null);
 
 /// <summary>
 /// A conflict-friendly error body, returned with HTTP 409 for optimistic-concurrency and duplicate

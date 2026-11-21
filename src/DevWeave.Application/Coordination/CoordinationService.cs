@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
@@ -10,6 +12,8 @@ using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Relations;
+using DevWeave.Domain.Specifications;
 
 namespace DevWeave.Application.Coordination;
 
@@ -38,6 +42,11 @@ public sealed class CoordinationService :
     private readonly IWorkPlanningRepository _work;
     private readonly SpecCatalogService _specCatalog;
     private readonly IContentInspector _inspector;
+    private readonly IPlanBaselineManifestRepository _baselineManifests;
+    private readonly IProjectEventRepository _projectEvents;
+    private readonly IRelationshipRepository _relationships;
+    private readonly IProjectRepository _projects;
+    private readonly ILifecycleProfileRepository _lifecycleProfiles;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -51,7 +60,12 @@ public sealed class CoordinationService :
         IKnowledgeRevisionRepository revisions,
         IWorkPlanningRepository work,
         SpecCatalogService specCatalog,
-        IContentInspector inspector)
+        IContentInspector inspector,
+        IPlanBaselineManifestRepository baselineManifests,
+        IProjectEventRepository projectEvents,
+        IRelationshipRepository relationships,
+        IProjectRepository projects,
+        ILifecycleProfileRepository lifecycleProfiles)
     {
         _repository = repository;
         _uow = uow;
@@ -65,6 +79,11 @@ public sealed class CoordinationService :
         _work = work;
         _specCatalog = specCatalog;
         _inspector = inspector;
+        _baselineManifests = baselineManifests;
+        _projectEvents = projectEvents;
+        _relationships = relationships;
+        _projects = projects;
+        _lifecycleProfiles = lifecycleProfiles;
     }
 
     // --- IRuntimeRegistry ---
@@ -333,7 +352,55 @@ public sealed class CoordinationService :
             draft.AcceptanceCriteria,
             nextVersion);
 
+        var priorBaselines = await _repository.ListBaselinesByProjectAsync(
+            scope.TenantId,
+            scope.ProjectId!,
+            ct);
+        var predecessor = priorBaselines
+            .OrderByDescending(candidate => candidate.ExpectedPlanVersion)
+            .FirstOrDefault();
+        var manifest = await BuildBaselineManifestAsync(
+            baseline,
+            preview,
+            draft,
+            predecessor?.Id,
+            ct);
+        var baselineEvent = ProjectEvent.Record(
+            scope.TenantId,
+            scope.ProjectId!,
+            "plan.baseline.locked",
+            "1.0",
+            scope.ActorId,
+            scope.Purpose,
+            baseline.CreatedAt,
+            baseline.Id,
+            inputs: manifest.ApprovedRevisions
+                .Select(reference => ProjectResourceRef.Local(
+                    ProjectResourceKind.KnowledgeItem,
+                    reference.ItemId,
+                    reference.RevisionId))
+                .ToArray(),
+            outputs:
+            [
+                ProjectResourceRef.Local(
+                    ProjectResourceKind.PlanBaseline,
+                    baseline.Id.Value),
+            ],
+            metadata: new Dictionary<string, string>
+            {
+                ["manifestChecksum"] = manifest.ManifestChecksum,
+                ["planVersion"] = nextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["schemaVersion"] = manifest.ManifestSchemaVersion,
+                ["status"] = "locked",
+            },
+            correlationId: scope.CorrelationId,
+            idempotencyKey: $"plan-baseline:{baseline.Id.Value:D}",
+            reason: draft.Goal,
+            authorizationContext: $"purpose:{scope.Purpose};required-role:owner-or-admin");
+
         await _repository.AddBaselineAsync(baseline, ct);
+        await _baselineManifests.AddAsync(manifest, ct);
+        await _projectEvents.AddAsync(baselineEvent, ct);
         await _audit.AddAsync(
             AuditRecord.Record(
                 scope.TenantId,
@@ -378,6 +445,23 @@ public sealed class CoordinationService :
     public async Task<ExportManifest> DescribeAsync(AuthorizedScope scope, Guid baselineId, CancellationToken ct = default)
     {
         var baseline = await RequireProjectBaselineAsync(scope, baselineId, ct);
+        var manifest = await _baselineManifests.GetByIdAsync(
+            scope.TenantId,
+            scope.ProjectId!,
+            baseline.Id,
+            ct);
+
+        if (manifest is not null)
+        {
+            return new ExportManifest(
+                scope.TenantId.Value,
+                manifest.ManifestSchemaVersion,
+                manifest.CreatedAt,
+                manifest.ApprovedRevisions
+                    .Select(reference => new ResourceRef(reference.ItemId, reference.RevisionId))
+                    .ToList(),
+                [manifest.ManifestChecksum]);
+        }
 
         return new ExportManifest(
             scope.TenantId.Value,
@@ -426,6 +510,146 @@ public sealed class CoordinationService :
         var current = baselines.Count == 0 ? 0 : baselines.Max(b => b.ExpectedPlanVersion);
         return (current, current + 1);
     }
+
+    private async Task<PlanBaselineV2> BuildBaselineManifestAsync(
+        PlanBaseline baseline,
+        PlanLockPreview preview,
+        BaselineDraft draft,
+        BaselineId? predecessorBaselineId,
+        CancellationToken ct)
+    {
+        var project = await _projects.GetByIdAsync(baseline.TenantId, baseline.ProjectId, ct)
+            ?? throw new NotFoundException("Project not found while building the baseline manifest.");
+        var lifecycleProfile = await _lifecycleProfiles.GetByIdAsync(
+            baseline.TenantId,
+            project.LifecycleProfileId,
+            ct)
+            ?? throw new ConflictException("The project's lifecycle profile is unavailable.");
+
+        var revisions = new List<BaselineRevisionRef>();
+        var bindings = new List<BaselineSpecificationBinding>();
+        var criteria = new List<BaselineCriterionRef>();
+        foreach (var locked in preview.Items)
+        {
+            var item = await _knowledge.GetByIdAsync(baseline.TenantId, locked.ItemId, ct)
+                ?? throw new ConflictException($"Plan item '{locked.Key}' disappeared while the baseline was being locked.");
+            if (item.ProjectId != baseline.ProjectId || item.CurrentRevisionId != locked.RevisionId)
+                throw new ConflictException($"Plan item '{locked.Key}' changed while the baseline was being locked.");
+
+            revisions.Add(new BaselineRevisionRef(
+                locked.ItemId.Value,
+                locked.RevisionId.Value,
+                locked.TypeId,
+                item.SchemaVersion,
+                revisions.Count));
+
+            if (IsRequirementType(locked.TypeId))
+                criteria.Add(new BaselineCriterionRef(
+                    locked.ItemId.Value,
+                    locked.RevisionId.Value,
+                    criteria.Count));
+
+            if (!string.Equals(locked.TypeId, SpecDecisionJson.TypeId, StringComparison.Ordinal))
+                continue;
+
+            var revision = await _revisions.GetByIdAsync(baseline.TenantId, locked.RevisionId, ct);
+            var decision = revision is null ? null : SpecDecisionJson.TryParse(revision.Content, out _);
+            if (revision is not null && decision is not null)
+            {
+                bindings.Add(new BaselineSpecificationBinding(
+                    decision.Topic,
+                    locked.ItemId.Value,
+                    locked.RevisionId.Value,
+                    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(revision.Content)))
+                        .ToLowerInvariant(),
+                    bindings.Count));
+            }
+        }
+
+        var approvedItemIds = revisions.Select(reference => reference.ItemId).ToHashSet();
+        var semanticEdges = (await _relationships.ListByProjectAsync(
+                baseline.TenantId,
+                baseline.ProjectId,
+                ct))
+            .Where(relationship =>
+                relationship.Status == RelationshipStatus.Active &&
+                approvedItemIds.Contains(relationship.SourceItemId.Value) &&
+                approvedItemIds.Contains(relationship.TargetItemId.Value))
+            .Select((relationship, position) => new BaselineSemanticEdge(
+                relationship.Id.Value,
+                relationship.SourceItemId.Value,
+                relationship.TargetItemId.Value,
+                relationship.RelationTypeCode,
+                position))
+            .ToArray();
+
+        var dependencyGraph = new List<BaselineDependencyEdge>();
+        var outline = await _plans.ListNodesAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var node in outline.Where(node => node.ParentItemId is not null))
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.KnowledgeItem,
+                node.ParentItemId!.Value.ToString("D"),
+                ProjectResourceKind.KnowledgeItem,
+                node.ItemId.Value.ToString("D"),
+                "contains",
+                dependencyGraph.Count));
+        }
+
+        var workLinks = await _plans.ListLinksAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var link in workLinks.Where(link => approvedItemIds.Contains(link.KnowledgeItemId.Value)))
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.WorkItem,
+                link.WorkItemId.Value.ToString("D"),
+                ProjectResourceKind.KnowledgeRevision,
+                link.RevisionId.Value.ToString("D"),
+                "implements",
+                dependencyGraph.Count));
+        }
+
+        var workDependencies = await _work.ListDependenciesAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var dependency in workDependencies)
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.WorkItem,
+                dependency.WorkItemId.Value.ToString("D"),
+                ProjectResourceKind.WorkItem,
+                dependency.DependsOnId.Value.ToString("D"),
+                "depends_on",
+                dependencyGraph.Count));
+        }
+
+        foreach (var dependencyId in draft.Dependencies)
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.PlanBaseline,
+                baseline.Id.Value.ToString("D"),
+                ProjectResourceKind.ExternalReference,
+                dependencyId.ToString("D"),
+                "declares_dependency",
+                dependencyGraph.Count));
+        }
+
+        return PlanBaselineV2.CreateExact(
+            baseline.Id,
+            baseline.TenantId,
+            baseline.ProjectId,
+            revisions,
+            semanticEdges,
+            bindings,
+            criteria,
+            dependencyGraph,
+            draft.AcceptanceCriteria,
+            lifecycleProfile.Id.Value,
+            lifecycleProfile.Version,
+            "baseline-policy/2.0",
+            predecessorBaselineId);
+    }
+
+    private static bool IsRequirementType(string typeId) =>
+        typeId.StartsWith("requirements.", StringComparison.Ordinal) ||
+        typeId is "plan.requirement" or "plan.constraint";
 
     /// <summary>
     /// Compares the living approved plan with the last locked baseline item by item. A baseline only

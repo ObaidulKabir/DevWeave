@@ -107,7 +107,7 @@ public sealed class PlanDocumentMonitorAcceptanceTests : IClassFixture<IdentityT
 
         var evidenceResponse = await client.PostAsJsonAsync(
             $"/tenants/{tenant.Id}/claims/{claim.Id}/evidence",
-            new RecordEvidenceRequest("review-notes", "sha256:abc", null, "AC-design-1"),
+            new RecordEvidenceRequest("review-notes", "sha256:abc", null, item.Id, revision.Id, "AC-design-1"),
             Json);
         Assert.Equal(HttpStatusCode.Created, evidenceResponse.StatusCode);
         var evidence = (await evidenceResponse.Content.ReadFromJsonAsync<EvidenceResponse>(Json))!;

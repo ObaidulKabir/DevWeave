@@ -6,6 +6,7 @@ using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Contracts.Projects.V1;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Planning;
@@ -118,6 +119,8 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
             new LeaseRequest(packageB, runtimeB, "paths:/ui", DateTimeOffset.UtcNow.AddHours(1), 0, "lease-b"), Json);
         Assert.Equal(HttpStatusCode.Created, leaseBResponse.StatusCode);
 
+        clientA.DefaultRequestHeaders.Remove("X-Runtime-Id");
+        clientA.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeA.ToString());
         var renew = await clientA.PostAsJsonAsync($"{basePath}/leases/{leaseA.Id}/renew",
             new { expectedFence = leaseA.Fence, expiresAt = DateTimeOffset.UtcNow.AddHours(2) }, Json);
         Assert.Equal(HttpStatusCode.OK, renew.StatusCode);
@@ -272,6 +275,25 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
             $"/tenants/{tenantId}/projects/{projectId}/members",
             new GrantProjectMembershipRequest(principalId, ProjectRole.Member), Json);
         response.EnsureSuccessStatusCode();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var tenant = new TenantId(tenantId);
+        var project = new ProjectId(projectId);
+        var agent = new PrincipalId(principalId);
+        var owner = new PrincipalId(granterId);
+        foreach (var capability in new[]
+                 {
+                     AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge, AgentCapability.ExecuteWorkflow,
+                 })
+        {
+            var grant = AgentGrant.Propose(tenant, project, agent, capability, null, Classification.Internal);
+            grant.Approve(owner);
+            db.Add(grant);
+        }
+        if (!await db.AgentCredentials.AnyAsync(c => c.TenantId == tenant && c.AgentId == agent))
+            db.Add(AgentCredential.Issue(tenant, agent, "test", "hash", null));
+        await db.SaveChangesAsync();
     }
 
     private async Task<LifecycleProfileResponse> CreateLifecycleProfileAsync(Guid tenantId, string key, string name, string version)

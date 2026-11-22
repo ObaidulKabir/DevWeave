@@ -7,6 +7,7 @@ using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Contracts.Lifecycle.V1;
+using DevWeave.Contracts.Relations.V1;
 using DevWeave.Contracts.Schema.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Schema;
@@ -57,6 +58,12 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         var metrics = (await metricsResponse.Content.ReadFromJsonAsync<List<MetricView>>(JsonOptions))!;
         Assert.NotEmpty(metrics);
         Assert.Contains(metrics, m => m.Key == "knowledge.total_items" && m.Value == 1);
+        Assert.Contains(metrics, m => m.Key == "work.planned_count");
+        Assert.Contains(metrics, m => m.Key == "work.reported_completed_count");
+        Assert.Contains(metrics, m => m.Key == "work.verified_count");
+        var estimate = Assert.Single(metrics, m => m.Key == "work.completion_estimate");
+        Assert.True(estimate.IsEstimate);
+        Assert.Equal("1.0", estimate.DefinitionVersion);
 
         // 4. Generate Report (REP-002)
         var reportDraft = new ReportDraft("Quarterly Review");
@@ -71,6 +78,60 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         Assert.True(auditResponse.IsSuccessStatusCode, await auditResponse.Content.ReadAsStringAsync());
         var auditPage = (await auditResponse.Content.ReadFromJsonAsync<Page<AuditView>>(JsonOptions))!;
         Assert.Contains(auditPage.Items, a => a.Action == "ReportGenerated");
+    }
+
+    [Fact]
+    public async Task Reporting_filters_hidden_items_and_edges_before_aggregation()
+    {
+        var tenant = await CreateTenantAsync("Reporting Safety Corp");
+        var owner = await CreateOwnerAsync(tenant.Id, "owner@reporting-safety.test");
+        var member = await CreatePrincipalAsync(tenant.Id, "member@reporting-safety.test");
+        var viewer = await CreatePrincipalAsync(tenant.Id, "viewer@reporting-safety.test");
+        var outsider = await CreatePrincipalAsync(tenant.Id, "outsider@reporting-safety.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "safe-agile", "Safe Agile", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "safe-report-project", profile.Id, owner.Id);
+
+        await ActivateTenantMembershipAsync(tenant.Id, member.Id, MembershipRole.Member);
+        await ActivateTenantMembershipAsync(tenant.Id, viewer.Id, MembershipRole.Member);
+        await ActivateTenantMembershipAsync(tenant.Id, outsider.Id, MembershipRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, member.Id, ProjectRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, viewer.Id, ProjectRole.Viewer);
+        await SeedPublishedSchemaAsync("architecture", "1.0", "{\"type\":\"object\"}");
+
+        var visible = await SeedKnowledgeItemAsync(
+            tenant.Id, project.Id, "visible-architecture", owner.Id, Classification.Internal);
+        var hidden = await SeedKnowledgeItemAsync(
+            tenant.Id, project.Id, "restricted-architecture", owner.Id, Classification.Restricted);
+        await CreateRelationshipAsync(tenant.Id, project.Id, visible.Id, hidden.Id, owner.Id);
+
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using var memberClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, member.Id);
+        using var viewerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, viewer.Id);
+        using var outsiderClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, outsider.Id);
+
+        var ownerMetrics = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        AssertMetric(ownerMetrics, "knowledge.total_items", 2);
+        AssertMetric(ownerMetrics, "knowledge.relationship_count", 1);
+
+        foreach (var restrictedClient in new[] { memberClient, viewerClient })
+        {
+            var metrics = await GetMetricsAsync(restrictedClient, tenant.Id, project.Id);
+            AssertMetric(metrics, "knowledge.total_items", 1);
+            var relationshipMetric = AssertMetric(metrics, "knowledge.relationship_count", 0);
+            Assert.DoesNotContain("1/", relationshipMetric.IncludedPopulation, StringComparison.Ordinal);
+            Assert.DoesNotContain("1 relationship", relationshipMetric.ExcludedPopulation, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("hidden cardinality is not disclosed", relationshipMetric.ExcludedPopulation);
+        }
+
+        using var metricAttempt = await outsiderClient.GetAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/metrics");
+        Assert.Equal(HttpStatusCode.NotFound, metricAttempt.StatusCode);
+
+        using var reportAttempt = await outsiderClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/reports",
+            new ReportDraft("Unauthorized report"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.NotFound, reportAttempt.StatusCode);
     }
 
     private async Task<TenantResponse> CreateTenantAsync(string name)
@@ -104,6 +165,44 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         return owner;
     }
 
+    private async Task<PrincipalResponse> CreatePrincipalAsync(Guid tenantId, string email)
+    {
+        using var response = await _client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/principals",
+            new CreatePrincipalRequest(email, PrincipalType.Human),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<PrincipalResponse>(JsonOptions))!;
+    }
+
+    private async Task ActivateTenantMembershipAsync(Guid tenantId, Guid principalId, MembershipRole role)
+    {
+        using var invite = await _client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/members",
+            new InviteMemberRequest(principalId, role),
+            JsonOptions);
+        invite.EnsureSuccessStatusCode();
+        var membership = (await invite.Content.ReadFromJsonAsync<MembershipResponse>(JsonOptions))!;
+
+        using var activate = await _client.PostAsync(
+            $"/tenants/{tenantId}/members/{membership.Id}/activate",
+            content: null);
+        activate.EnsureSuccessStatusCode();
+    }
+
+    private async Task GrantProjectMembershipAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid principalId,
+        ProjectRole role)
+    {
+        using var response = await _client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/members",
+            new GrantProjectMembershipRequest(principalId, role),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+    }
+
     private async Task<LifecycleProfileResponse> CreateLifecycleProfileAsync(Guid tenantId, string key, string name, string version)
     {
         using var response = await _client.PostAsJsonAsync(
@@ -126,11 +225,16 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         return (await response.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions))!;
     }
 
-    private async Task<KnowledgeItemResponse> SeedKnowledgeItemAsync(Guid tenantId, Guid projectId, string key, Guid createdBy)
+    private async Task<KnowledgeItemResponse> SeedKnowledgeItemAsync(
+        Guid tenantId,
+        Guid projectId,
+        string key,
+        Guid createdBy,
+        Classification classification = Classification.Internal)
     {
         var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
         var draft = new CreateKnowledgeItemRequest(
-            key, "Title", Classification.Internal, RepresentationKind.Text, "architecture", "1.0", createdBy);
+            key, "Title", classification, RepresentationKind.Text, "architecture", "1.0", createdBy);
         
         using var response = await client.PostAsJsonAsync($"/tenants/{tenantId}/projects/{projectId}/knowledge", draft, JsonOptions);
         response.EnsureSuccessStatusCode();
@@ -146,6 +250,41 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<KnowledgeRevisionResponse>(JsonOptions))!;
+    }
+
+    private async Task CreateRelationshipAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid sourceItemId,
+        Guid targetItemId,
+        Guid actorId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/relationships",
+            new CreateRelationshipRequest(sourceItemId, targetItemId, "references", actorId),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<List<MetricView>> GetMetricsAsync(
+        HttpClient client,
+        Guid tenantId,
+        Guid projectId)
+    {
+        using var response = await client.GetAsync($"/tenants/{tenantId}/projects/{projectId}/metrics");
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<List<MetricView>>(JsonOptions))!;
+    }
+
+    private static MetricView AssertMetric(
+        IEnumerable<MetricView> metrics,
+        string key,
+        decimal expectedValue)
+    {
+        var metric = Assert.Single(metrics, candidate => candidate.Key == key);
+        Assert.Equal(expectedValue, metric.Value);
+        return metric;
     }
 
     private async Task<Guid> SeedPublishedSchemaAsync(string @namespace, string version, string document)

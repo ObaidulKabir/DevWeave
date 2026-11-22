@@ -1,6 +1,7 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Lifecycle;
+using DevWeave.Application.ProjectGraph;
 using DevWeave.Application.Projects;
 using DevWeave.Api.Security;
 using DevWeave.Contracts.Lifecycle.V1;
@@ -10,6 +11,7 @@ using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.Endpoints;
 
@@ -35,6 +37,7 @@ public static class ProjectEndpoints
         group.MapPost("/projects/{projectId:guid}/members/{membershipId:guid}/revoke", RevokeProjectMembershipAsync);
         group.MapGet("/projects/{projectId:guid}/metrics", GetProjectMetricsAsync);
         group.MapPost("/projects/{projectId:guid}/reports", GenerateProjectReportAsync);
+        group.MapGet("/projects/{projectId:guid}/graph", GetProjectGraphAsync);
         group.MapPost("/lifecycle-profiles", CreateLifecycleProfileAsync);
         group.MapGet("/lifecycle-profiles", ListLifecycleProfilesAsync);
 
@@ -212,8 +215,15 @@ public static class ProjectEndpoints
             "Get project metrics",
             http.TraceIdentifier);
 
-        var metrics = await reporting.GetMetricsAsync(scope, asOf ?? DateTimeOffset.UtcNow, ct);
-        return Results.Ok(metrics);
+        try
+        {
+            var metrics = await reporting.GetMetricsAsync(scope, asOf ?? DateTimeOffset.UtcNow, ct);
+            return Results.Ok(metrics);
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
     }
 
     private static async Task<IResult> GenerateProjectReportAsync(
@@ -231,8 +241,88 @@ public static class ProjectEndpoints
             "Generate project report",
             http.TraceIdentifier);
 
-        var reportId = await reporting.GenerateReportAsync(scope, draft.DeclaredPurpose, ct);
-        return Results.Accepted($"/tenants/{tenantId}/projects/{projectId}/reports/{reportId}", new { id = reportId });
+        try
+        {
+            var reportId = await reporting.GenerateReportAsync(scope, draft.DeclaredPurpose, ct);
+            return Results.Accepted(
+                $"/tenants/{tenantId}/projects/{projectId}/reports/{reportId}",
+                new { id = reportId });
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static async Task<IResult> GetProjectGraphAsync(
+        Guid tenantId,
+        Guid projectId,
+        HttpContext http,
+        CancellationToken ct)
+    {
+        try
+        {
+            var projection = http.RequestServices.GetRequiredService<IProjectGraphProjection>();
+            DateTimeOffset? asOf = DateTimeOffset.TryParse(http.Request.Query["asOf"], out var parsedAsOf)
+                ? parsedAsOf
+                : null;
+            DateTimeOffset? asOfValid = DateTimeOffset.TryParse(http.Request.Query["asOfValid"], out var parsedValid)
+                ? parsedValid
+                : null;
+            var startKind = http.Request.Query["startKind"].ToString();
+            var startId = http.Request.Query["startId"].ToString();
+            _ = int.TryParse(http.Request.Query["maxDepth"], out var maxDepth);
+            _ = int.TryParse(http.Request.Query["maxResults"], out var maxResults);
+
+            var scope = new AuthorizedScope(
+                new TenantId(tenantId),
+                AuthenticatedPrincipal.GetId(http),
+                new ProjectId(projectId),
+                "Inspect project graph",
+                http.TraceIdentifier);
+
+            var snapshot = await projection.BuildAsync(scope, asOf, ct, asOfValid);
+            ProjectGraphPathView[]? paths = null;
+            if (!string.IsNullOrWhiteSpace(startKind) &&
+                !string.IsNullOrWhiteSpace(startId) &&
+                Enum.TryParse<ProjectResourceKind>(startKind, ignoreCase: true, out var kind))
+            {
+                var start = new ProjectResourceRef(kind, startId);
+                paths = snapshot.Traverse(
+                        start,
+                        ProjectGraphDirection.Outgoing,
+                        maxDepth <= 0 ? 3 : Math.Min(maxDepth, 8),
+                        maxResults <= 0 ? 50 : Math.Min(maxResults, 200))
+                    .Select(path => new ProjectGraphPathView(
+                        Map(path.Start),
+                        Map(path.End),
+                        path.Edges.Select(Map).ToArray()))
+                    .ToArray();
+            }
+
+            var payload = new ProjectGraphResponse(
+                snapshot.AsOf,
+                snapshot.Nodes.Select(node => new ProjectGraphNodeView(
+                    Map(node.Resource),
+                    node.Label,
+                    node.Classification.ToString(),
+                    node.RecordedAt)).ToArray(),
+                snapshot.Edges.Select(Map).ToArray(),
+                paths);
+            return Results.Json(payload);
+        }
+        catch (NotFoundException)
+        {
+            return Results.NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            return Results.Content(ex.ToString(), "text/plain", statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     private static async Task<IResult> CreateLifecycleProfileAsync(Guid tenantId, CreateLifecycleProfileRequest request, CreateLifecycleProfile useCase, CancellationToken ct)
@@ -297,4 +387,39 @@ public static class ProjectEndpoints
             profile.Name,
             profile.Version,
             profile.CreatedAt);
+
+    private static ProjectResourceRefView Map(ProjectResourceRef resource) =>
+        new(resource.Kind.ToString(), resource.Identifier, resource.RevisionIdentifier);
+
+    private static ProjectGraphEdgeView Map(ProjectGraphEdge edge) =>
+        new(Map(edge.From), Map(edge.To), edge.RelationType, edge.Origin is null ? null : Map(edge.Origin));
+
 }
+
+public sealed record ProjectGraphResponse(
+    DateTimeOffset AsOf,
+    IReadOnlyList<ProjectGraphNodeView> Nodes,
+    IReadOnlyList<ProjectGraphEdgeView> Edges,
+    IReadOnlyList<ProjectGraphPathView>? Paths);
+
+public sealed record ProjectGraphNodeView(
+    ProjectResourceRefView Resource,
+    string Label,
+    string Classification,
+    DateTimeOffset RecordedAt);
+
+public sealed record ProjectGraphEdgeView(
+    ProjectResourceRefView From,
+    ProjectResourceRefView To,
+    string RelationType,
+    ProjectResourceRefView? Origin);
+
+public sealed record ProjectGraphPathView(
+    ProjectResourceRefView Start,
+    ProjectResourceRefView End,
+    IReadOnlyList<ProjectGraphEdgeView> Edges);
+
+public sealed record ProjectResourceRefView(
+    string Kind,
+    string Identifier,
+    string? RevisionIdentifier);

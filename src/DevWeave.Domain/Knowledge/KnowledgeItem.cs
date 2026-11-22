@@ -142,7 +142,9 @@ public sealed class KnowledgeItem
         string reason,
         string? sourceReference,
         KnowledgeRevisionId? supersededRevisionId,
-        int expectedCurrentRevisionNumber)
+        int expectedCurrentRevisionNumber,
+        DateTimeOffset? validFrom = null,
+        DateTimeOffset? validTo = null)
     {
         if (expectedCurrentRevisionNumber != CurrentRevisionNumber)
             throw new StaleRevisionException(expectedCurrentRevisionNumber, CurrentRevisionNumber);
@@ -156,7 +158,9 @@ public sealed class KnowledgeItem
             actor,
             reason,
             sourceReference,
-            supersededRevisionId);
+            supersededRevisionId,
+            validFrom,
+            validTo);
 
         CurrentRevisionId = revision.Id;
         CurrentRevisionNumber = revision.RevisionNumber;

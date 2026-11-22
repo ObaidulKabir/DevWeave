@@ -117,6 +117,51 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("agent_credentials", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Agents.AgentExecutionMetadata", b =>
+                {
+                    b.Property<Guid>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AuthorizationContext")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ConfigurationFingerprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExternalRunReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ModelVersion")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ToolFingerprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("ActivityId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("agent_execution_metadata", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Agents.AgentGrant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -184,8 +229,18 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<bool>("IsStale")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("StaleAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StaleReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<string>("TaskKey")
                         .IsRequired()
@@ -202,6 +257,10 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProjectId");
 
                     b.HasIndex("TenantId", "ProjectId", "IdempotencyKey");
+
+                    b.HasIndex("TenantId", "ProjectId", "IsStale", "CreatedAt");
+
+                    b.HasIndex("TenantId", "ProjectId", "TaskKey", "IsStale", "CreatedAt");
 
                     b.ToTable("context_packages", (string)null);
                 });
@@ -1041,6 +1100,65 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("plan_baselines", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Coordination.PlanBaselineV2", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("HistoricalPrecision")
+                        .HasColumnType("integer");
+
+                    b.PrimitiveCollection<string[]>("LegacyAcceptanceCriteria")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.Property<Guid>("LifecycleProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LifecycleProfileVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ManifestChecksum")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<string>("ManifestSchemaVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("PredecessorBaselineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ManifestChecksum");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ProjectId");
+
+                    b.ToTable("plan_baseline_manifests", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Coordination.TaskLease", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1080,7 +1198,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("WorkPackageId", "ResourceScope")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'Active'");
 
                     b.ToTable("task_leases", (string)null);
                 });
@@ -1108,6 +1227,9 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("PredecessorWorkPackageId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
@@ -1142,6 +1264,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CampaignId", "Key")
                         .IsUnique();
+
+                    b.HasIndex("TenantId", "PredecessorWorkPackageId");
 
                     b.ToTable("work_packages", (string)null);
                 });
@@ -1204,6 +1328,12 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("CriterionItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CriterionRevisionId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("IntegrityHash")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -1249,6 +1379,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "OriginActivityId");
 
                     b.HasIndex("TenantId", "ProjectId");
+
+                    b.HasIndex("TenantId", "CriterionItemId", "CriterionRevisionId");
 
                     b.ToTable("evidence", (string)null);
                 });
@@ -1314,6 +1446,41 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("principals", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Identity.SupportAccessGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ApproverId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OperatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "OperatorId");
+
+                    b.ToTable("support_access_grants", (string)null);
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Identity.Tenant", b =>
@@ -1527,6 +1694,12 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ValidFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ValidTo")
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -1836,6 +2009,108 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("work_item_transitions", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.ImpactAnalysisReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AnalyzedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("AnalyzedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChangeSetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RulesVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ChangeSetId");
+
+                    b.HasIndex("TenantId", "ProjectId");
+
+                    b.ToTable("impact_analysis_reports", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.InitialPlanProposal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DecisionNote")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ProposedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProposedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("RequireEmptyProject")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ResultMappingJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ProjectId", "Status");
+
+                    b.HasIndex("TenantId", "ProjectId", "ProposedBy", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("initial_plan_proposals", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Planning.PlanExpansionProposal", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1939,6 +2214,51 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("plan_outline_nodes", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.PlanRebaseDecision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AuthorizedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("AuthorizedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ContinuationWorkPackageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ImpactReportId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("WorkPackageId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ImpactReportId");
+
+                    b.HasIndex("TenantId", "WorkPackageId", "AuthorizedAt");
+
+                    b.ToTable("plan_rebase_decisions", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Planning.PlanWorkLink", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1977,6 +2297,89 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("plan_work_links", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.RequirementChangeSet", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RecordedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ProjectId");
+
+                    b.ToTable("requirement_change_sets", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.SemanticConflict", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("LeftRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RecordedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("Resolution")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolutionReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RightRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ProjectId", "IsResolved");
+
+                    b.ToTable("semantic_conflicts", (string)null);
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Projects.Project", b =>
@@ -2036,6 +2439,88 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("projects", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Projects.ProjectEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AuthorizationContext")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("BaselineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("EventSchemaVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Sequence"));
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ValidAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CorrelationId");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("TenantId", "ProjectId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "ProjectId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("project_events", (string)null);
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Projects.ProjectGrant", b =>
@@ -2213,8 +2698,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         new
                         {
                             Id = new Guid("00000000-0000-0000-0000-000000000003"),
-                            AllowedSourceTypeIds = new string[0],
-                            AllowedTargetTypeIds = new string[0],
+                            AllowedSourceTypeIds = new[] { "architecture.decision", "architecture.component", "architecture.interface", "specification.technical", "design.decision", "design.component", "plan.design", "plan.decision", "plan.specification", "plan.architecture" },
+                            AllowedTargetTypeIds = new[] { "requirements.functional", "requirements.nonfunctional", "requirements.constraint", "plan.requirement", "plan.constraint", "plan.acceptance", "plan.criterion" },
                             Cardinality = 1,
                             Code = "satisfies",
                             Direction = 1,
@@ -2224,8 +2709,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         new
                         {
                             Id = new Guid("00000000-0000-0000-0000-000000000004"),
-                            AllowedSourceTypeIds = new string[0],
-                            AllowedTargetTypeIds = new string[0],
+                            AllowedSourceTypeIds = new[] { "architecture.component", "architecture.interface", "delivery.release", "delivery.deployment", "plan.implementation", "plan.component", "plan.module" },
+                            AllowedTargetTypeIds = new[] { "requirements.functional", "requirements.nonfunctional", "requirements.constraint", "specification.technical", "plan.requirement", "plan.constraint", "plan.specification" },
                             Cardinality = 1,
                             Code = "implements",
                             Direction = 1,
@@ -2235,8 +2720,8 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         new
                         {
                             Id = new Guid("00000000-0000-0000-0000-000000000005"),
-                            AllowedSourceTypeIds = new string[0],
-                            AllowedTargetTypeIds = new string[0],
+                            AllowedSourceTypeIds = new[] { "learning.lesson", "experience.feedback", "plan.test", "plan.test-case", "plan.verification", "plan.evidence", "verification.test-case" },
+                            AllowedTargetTypeIds = new[] { "requirements.functional", "requirements.nonfunctional", "requirements.constraint", "plan.requirement", "plan.constraint", "plan.acceptance", "plan.criterion" },
                             Cardinality = 1,
                             Code = "validates",
                             Direction = 1,
@@ -2325,13 +2810,24 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Rationale")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<string>("RelationTypeCode")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("SourceItemId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("SourceReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -2341,6 +2837,12 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ValidFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ValidTo")
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -2357,6 +2859,269 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "TargetItemId");
 
                     b.ToTable("relationships", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Schema.KnowledgeTypeDefinition", b =>
+                {
+                    b.Property<string>("TypeId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DefaultClassification")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<bool>("IsCanonical")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LifecyclePolicy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("MigrationStrategy")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Owner")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("StorageKind")
+                        .HasColumnType("integer");
+
+                    b.HasKey("TypeId");
+
+                    b.HasIndex("IsCanonical");
+
+                    b.ToTable("knowledge_type_definitions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            TypeId = "strategy.goal",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Business/product objective.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "strategy.assumption",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Assumption requiring validation.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "requirements.functional",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Observable functional behavior.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "requirements.nonfunctional",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Measurable quality or operational requirement.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "requirements.constraint",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Design, legal, technical, or business constraint.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "architecture.decision",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Architecture decision and rationale.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "architecture.component",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Logical or deployable component.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "architecture.interface",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Contract between components or systems.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "specification.technical",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Detailed technical specification.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "planning.work-item",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Planned unit of work.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "map-to-existing-aggregate; do-not-duplicate-as-knowledge",
+                            Owner = "platform",
+                            StorageKind = 2
+                        },
+                        new
+                        {
+                            TypeId = "execution.activity-report",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Human or agent work summary.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "map-to-existing-aggregate; do-not-duplicate-as-knowledge",
+                            Owner = "platform",
+                            StorageKind = 3
+                        },
+                        new
+                        {
+                            TypeId = "verification.result",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Test or assessment result.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "map-to-existing-aggregate; do-not-duplicate-as-knowledge",
+                            Owner = "platform",
+                            StorageKind = 4
+                        },
+                        new
+                        {
+                            TypeId = "governance.risk",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 3,
+                            Description = "Uncertainty with impact.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "delivery.release",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Release candidate or released state.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "delivery.deployment",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "External deployment record.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "operation.incident",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 3,
+                            Description = "Operational event or incident.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "learning.lesson",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "Educational explanation or retrospective.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        },
+                        new
+                        {
+                            TypeId = "experience.feedback",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DefaultClassification = 2,
+                            Description = "User or stakeholder feedback.",
+                            IsCanonical = true,
+                            LifecyclePolicy = "independent-review-verification-currency",
+                            MigrationStrategy = "preserve-plan-star-aliases; prefer-canonical-for-new-items",
+                            Owner = "platform",
+                            StorageKind = 1
+                        });
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Schema.SchemaDefinition", b =>
@@ -2403,6 +3168,188 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("schema_definitions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("f100949d-bcce-9f46-a979-0b7befc1470e"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Business/product objective.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"statement\"], \"properties\": { \"statement\": { \"type\": \"string\", \"minLength\": 1 }, \"rationale\": { \"type\": \"string\" }, \"successMeasures\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"owner\": { \"type\": \"string\" }, \"targetDate\": { \"type\": \"string\" } } }",
+                            Namespace = "strategy.goal",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("5a5703bf-c2b1-bd42-95be-09f18a2cb9a7"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Assumption requiring validation.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"statement\"], \"properties\": { \"statement\": { \"type\": \"string\", \"minLength\": 1 }, \"source\": { \"type\": \"string\" }, \"confidence\": { \"type\": \"string\" }, \"validationOwner\": { \"type\": \"string\" }, \"dueDate\": { \"type\": \"string\" } } }",
+                            Namespace = "strategy.assumption",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("f147aea8-2878-a746-9b80-a6d749c63dc8"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Observable functional behavior.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"description\", \"acceptanceCriteria\"], \"properties\": { \"description\": { \"type\": \"string\", \"minLength\": 1 }, \"priority\": { \"type\": \"string\" }, \"rationale\": { \"type\": \"string\" }, \"acceptanceCriteria\": { \"type\": \"array\", \"minItems\": 1, \"items\": { \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"id\", \"statement\"], \"properties\": { \"id\": { \"type\": \"string\", \"minLength\": 1 }, \"statement\": { \"type\": \"string\", \"minLength\": 1 } } } }, \"source\": { \"type\": \"string\" } } }",
+                            Namespace = "requirements.functional",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("ab1e3ff8-70ad-7c4a-b22d-77cf79febb85"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Measurable quality or operational requirement.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [ \"statement\", \"qualityAttribute\", \"metric\", \"target\", \"condition\", \"verificationMethod\" ], \"properties\": { \"statement\": { \"type\": \"string\", \"minLength\": 1 }, \"qualityAttribute\": { \"type\": \"string\", \"minLength\": 1 }, \"metric\": { \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"name\", \"aggregation\", \"unit\"], \"properties\": { \"name\": { \"type\": \"string\", \"minLength\": 1 }, \"aggregation\": { \"type\": \"string\", \"minLength\": 1 }, \"unit\": { \"type\": \"string\", \"minLength\": 1 } } }, \"target\": { \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"operator\", \"value\"], \"properties\": { \"operator\": { \"type\": \"string\", \"enum\": [\"lt\", \"lte\", \"eq\", \"gte\", \"gt\", \"neq\"] }, \"value\": { \"type\": [\"number\", \"string\"] } } }, \"condition\": { \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"workload\", \"environment\"], \"properties\": { \"workload\": { \"type\": \"string\", \"minLength\": 1 }, \"environment\": { \"type\": \"string\", \"minLength\": 1 } } }, \"verificationMethod\": { \"type\": \"string\", \"minLength\": 1 }, \"evidencePolicy\": { \"type\": \"string\" }, \"owner\": { \"type\": \"string\" }, \"rationale\": { \"type\": \"string\" }, \"source\": { \"type\": \"string\" } } }",
+                            Namespace = "requirements.nonfunctional",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("cc0c7a1e-aa31-144e-9540-b626e0c1290b"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Design, legal, technical, or business constraint.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"constraintType\", \"statement\"], \"properties\": { \"constraintType\": { \"type\": \"string\", \"minLength\": 1 }, \"statement\": { \"type\": \"string\", \"minLength\": 1 }, \"rationale\": { \"type\": \"string\" }, \"scope\": { \"type\": \"string\" } } }",
+                            Namespace = "requirements.constraint",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("f2676f67-c66d-d443-91e4-b8a3cc33e9f1"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Architecture decision and rationale.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"context\", \"decision\"], \"properties\": { \"context\": { \"type\": \"string\", \"minLength\": 1 }, \"decision\": { \"type\": \"string\", \"minLength\": 1 }, \"alternatives\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"consequences\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"status\": { \"type\": \"string\" } } }",
+                            Namespace = "architecture.decision",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("5fd7a6c7-962f-ae4e-9b9a-f4945c43fc93"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Logical or deployable component.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"name\", \"responsibility\"], \"properties\": { \"name\": { \"type\": \"string\", \"minLength\": 1 }, \"responsibility\": { \"type\": \"string\", \"minLength\": 1 }, \"interfaces\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"dependencies\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"technologyReference\": { \"type\": \"string\" } } }",
+                            Namespace = "architecture.component",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("3e6f01ad-be3b-5b47-82ef-83555f2fd43f"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Contract between components or systems.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"protocol\"], \"properties\": { \"protocol\": { \"type\": \"string\", \"minLength\": 1 }, \"operations\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"schemaReference\": { \"type\": \"string\" }, \"version\": { \"type\": \"string\" }, \"owner\": { \"type\": \"string\" } } }",
+                            Namespace = "architecture.interface",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("e3fa9b57-58e0-7244-a609-452a7092c463"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Detailed technical specification.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"purpose\", \"normativeContent\"], \"properties\": { \"purpose\": { \"type\": \"string\", \"minLength\": 1 }, \"scope\": { \"type\": \"string\" }, \"normativeContent\": { \"type\": \"string\", \"minLength\": 1 }, \"references\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } } } }",
+                            Namespace = "specification.technical",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("0d2f3d9e-609d-3e4a-a818-e21f0d554063"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Uncertainty with impact.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"description\"], \"properties\": { \"description\": { \"type\": \"string\", \"minLength\": 1 }, \"likelihood\": { \"type\": \"string\" }, \"impact\": { \"type\": \"string\" }, \"mitigation\": { \"type\": \"string\" }, \"owner\": { \"type\": \"string\" }, \"status\": { \"type\": \"string\" } } }",
+                            Namespace = "governance.risk",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("68ed9d9b-f1c2-3e4a-aa2c-b0df5daee07b"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Release candidate or released state.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"version\"], \"properties\": { \"version\": { \"type\": \"string\", \"minLength\": 1 }, \"scope\": { \"type\": \"string\" }, \"approvalRefs\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"releaseDate\": { \"type\": \"string\" }, \"notesRef\": { \"type\": \"string\" } } }",
+                            Namespace = "delivery.release",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("549e21fb-6a7f-a34d-9d96-9df60e8daced"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "External deployment record.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"releaseRef\", \"environment\"], \"properties\": { \"releaseRef\": { \"type\": \"string\", \"minLength\": 1 }, \"environment\": { \"type\": \"string\", \"minLength\": 1 }, \"providerRef\": { \"type\": \"string\" }, \"status\": { \"type\": \"string\" }, \"timestamp\": { \"type\": \"string\" } } }",
+                            Namespace = "delivery.deployment",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("8e7584fa-888e-374d-afac-2a6044c15196"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Operational event or incident.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"severity\", \"summary\"], \"properties\": { \"severity\": { \"type\": \"string\", \"minLength\": 1 }, \"summary\": { \"type\": \"string\", \"minLength\": 1 }, \"affectedService\": { \"type\": \"string\" }, \"impact\": { \"type\": \"string\" }, \"resolutionRef\": { \"type\": \"string\" } } }",
+                            Namespace = "operation.incident",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("3226a05c-3df9-704c-9f4a-267c1a08464e"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Educational explanation or retrospective.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"topic\", \"explanation\"], \"properties\": { \"topic\": { \"type\": \"string\", \"minLength\": 1 }, \"audience\": { \"type\": \"string\" }, \"explanation\": { \"type\": \"string\", \"minLength\": 1 }, \"learningObjectives\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"sourceRefs\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } } } }",
+                            Namespace = "learning.lesson",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        },
+                        new
+                        {
+                            Id = new Guid("f5c301d4-8b09-f347-92f5-42cb528b3b3d"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "User or stakeholder feedback.",
+                            Document = "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"type\": \"object\", \"additionalProperties\": false, \"required\": [\"source\", \"summary\"], \"properties\": { \"source\": { \"type\": \"string\", \"minLength\": 1 }, \"audience\": { \"type\": \"string\" }, \"category\": { \"type\": \"string\" }, \"summary\": { \"type\": \"string\", \"minLength\": 1 }, \"disposition\": { \"type\": \"string\" }, \"relatedItemRefs\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } } } }",
+                            Namespace = "experience.feedback",
+                            Owner = "platform",
+                            PublishedAt = new DateTimeOffset(new DateTime(2026, 11, 20, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Status = 2,
+                            Version = "1.0"
+                        });
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Activities.Activity", b =>
@@ -2492,6 +3439,21 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("AgentId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Agents.AgentExecutionMetadata", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Activities.Activity", null)
+                        .WithOne()
+                        .HasForeignKey("DevWeave.Domain.Agents.AgentExecutionMetadata", "ActivityId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("DevWeave.Domain.Identity.Tenant", null)
@@ -2601,6 +3563,214 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Coordination.PlanBaselineV2", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Coordination.PlanBaseline", null)
+                        .WithOne()
+                        .HasForeignKey("DevWeave.Domain.Coordination.PlanBaselineV2", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("DevWeave.Domain.Coordination.BaselineCriterionRef", "CriterionRefs", b1 =>
+                        {
+                            b1.Property<Guid>("baseline_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<Guid>("ItemId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_item_id");
+
+                            b1.Property<Guid>("RevisionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_revision_id");
+
+                            b1.HasKey("baseline_id", "Position");
+
+                            b1.ToTable("plan_baseline_criterion_refs", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("baseline_id");
+                        });
+
+                    b.OwnsMany("DevWeave.Domain.Coordination.BaselineDependencyEdge", "DependencyGraph", b1 =>
+                        {
+                            b1.Property<Guid>("baseline_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<string>("FromIdentifier")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("from_identifier");
+
+                            b1.Property<int>("FromKind")
+                                .HasColumnType("integer")
+                                .HasColumnName("from_kind");
+
+                            b1.Property<string>("RelationType")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("character varying(100)")
+                                .HasColumnName("relation_type");
+
+                            b1.Property<string>("ToIdentifier")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("to_identifier");
+
+                            b1.Property<int>("ToKind")
+                                .HasColumnType("integer")
+                                .HasColumnName("to_kind");
+
+                            b1.HasKey("baseline_id", "Position");
+
+                            b1.ToTable("plan_baseline_dependency_edges", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("baseline_id");
+                        });
+
+                    b.OwnsMany("DevWeave.Domain.Coordination.BaselineRevisionRef", "ApprovedRevisions", b1 =>
+                        {
+                            b1.Property<Guid>("baseline_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<Guid>("ItemId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_item_id");
+
+                            b1.Property<Guid>("RevisionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_revision_id");
+
+                            b1.Property<string>("SchemaVersion")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("character varying(100)")
+                                .HasColumnName("schema_version");
+
+                            b1.Property<string>("TypeId")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)")
+                                .HasColumnName("type_id");
+
+                            b1.HasKey("baseline_id", "Position");
+
+                            b1.ToTable("plan_baseline_revision_refs", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("baseline_id");
+                        });
+
+                    b.OwnsMany("DevWeave.Domain.Coordination.BaselineSemanticEdge", "SemanticEdges", b1 =>
+                        {
+                            b1.Property<Guid>("baseline_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<string>("RelationTypeCode")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("character varying(100)")
+                                .HasColumnName("relation_type_code");
+
+                            b1.Property<Guid>("RelationshipId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("relationship_id");
+
+                            b1.Property<Guid>("SourceItemId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("source_item_id");
+
+                            b1.Property<Guid>("TargetItemId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("target_item_id");
+
+                            b1.HasKey("baseline_id", "Position");
+
+                            b1.ToTable("plan_baseline_semantic_edges", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("baseline_id");
+                        });
+
+                    b.OwnsMany("DevWeave.Domain.Coordination.BaselineSpecificationBinding", "SpecificationBindings", b1 =>
+                        {
+                            b1.Property<Guid>("baseline_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<string>("BindingHash")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("character varying(64)")
+                                .HasColumnName("binding_hash");
+
+                            b1.Property<Guid?>("ItemId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_item_id");
+
+                            b1.Property<Guid?>("RevisionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("knowledge_revision_id");
+
+                            b1.Property<string>("Topic")
+                                .IsRequired()
+                                .HasMaxLength(300)
+                                .HasColumnType("character varying(300)")
+                                .HasColumnName("topic");
+
+                            b1.HasKey("baseline_id", "Position");
+
+                            b1.ToTable("plan_baseline_specification_bindings", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("baseline_id");
+                        });
+
+                    b.Navigation("ApprovedRevisions");
+
+                    b.Navigation("CriterionRefs");
+
+                    b.Navigation("DependencyGraph");
+
+                    b.Navigation("SemanticEdges");
+
+                    b.Navigation("SpecificationBindings");
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Evidence.Evidence", b =>
@@ -2762,6 +3932,63 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.ImpactAnalysisReport", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("DevWeave.Domain.Planning.ImpactFinding", "Findings", b1 =>
+                        {
+                            b1.Property<Guid>("report_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer");
+
+                            b1.Property<int>("Disposition")
+                                .HasColumnType("integer");
+
+                            b1.Property<Guid>("ItemId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("RelationPath")
+                                .IsRequired()
+                                .HasMaxLength(2000)
+                                .HasColumnType("character varying(2000)");
+
+                            b1.Property<string>("ResourceKind")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)");
+
+                            b1.Property<Guid?>("RevisionId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Rule")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)");
+
+                            b1.HasKey("report_id", "Position");
+
+                            b1.ToTable("impact_analysis_findings", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("report_id");
+                        });
+
+                    b.Navigation("Findings");
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Planning.PlanExpansionProposal", b =>
                 {
                     b.HasOne("DevWeave.Domain.Knowledge.KnowledgeItem", null)
@@ -2795,6 +4022,21 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.PlanRebaseDecision", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Planning.PlanWorkLink", b =>
                 {
                     b.HasOne("DevWeave.Domain.Knowledge.KnowledgeItem", null)
@@ -2819,6 +4061,81 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Planning.RequirementChangeSet", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("DevWeave.Domain.Planning.RequirementChangeEntry", "Changes", b1 =>
+                        {
+                            b1.Property<Guid>("change_set_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer");
+
+                            b1.Property<Guid>("ActorId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("IdempotencyKey")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)");
+
+                            b1.Property<int>("Kind")
+                                .HasColumnType("integer");
+
+                            b1.PrimitiveCollection<Guid[]>("PreviousRevisionIds")
+                                .IsRequired()
+                                .HasColumnType("uuid[]");
+
+                            b1.Property<string>("Reason")
+                                .IsRequired()
+                                .HasMaxLength(2000)
+                                .HasColumnType("character varying(2000)");
+
+                            b1.PrimitiveCollection<Guid[]>("ResultRevisionIds")
+                                .IsRequired()
+                                .HasColumnType("uuid[]");
+
+                            b1.Property<DateTimeOffset>("ValidAt")
+                                .HasColumnType("timestamp with time zone");
+
+                            b1.HasKey("change_set_id", "Position");
+
+                            b1.ToTable("requirement_change_entries", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("change_set_id");
+                        });
+
+                    b.Navigation("Changes");
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Planning.SemanticConflict", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Projects.Project", b =>
                 {
                     b.HasOne("DevWeave.Domain.Lifecycle.LifecycleProfile", null)
@@ -2832,6 +4149,89 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Projects.ProjectEvent", b =>
+                {
+                    b.HasOne("DevWeave.Domain.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DevWeave.Domain.Identity.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("DevWeave.Domain.Projects.ProjectEventResourceRef", "Inputs", b1 =>
+                        {
+                            b1.Property<Guid>("project_event_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<string>("Identifier")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("resource_identifier");
+
+                            b1.Property<int>("Kind")
+                                .HasColumnType("integer")
+                                .HasColumnName("resource_kind");
+
+                            b1.Property<string>("RevisionIdentifier")
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("revision_identifier");
+
+                            b1.HasKey("project_event_id", "Position");
+
+                            b1.ToTable("project_event_inputs", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("project_event_id");
+                        });
+
+                    b.OwnsMany("DevWeave.Domain.Projects.ProjectEventResourceRef", "Outputs", b1 =>
+                        {
+                            b1.Property<Guid>("project_event_id")
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<string>("Identifier")
+                                .IsRequired()
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("resource_identifier");
+
+                            b1.Property<int>("Kind")
+                                .HasColumnType("integer")
+                                .HasColumnName("resource_kind");
+
+                            b1.Property<string>("RevisionIdentifier")
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("revision_identifier");
+
+                            b1.HasKey("project_event_id", "Position");
+
+                            b1.ToTable("project_event_outputs", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("project_event_id");
+                        });
+
+                    b.Navigation("Inputs");
+
+                    b.Navigation("Outputs");
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Projects.ProjectGrant", b =>

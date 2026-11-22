@@ -19,7 +19,9 @@ public sealed record AddRevisionRequest(
     Guid Actor,
     string Reason,
     string? SourceReference,
-    Guid? SupersededRevisionId);
+    Guid? SupersededRevisionId,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null);
 
 /// <summary>
 /// A review decision on one specific revision. <see cref="RevisionId"/> is mandatory so a decision

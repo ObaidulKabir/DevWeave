@@ -1,17 +1,20 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { MetaLine } from '../components/MetaLine';
 import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import type { Milestone, WorkItem } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function WorkPage() {
   const {
-    tenantId, project, live, busy, run, milestones, workItems, setMilestones, setWorkItems,
+    tenantId, project, live, busy, run, milestones, workItems, setMilestones, setWorkItems, channels,
   } = useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [milestoneForm, setMilestoneForm] = useState({ key: '', title: '' });
   const [workForm, setWorkForm] = useState({ key: '', title: '', description: '' });
   const [milestoneId, setMilestoneId] = useState('');
@@ -95,6 +98,7 @@ export function WorkPage() {
           Check supporting knowledge →
         </Link>
       </section>
+      <AgentPushCallout pendingPlanImports={0} channelMessageCount={postedMessages} />
       <div className="grid gap-6 xl:grid-cols-2">
       <Panel title="Milestones" subtitle="Group work around a meaningful delivery outcome, such as an MVP release.">
         {milestones.length === 0 ? <EmptyState label="No milestones yet." /> : (

@@ -9,7 +9,11 @@ public sealed record CreateRelationshipRequest(
     Guid SourceItemId,
     Guid TargetItemId,
     string RelationTypeCode,
-    Guid CreatedBy);
+    Guid CreatedBy,
+    string? Rationale = null,
+    string? SourceReference = null,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidTo = null);
 
 /// <summary>
 /// Bounded relationship graph traversal query (SRS REL-004). The traversal direction is relative to

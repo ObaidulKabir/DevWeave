@@ -77,10 +77,15 @@ public static class KnowledgeEndpoints
     private static async Task<IResult> ListKnowledgeItemsForProjectAsync(
         Guid tenantId,
         Guid projectId,
+        HttpContext http,
         ListKnowledgeItemsForProject useCase,
         CancellationToken ct)
     {
-        var items = await useCase.ExecuteAsync(new TenantId(tenantId), new ProjectId(projectId), ct);
+        var items = await useCase.ExecuteAsync(
+            new TenantId(tenantId),
+            new ProjectId(projectId),
+            AuthenticatedPrincipal.GetId(http),
+            ct);
 
         return Results.Ok(items.Select(Map).ToList());
     }
@@ -98,10 +103,15 @@ public static class KnowledgeEndpoints
     private static async Task<IResult> GetKnowledgeItemAsync(
         Guid tenantId,
         Guid itemId,
+        HttpContext http,
         GetKnowledgeItem useCase,
         CancellationToken ct)
     {
-        var item = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+        var item = await useCase.ExecuteAsync(
+            new TenantId(tenantId),
+            new KnowledgeItemId(itemId),
+            AuthenticatedPrincipal.GetId(http),
+            ct);
 
         return item is null
             ? Results.NotFound()
@@ -128,7 +138,9 @@ public static class KnowledgeEndpoints
                 request.Reason,
                 request.SourceReference,
                 request.SupersededRevisionId is { } superseded ? new KnowledgeRevisionId(superseded) : null,
-                ct);
+                ct,
+                request.ValidFrom,
+                request.ValidTo);
 
             return Results.Created(
                 $"/tenants/{tenantId}/revisions/{revision.Id}",
@@ -346,5 +358,7 @@ public static class KnowledgeEndpoints
             revision.RecordedAt,
             revision.Reason,
             revision.SourceReference,
-            revision.SupersededRevisionId?.Value);
+            revision.SupersededRevisionId?.Value,
+            revision.ValidFrom,
+            revision.ValidTo);
 }

@@ -7,9 +7,13 @@ using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
+using DevWeave.Infrastructure.Persistence;
 using DevWeave.Mcp.Protocol;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.IntegrationTests;
@@ -54,9 +58,25 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
         var initResponse = await client.PostAsJsonAsync($"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc", initRequest, JsonOptions);
         Assert.Equal(HttpStatusCode.OK, initResponse.StatusCode);
         
-        var initResult = (await initResponse.Content.ReadFromJsonAsync<JsonRpcResponse>(JsonOptions))!;
-        Assert.Null(initResult.Error);
-        Assert.NotNull(initResult.Result);
+        var initPayload = await initResponse.Content.ReadAsStringAsync();
+        using var initEnvelope = JsonDocument.Parse(initPayload);
+        Assert.False(initEnvelope.RootElement.TryGetProperty("error", out var initError) &&
+                     initError.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined);
+        var initResult = initEnvelope.RootElement.GetProperty("result");
+        Assert.Equal("1.4.0", initResult.GetProperty("serverInfo").GetProperty("version").GetString());
+        var instructions = initResult.GetProperty("instructions").GetString();
+        Assert.Contains("classification ceiling", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("checksum", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OIDC", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TEN-009", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("propose_initial_plan", instructions, StringComparison.Ordinal);
+        Assert.Contains("list_schemas", instructions, StringComparison.Ordinal);
+        Assert.Contains("Plan import", instructions, StringComparison.Ordinal);
+        Assert.Contains("send_project_message", instructions, StringComparison.Ordinal);
+        Assert.Contains("codebaseTargets", instructions, StringComparison.Ordinal);
+        Assert.Contains("register_codebase_target", instructions, StringComparison.Ordinal);
+        Assert.Contains("report_work_item", instructions, StringComparison.Ordinal);
+        Assert.Contains("list_work_items", instructions, StringComparison.Ordinal);
 
         // 4. Register Runtime
         var registration = new RuntimeRegistration(agent.Id, "DotNetRuntime", "1.0", new List<string>(), "session-1");
@@ -194,5 +214,24 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
             new GrantProjectMembershipRequest(principalId, ProjectRole.Member),
             JsonOptions);
         response.EnsureSuccessStatusCode();
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var tenant = new TenantId(tenantId);
+        var project = new ProjectId(projectId);
+        var agent = new PrincipalId(principalId);
+        var owner = new PrincipalId(ownerId);
+        foreach (var capability in new[]
+                 {
+                     AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge, AgentCapability.ExecuteWorkflow,
+                 })
+        {
+            var grant = AgentGrant.Propose(tenant, project, agent, capability, null, Classification.Internal);
+            grant.Approve(owner);
+            db.Add(grant);
+        }
+        if (!await db.AgentCredentials.AnyAsync(c => c.TenantId == tenant && c.AgentId == agent))
+            db.Add(AgentCredential.Issue(tenant, agent, "test", "hash", null));
+        await db.SaveChangesAsync();
     }
 }

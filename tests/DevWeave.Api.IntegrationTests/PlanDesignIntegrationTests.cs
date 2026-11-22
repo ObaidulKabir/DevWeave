@@ -212,16 +212,14 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             new { name = "read_plan_outline", arguments = new { } }));
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         using var outline = await read.Content.ReadFromJsonAsync<JsonDocument>();
-        Assert.Equal(JsonValueKind.Null, outline!.RootElement.GetProperty("error").ValueKind);
-        Assert.Equal(1, outline.RootElement.GetProperty("result").GetProperty("nodes").GetArrayLength());
+        Assert.Equal(1, McpJson.Payload(outline!.RootElement).GetProperty("nodes").GetArrayLength());
 
         using var propose = await client.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 2, McpMethods.CallTool,
             new { name = "propose_plan_expansion", arguments = new {
                 parentItemId = seed.Root.Id.Value, key = "agent-module", title = "Agent module",
                 typeId = "doc.note", rationale = "Break down the user journey" } }));
         using var result = await propose.Content.ReadFromJsonAsync<JsonDocument>();
-        Assert.Equal(JsonValueKind.Null, result!.RootElement.GetProperty("error").ValueKind);
-        var proposalId = result.RootElement.GetProperty("result").GetProperty("id").GetGuid();
+        var proposalId = McpJson.Payload(result!.RootElement).GetProperty("id").GetGuid();
         using var scopeAfter = _factory.Services.CreateScope();
         var design = scopeAfter.ServiceProvider.GetRequiredService<PlanDesignService>();
         await Assert.ThrowsAsync<UnauthorizedTenantException>(() =>
@@ -284,6 +282,33 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
         var baselineId = await baselines.LockAsync(scopeFor,
             draft with { ApprovedRevisions = new[] { new ResourceRef(seed.Root.Id.Value, seed.Root.CurrentRevisionId!.Value) } });
         Assert.NotEqual(Guid.Empty, baselineId);
+
+        var manifest = await ready.ServiceProvider
+            .GetRequiredService<IPlanBaselineManifestRepository>()
+            .GetByIdAsync(seed.Tenant.Id, seed.Project.Id, new BaselineId(baselineId));
+        Assert.NotNull(manifest);
+        Assert.Equal(BaselineHistoricalPrecision.Exact, manifest.HistoricalPrecision);
+        Assert.True(manifest.HasValidChecksum());
+        var pinned = Assert.Single(manifest.ApprovedRevisions);
+        Assert.Equal(seed.Root.Id.Value, pinned.ItemId);
+        Assert.Equal(seed.Root.CurrentRevisionId!.Value, pinned.RevisionId);
+
+        var events = await ready.ServiceProvider
+            .GetRequiredService<IProjectEventRepository>()
+            .ListAsync(seed.Tenant.Id, seed.Project.Id);
+        var locked = Assert.Single(events, projectEvent =>
+            projectEvent.EventType == "plan.baseline.locked" &&
+            projectEvent.BaselineId == new BaselineId(baselineId));
+        Assert.True(locked.Sequence > 0);
+        using var metadata = JsonDocument.Parse(locked.MetadataJson);
+        Assert.Equal(
+            manifest.ManifestChecksum,
+            metadata.RootElement.GetProperty("manifestChecksum").GetString());
+
+        var described = await baselines.DescribeAsync(scopeFor, baselineId);
+        Assert.Equal("2.0", described.FormatVersion);
+        Assert.Equal(seed.Root.Id.Value, Assert.Single(described.Revisions).Id);
+        Assert.Contains(manifest.ManifestChecksum, described.ArtifactChecksums);
     }
 
     [Fact]
@@ -490,7 +515,7 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             await Assert.ThrowsAsync<ConflictException>(() => leases.AcquireAsync(owner, new LeaseRequest(
                 packageId, runtimeId, "src/other", DateTimeOffset.UtcNow.AddMinutes(10), 0, "lease-2")));
             await Assert.ThrowsAsync<ConflictException>(() =>
-                leases.RenewAsync(owner, leaseId, fence, DateTimeOffset.UtcNow.AddMinutes(20)));
+                leases.RenewAsync(owner, leaseId, fence, DateTimeOffset.UtcNow.AddMinutes(20), runtimeId));
             await Assert.ThrowsAsync<ConflictException>(() => services.GetRequiredService<ICodebaseRegistry>()
                 .RecordChangeSetAsync(owner, new ChangeSetDraft(packageId, targetId, "github:pr/2", "aaa1111", ["src/app/x.cs"])));
 
@@ -499,7 +524,7 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             Assert.Contains("suspended", decision.Reason);
 
             // Releasing a lease is always allowed, so agents can let go cleanly.
-            await leases.ReleaseAsync(owner, leaseId, fence);
+            await leases.ReleaseAsync(owner, leaseId, fence, runtimeId);
         }
 
         // The REST surface Studio reads from reports the same status.

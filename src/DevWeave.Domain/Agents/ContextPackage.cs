@@ -21,6 +21,9 @@ public sealed class ContextPackage
     public PrincipalId AgentId { get; }
     public string? IdempotencyKey { get; }
     public DateTimeOffset CreatedAt { get; }
+    public bool IsStale { get; private set; }
+    public DateTimeOffset? StaleAt { get; private set; }
+    public string? StaleReason { get; private set; }
 
     /// <summary>The revision-pinned entries, renumbered in stable position order (AGT-004, AGT-005).</summary>
     public IReadOnlyList<ContextPackageEntry> Entries => _entries;
@@ -43,6 +46,28 @@ public sealed class ContextPackage
         CreatedAt = createdAt;
         _entries = new List<ContextPackageEntry>();
     }
+
+    /// <summary>
+    /// Marks this immutable snapshot as unsafe for further execution progress. The package rows are
+    /// never rewritten; a new assembly is required after an authorized rebase/replan.
+    /// </summary>
+    public void MarkStale(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("Stale reason is required.", nameof(reason));
+        if (IsStale)
+            return;
+
+        IsStale = true;
+        StaleAt = DateTimeOffset.UtcNow;
+        StaleReason = reason.Trim();
+    }
+
+    public bool PinsRevision(KnowledgeRevisionId revisionId) =>
+        _entries.Any(entry => entry.RevisionId == revisionId);
+
+    public bool PinsItem(KnowledgeItemId itemId) =>
+        _entries.Any(entry => entry.ItemId == itemId);
 
     public static ContextPackage Assemble(
         TenantId tenantId,

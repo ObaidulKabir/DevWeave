@@ -80,6 +80,42 @@ public sealed class SchemaDefinition
     }
 
     /// <summary>
+    /// Creates an already-published platform schema with a stable identity for catalogue seeding.
+    /// </summary>
+    public static SchemaDefinition CreatePublishedSeed(
+        SchemaDefinitionId id,
+        string @namespace,
+        string version,
+        string owner,
+        string description,
+        string document,
+        DateTimeOffset createdAt)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        if (string.IsNullOrWhiteSpace(@namespace))
+            throw new ArgumentException("Schema namespace is required.", nameof(@namespace));
+        if (string.IsNullOrWhiteSpace(version))
+            throw new ArgumentException("Schema version is required.", nameof(version));
+        if (string.IsNullOrWhiteSpace(owner))
+            throw new ArgumentException("Schema owner is required.", nameof(owner));
+        if (string.IsNullOrWhiteSpace(description))
+            throw new ArgumentException("Schema description is required.", nameof(description));
+        if (string.IsNullOrWhiteSpace(document))
+            throw new ArgumentException("Schema document is required.", nameof(document));
+
+        return new SchemaDefinition(
+            id,
+            @namespace.Trim(),
+            version.Trim(),
+            owner.Trim(),
+            description.Trim(),
+            SchemaStatus.Published,
+            document,
+            createdAt,
+            createdAt);
+    }
+
+    /// <summary>
     /// Makes a draft schema referencing-able (SRS SCH-003 / KNW-002). A deprecated schema can never
     /// be republished; publishing an already-published schema is rejected as a duplicate transition.
     /// </summary>

@@ -35,8 +35,15 @@ public sealed record IngressEnvelope(string ProviderEventId, DateTimeOffset Sent
     string SchemaVersion, string MetadataJson);
 public sealed record ExportManifest(Guid TenantId, string FormatVersion, DateTimeOffset CreatedAt,
     IReadOnlyList<ResourceRef> Revisions, IReadOnlyList<string> ArtifactChecksums);
-public sealed record MetricView(string Key, decimal Value, string Unit, string DefinitionVersion,
-    DateTimeOffset CalculatedAt, string IncludedPopulation, string ExcludedPopulation);
+public sealed record MetricView(
+    string Key,
+    decimal Value,
+    string Unit,
+    string DefinitionVersion,
+    DateTimeOffset CalculatedAt,
+    string IncludedPopulation,
+    string ExcludedPopulation,
+    bool IsEstimate = false);
 public sealed record ApplicationDraft(string Key, string Version, string LifecycleState,
     IReadOnlyList<string> DeclaredCapabilities);
 public sealed record AnnotationDraft(ResourceRef Target, string Text, string Classification);
@@ -47,6 +54,15 @@ public sealed record BaselineDraft(string Goal, IReadOnlyList<ResourceRef> Appro
     IReadOnlyList<Guid> Dependencies, IReadOnlyList<string> AcceptanceCriteria, int ExpectedPlanVersion);
 public sealed record CodebaseTargetDraft(string Provider, string RepositoryId,
     string TargetBranch, string BaseCommitSha);
+public sealed record CodebaseTargetView(
+    Guid Id,
+    string Provider,
+    string RepositoryId,
+    string TargetBranch,
+    string BaseCommitSha,
+    string CanonicalRef,
+    string? BrowseUrl,
+    DateTimeOffset CreatedAt);
 public sealed record CampaignDraft(Guid BaselineId, IReadOnlyList<Guid> CodebaseTargetIds,
     string Objective, string ExecutionMode, string IdempotencyKey);
 public sealed record RuntimeRegistration(Guid AgentPrincipalId, string RuntimeClass,

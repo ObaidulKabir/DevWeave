@@ -4,8 +4,23 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { formatWhen, shortId } from '../lib/format';
 import { campaignsStillOnOlderPlan } from '../lib/plan';
-import type { Campaign, PlanBaselineSummary, PlanStatus } from '../lib/types';
+import type {
+  Campaign,
+  CodebaseTarget,
+  CoordinationChannel,
+  CoordinationMessage,
+  PlanBaselineSummary,
+  PlanStatus,
+} from '../lib/types';
+import {
+  asChannelList,
+  asMessageList,
+  messagePayloadText,
+  prettyCoordinationPayload,
+  summarizeCoordinationPayload,
+} from '../lib/coordination';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function CoordinationPage() {
@@ -13,13 +28,19 @@ export function CoordinationPage() {
   const [form, setForm] = useState({
     baselineId: '',
     objective: '',
-    repositoryId: 'acme/checkout',
+    repositoryId: '',
     branch: 'main',
-    commitSha: 'abc1234',
+    commitSha: '',
+    existingTargetId: '',
   });
   const [confirmStart, setConfirmStart] = useState(false);
   const [baselines, setBaselines] = useState<PlanBaselineSummary[]>([]);
   const [planStatus, setPlanStatus] = useState<PlanStatus | null>(null);
+  const [channels, setChannels] = useState<CoordinationChannel[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
+  const [messages, setMessages] = useState<CoordinationMessage[]>([]);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [codebaseTargets, setCodebaseTargets] = useState<CodebaseTarget[]>([]);
 
   const base = tenantId && project ? `/tenants/${tenantId}/projects/${project.id}/coordination` : undefined;
 
@@ -27,20 +48,42 @@ export function CoordinationPage() {
     if (!base) {
       setBaselines([]);
       setPlanStatus(null);
+      setChannels([]);
+      setSelectedChannelId('');
+      setMessages([]);
+      setCodebaseTargets([]);
       return;
     }
     try {
-      const [list, status] = await Promise.all([
+      const [list, status, channelPayload, targets] = await Promise.all([
         apiFetch<PlanBaselineSummary[]>(`${base}/baselines`),
         apiFetch<PlanStatus>(`${base}/plan-status`),
+        apiFetch<unknown>(`${base}/channels`).catch(() => []),
+        apiFetch<CodebaseTarget[]>(`${base}/codebase-targets`).catch(() => []),
       ]);
       const safeList = Array.isArray(list) ? list : [];
       setBaselines(safeList);
       setPlanStatus(status && Array.isArray(status.campaigns) ? status : null);
-      setForm((current) => (current.baselineId ? current : { ...current, baselineId: safeList[0]?.id ?? '' }));
+      const nextChannels = asChannelList(channelPayload);
+      setChannels(nextChannels);
+      setSelectedChannelId((current) => {
+        if (current && nextChannels.some((channel) => channel.id === current)) return current;
+        return nextChannels[0]?.id ?? '';
+      });
+      const safeTargets = Array.isArray(targets) ? targets : [];
+      setCodebaseTargets(safeTargets);
+      setForm((current) => ({
+        ...current,
+        baselineId: current.baselineId || safeList[0]?.id || '',
+        existingTargetId: current.existingTargetId || safeTargets[0]?.id || '',
+      }));
     } catch {
       setBaselines([]);
       setPlanStatus(null);
+      setChannels([]);
+      setSelectedChannelId('');
+      setMessages([]);
+      setCodebaseTargets([]);
     }
   }, [base]);
 
@@ -48,26 +91,53 @@ export function CoordinationPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!base || !selectedChannelId) {
+      setMessages([]);
+      setMessagesError(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch<unknown>(`${base}/channels/${selectedChannelId}/messages?afterSequence=0&limit=200`)
+      .then((payload) => {
+        if (cancelled) return;
+        setMessages(asMessageList(payload).sort((a, b) => a.sequence - b.sequence));
+        setMessagesError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setMessages([]);
+        setMessagesError(err instanceof Error ? err.message : 'Could not load channel messages.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, selectedChannelId]);
+
   const chosenBaseline = baselines.find((b) => b.id === form.baselineId);
   const offCurrentPlan = campaignsStillOnOlderPlan(planStatus?.campaigns);
 
   async function startCampaign() {
     if (!base || !form.baselineId) return;
     await run(async () => {
-      const target = await apiFetch<{ id: string }>(`${base}/codebase-targets`, {
-        method: 'POST',
-        body: JSON.stringify({
-          provider: 'github',
-          repositoryId: form.repositoryId,
-          targetBranch: form.branch,
-          baseCommitSha: form.commitSha,
-        }),
-      });
+      let targetId = form.existingTargetId;
+      if (!targetId) {
+        const target = await apiFetch<{ id: string }>(`${base}/codebase-targets`, {
+          method: 'POST',
+          body: JSON.stringify({
+            provider: 'github',
+            repositoryId: form.repositoryId,
+            targetBranch: form.branch,
+            baseCommitSha: form.commitSha,
+          }),
+        });
+        targetId = target.id;
+      }
       const campaign = await apiFetch<{ id: string }>(`${base}/campaigns`, {
         method: 'POST',
         body: JSON.stringify({
           baselineId: form.baselineId,
-          codebaseTargetIds: [target.id],
+          codebaseTargetIds: [targetId],
           objective: form.objective,
           executionMode: 'Mediated',
           idempotencyKey: `studio-${Date.now()}`,
@@ -98,7 +168,19 @@ export function CoordinationPage() {
 
   return (
     <div className="grid gap-6 xl:grid-cols-2">
-      <Panel title="Execution campaigns" subtitle="Plan-locked multi-agent coordination against external codebases.">
+      <Panel title="Execution campaigns" subtitle="Plan-locked multi-agent coordination against external codebases. Git pointers are identity only — source stays on the host.">
+        {codebaseTargets.length > 0 ? (
+          <ul className="space-y-2 border-b border-[var(--line)] px-5 py-4 text-sm">
+            {codebaseTargets.map((target) => (
+              <li key={target.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="font-semibold">{target.provider}:{target.repositoryId}</span>
+                <span className="font-mono text-[11px] text-[var(--muted)]">
+                  {target.targetBranch} · {target.baseCommitSha.slice(0, 12)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {campaigns.length === 0 ? (
           <EmptyState label="No campaigns yet." />
         ) : (
@@ -145,11 +227,36 @@ export function CoordinationPage() {
             </p>
           ) : null}
           <input required className="field" placeholder="Campaign objective" value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} />
-          <input required className="field" placeholder="github owner/repo" value={form.repositoryId} onChange={(e) => setForm({ ...form, repositoryId: e.target.value })} />
-          <div className="grid grid-cols-2 gap-3">
-            <input required className="field" placeholder="Branch" value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
-            <input required className="field" placeholder="Base SHA" value={form.commitSha} onChange={(e) => setForm({ ...form, commitSha: e.target.value })} />
-          </div>
+          {codebaseTargets.length > 0 ? (
+            <label className="block text-xs font-semibold">
+              Linked git repository
+              <select
+                className="field mt-1 w-full"
+                value={form.existingTargetId}
+                onChange={(e) => setForm({ ...form, existingTargetId: e.target.value })}
+              >
+                <option value="">Register a new pointer…</option>
+                {codebaseTargets.map((target) => (
+                  <option key={target.id} value={target.id}>
+                    {target.provider}:{target.repositoryId} @ {target.targetBranch} ({target.baseCommitSha.slice(0, 7)})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="text-xs text-[var(--muted)]">
+              No git pointers yet. Enter owner/name, branch, and SHA (references only — no clone).
+            </p>
+          )}
+          {!form.existingTargetId ? (
+            <>
+              <input required className="field" placeholder="github owner/repo or https://github.com/owner/name" value={form.repositoryId} onChange={(e) => setForm({ ...form, repositoryId: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <input required className="field" placeholder="Branch" value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
+                <input required className="field" placeholder="Base SHA" value={form.commitSha} onChange={(e) => setForm({ ...form, commitSha: e.target.value })} />
+              </div>
+            </>
+          ) : null}
           <button className="btn btn-primary" disabled={!live || busy || !form.baselineId}>Start campaign</button>
         </form>
       </Panel>
@@ -172,6 +279,73 @@ export function CoordinationPage() {
             )}
             <Link className="btn btn-ghost inline-flex text-xs" to="/plan-versions">Open Plan versions →</Link>
           </div>
+        </Panel>
+
+        <Panel
+          title="Channels"
+          subtitle="Durable agent messages. Knowledge/Relations/Work payloads here are logs, not published plan records."
+          actions={
+            <Link className="text-xs font-semibold text-[var(--signal)] hover:underline" to="/live">
+              Live operations →
+            </Link>
+          }
+        >
+          {channels.length === 0 ? (
+            <EmptyState label="No coordination channels yet. Execution agents create them with open_channel." />
+          ) : (
+            <div className="divide-y divide-[var(--line)]">
+              {channels.map((channel) => (
+                <Row
+                  key={channel.id}
+                  title={`${channel.channelType} · ${shortId(channel.id)}`}
+                  subtitle={`${channel.sequenceHighWatermark} messages · ${formatWhen(channel.createdAt)}`}
+                  meta={<StateBadge value={channel.visibility} />}
+                  active={selectedChannelId === channel.id}
+                  onClick={() => setSelectedChannelId(channel.id)}
+                />
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="Channel messages"
+          subtitle={
+            selectedChannelId
+              ? `Payloads posted to ${shortId(selectedChannelId)}. These are not Knowledge items until Plan import.`
+              : 'Select a channel to read what the agent posted.'
+          }
+        >
+          {messagesError ? (
+            <p className="px-5 py-4 text-sm text-[var(--danger)]" role="alert">
+              {messagesError}
+            </p>
+          ) : messages.length === 0 ? (
+            <EmptyState label="No messages in this channel yet." />
+          ) : (
+            <ol className="divide-y divide-[var(--line)]">
+              {messages.map((message) => {
+                const raw = messagePayloadText(message);
+                const pretty = prettyCoordinationPayload(raw);
+                return (
+                  <li key={message.id} className="px-5 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold">
+                        {message.messageType} · seq {message.sequence}
+                      </p>
+                      <span className="text-xs text-[var(--muted)]">{formatWhen(message.createdAt)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted)]">{summarizeCoordinationPayload(raw)}</p>
+                    {pretty ? (
+                      <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-[var(--paper)] p-3 font-mono text-[11px] leading-relaxed text-[var(--ink)]">
+                        {pretty}
+                      </pre>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
         </Panel>
 
         <Panel title="Project MCP" subtitle="Mandatory agent-to-platform coordination interface.">

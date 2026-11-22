@@ -1,15 +1,21 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Planning;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Relations;
+using DevWeave.Domain.Specifications;
 
 namespace DevWeave.Application.Coordination;
 
@@ -38,6 +44,14 @@ public sealed class CoordinationService :
     private readonly IWorkPlanningRepository _work;
     private readonly SpecCatalogService _specCatalog;
     private readonly IContentInspector _inspector;
+    private readonly IPlanBaselineManifestRepository _baselineManifests;
+    private readonly IProjectEventRepository _projectEvents;
+    private readonly IRelationshipRepository _relationships;
+    private readonly IProjectRepository _projects;
+    private readonly ILifecycleProfileRepository _lifecycleProfiles;
+    private readonly IPlanRebaseDecisionRepository _rebaseDecisions;
+    private readonly IContextPackageRepository _contexts;
+    private readonly ISemanticConflictRepository _semanticConflicts;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -51,7 +65,15 @@ public sealed class CoordinationService :
         IKnowledgeRevisionRepository revisions,
         IWorkPlanningRepository work,
         SpecCatalogService specCatalog,
-        IContentInspector inspector)
+        IContentInspector inspector,
+        IPlanBaselineManifestRepository baselineManifests,
+        IProjectEventRepository projectEvents,
+        IRelationshipRepository relationships,
+        IProjectRepository projects,
+        ILifecycleProfileRepository lifecycleProfiles,
+        IPlanRebaseDecisionRepository rebaseDecisions,
+        IContextPackageRepository contexts,
+        ISemanticConflictRepository semanticConflicts)
     {
         _repository = repository;
         _uow = uow;
@@ -65,6 +87,14 @@ public sealed class CoordinationService :
         _work = work;
         _specCatalog = specCatalog;
         _inspector = inspector;
+        _baselineManifests = baselineManifests;
+        _projectEvents = projectEvents;
+        _relationships = relationships;
+        _projects = projects;
+        _lifecycleProfiles = lifecycleProfiles;
+        _rebaseDecisions = rebaseDecisions;
+        _contexts = contexts;
+        _semanticConflicts = semanticConflicts;
     }
 
     // --- IRuntimeRegistry ---
@@ -237,13 +267,21 @@ public sealed class CoordinationService :
         return Map(lease);
     }
 
-    public async Task<LeaseView> RenewAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, DateTimeOffset expiresAt, CancellationToken ct = default)
+    public async Task<LeaseView> RenewAsync(
+        AuthorizedScope scope,
+        Guid leaseId,
+        long expectedFence,
+        DateTimeOffset expiresAt,
+        Guid runtimeId,
+        CancellationToken ct = default)
     {
         var lease = await _repository.GetLeaseByIdAsync(scope.TenantId, new LeaseId(leaseId), ct)
             ?? throw new NotFoundException("Lease not found.");
 
         if (lease.ProjectId != scope.ProjectId)
             throw new NotFoundException("Lease not found.");
+
+        EnsureHoldingRuntime(lease, runtimeId);
 
         // A lease cannot be kept alive on work the plan has moved away from; it is left to expire.
         await RequireOpenPackageAsync(scope, lease.WorkPackageId.Value, "continued", ct);
@@ -261,13 +299,20 @@ public sealed class CoordinationService :
         return Map(lease);
     }
 
-    public async Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, CancellationToken ct = default)
+    public async Task ReleaseAsync(
+        AuthorizedScope scope,
+        Guid leaseId,
+        long expectedFence,
+        Guid runtimeId,
+        CancellationToken ct = default)
     {
         var lease = await _repository.GetLeaseByIdAsync(scope.TenantId, new LeaseId(leaseId), ct)
             ?? throw new NotFoundException("Lease not found.");
 
         if (lease.ProjectId != scope.ProjectId)
             throw new NotFoundException("Lease not found.");
+
+        EnsureHoldingRuntime(lease, runtimeId);
 
         try
         {
@@ -279,6 +324,13 @@ public sealed class CoordinationService :
         }
 
         await _uow.SaveChangesAsync(ct);
+    }
+
+    private static void EnsureHoldingRuntime(TaskLease lease, Guid runtimeId)
+    {
+        if (runtimeId == Guid.Empty || lease.RuntimeId.Value != runtimeId)
+            throw new UnauthorizedTenantException(
+                "Only the runtime that holds this lease can renew or release it.");
     }
 
     // --- IPlanBaselines ---
@@ -333,7 +385,55 @@ public sealed class CoordinationService :
             draft.AcceptanceCriteria,
             nextVersion);
 
+        var priorBaselines = await _repository.ListBaselinesByProjectAsync(
+            scope.TenantId,
+            scope.ProjectId!,
+            ct);
+        var predecessor = priorBaselines
+            .OrderByDescending(candidate => candidate.ExpectedPlanVersion)
+            .FirstOrDefault();
+        var manifest = await BuildBaselineManifestAsync(
+            baseline,
+            preview,
+            draft,
+            predecessor?.Id,
+            ct);
+        var baselineEvent = ProjectEvent.Record(
+            scope.TenantId,
+            scope.ProjectId!,
+            "plan.baseline.locked",
+            "1.0",
+            scope.ActorId,
+            scope.Purpose,
+            baseline.CreatedAt,
+            baseline.Id,
+            inputs: manifest.ApprovedRevisions
+                .Select(reference => ProjectResourceRef.Local(
+                    ProjectResourceKind.KnowledgeItem,
+                    reference.ItemId,
+                    reference.RevisionId))
+                .ToArray(),
+            outputs:
+            [
+                ProjectResourceRef.Local(
+                    ProjectResourceKind.PlanBaseline,
+                    baseline.Id.Value),
+            ],
+            metadata: new Dictionary<string, string>
+            {
+                ["manifestChecksum"] = manifest.ManifestChecksum,
+                ["planVersion"] = nextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["schemaVersion"] = manifest.ManifestSchemaVersion,
+                ["status"] = "locked",
+            },
+            correlationId: scope.CorrelationId,
+            idempotencyKey: $"plan-baseline:{baseline.Id.Value:D}",
+            reason: draft.Goal,
+            authorizationContext: $"purpose:{scope.Purpose};required-role:owner-or-admin");
+
         await _repository.AddBaselineAsync(baseline, ct);
+        await _baselineManifests.AddAsync(manifest, ct);
+        await _projectEvents.AddAsync(baselineEvent, ct);
         await _audit.AddAsync(
             AuditRecord.Record(
                 scope.TenantId,
@@ -378,6 +478,23 @@ public sealed class CoordinationService :
     public async Task<ExportManifest> DescribeAsync(AuthorizedScope scope, Guid baselineId, CancellationToken ct = default)
     {
         var baseline = await RequireProjectBaselineAsync(scope, baselineId, ct);
+        var manifest = await _baselineManifests.GetByIdAsync(
+            scope.TenantId,
+            scope.ProjectId!,
+            baseline.Id,
+            ct);
+
+        if (manifest is not null)
+        {
+            return new ExportManifest(
+                scope.TenantId.Value,
+                manifest.ManifestSchemaVersion,
+                manifest.CreatedAt,
+                manifest.ApprovedRevisions
+                    .Select(reference => new ResourceRef(reference.ItemId, reference.RevisionId))
+                    .ToList(),
+                [manifest.ManifestChecksum]);
+        }
 
         return new ExportManifest(
             scope.TenantId.Value,
@@ -426,6 +543,146 @@ public sealed class CoordinationService :
         var current = baselines.Count == 0 ? 0 : baselines.Max(b => b.ExpectedPlanVersion);
         return (current, current + 1);
     }
+
+    private async Task<PlanBaselineV2> BuildBaselineManifestAsync(
+        PlanBaseline baseline,
+        PlanLockPreview preview,
+        BaselineDraft draft,
+        BaselineId? predecessorBaselineId,
+        CancellationToken ct)
+    {
+        var project = await _projects.GetByIdAsync(baseline.TenantId, baseline.ProjectId, ct)
+            ?? throw new NotFoundException("Project not found while building the baseline manifest.");
+        var lifecycleProfile = await _lifecycleProfiles.GetByIdAsync(
+            baseline.TenantId,
+            project.LifecycleProfileId,
+            ct)
+            ?? throw new ConflictException("The project's lifecycle profile is unavailable.");
+
+        var revisions = new List<BaselineRevisionRef>();
+        var bindings = new List<BaselineSpecificationBinding>();
+        var criteria = new List<BaselineCriterionRef>();
+        foreach (var locked in preview.Items)
+        {
+            var item = await _knowledge.GetByIdAsync(baseline.TenantId, locked.ItemId, ct)
+                ?? throw new ConflictException($"Plan item '{locked.Key}' disappeared while the baseline was being locked.");
+            if (item.ProjectId != baseline.ProjectId || item.CurrentRevisionId != locked.RevisionId)
+                throw new ConflictException($"Plan item '{locked.Key}' changed while the baseline was being locked.");
+
+            revisions.Add(new BaselineRevisionRef(
+                locked.ItemId.Value,
+                locked.RevisionId.Value,
+                locked.TypeId,
+                item.SchemaVersion,
+                revisions.Count));
+
+            if (IsRequirementType(locked.TypeId))
+                criteria.Add(new BaselineCriterionRef(
+                    locked.ItemId.Value,
+                    locked.RevisionId.Value,
+                    criteria.Count));
+
+            if (!string.Equals(locked.TypeId, SpecDecisionJson.TypeId, StringComparison.Ordinal))
+                continue;
+
+            var revision = await _revisions.GetByIdAsync(baseline.TenantId, locked.RevisionId, ct);
+            var decision = revision is null ? null : SpecDecisionJson.TryParse(revision.Content, out _);
+            if (revision is not null && decision is not null)
+            {
+                bindings.Add(new BaselineSpecificationBinding(
+                    decision.Topic,
+                    locked.ItemId.Value,
+                    locked.RevisionId.Value,
+                    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(revision.Content)))
+                        .ToLowerInvariant(),
+                    bindings.Count));
+            }
+        }
+
+        var approvedItemIds = revisions.Select(reference => reference.ItemId).ToHashSet();
+        var semanticEdges = (await _relationships.ListByProjectAsync(
+                baseline.TenantId,
+                baseline.ProjectId,
+                ct))
+            .Where(relationship =>
+                relationship.Status == RelationshipStatus.Active &&
+                approvedItemIds.Contains(relationship.SourceItemId.Value) &&
+                approvedItemIds.Contains(relationship.TargetItemId.Value))
+            .Select((relationship, position) => new BaselineSemanticEdge(
+                relationship.Id.Value,
+                relationship.SourceItemId.Value,
+                relationship.TargetItemId.Value,
+                relationship.RelationTypeCode,
+                position))
+            .ToArray();
+
+        var dependencyGraph = new List<BaselineDependencyEdge>();
+        var outline = await _plans.ListNodesAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var node in outline.Where(node => node.ParentItemId is not null))
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.KnowledgeItem,
+                node.ParentItemId!.Value.ToString("D"),
+                ProjectResourceKind.KnowledgeItem,
+                node.ItemId.Value.ToString("D"),
+                "contains",
+                dependencyGraph.Count));
+        }
+
+        var workLinks = await _plans.ListLinksAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var link in workLinks.Where(link => approvedItemIds.Contains(link.KnowledgeItemId.Value)))
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.WorkItem,
+                link.WorkItemId.Value.ToString("D"),
+                ProjectResourceKind.KnowledgeRevision,
+                link.RevisionId.Value.ToString("D"),
+                "implements",
+                dependencyGraph.Count));
+        }
+
+        var workDependencies = await _work.ListDependenciesAsync(baseline.TenantId, baseline.ProjectId, ct);
+        foreach (var dependency in workDependencies)
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.WorkItem,
+                dependency.WorkItemId.Value.ToString("D"),
+                ProjectResourceKind.WorkItem,
+                dependency.DependsOnId.Value.ToString("D"),
+                "depends_on",
+                dependencyGraph.Count));
+        }
+
+        foreach (var dependencyId in draft.Dependencies)
+        {
+            dependencyGraph.Add(new BaselineDependencyEdge(
+                ProjectResourceKind.PlanBaseline,
+                baseline.Id.Value.ToString("D"),
+                ProjectResourceKind.ExternalReference,
+                dependencyId.ToString("D"),
+                "declares_dependency",
+                dependencyGraph.Count));
+        }
+
+        return PlanBaselineV2.CreateExact(
+            baseline.Id,
+            baseline.TenantId,
+            baseline.ProjectId,
+            revisions,
+            semanticEdges,
+            bindings,
+            criteria,
+            dependencyGraph,
+            draft.AcceptanceCriteria,
+            lifecycleProfile.Id.Value,
+            lifecycleProfile.Version,
+            "baseline-policy/2.0",
+            predecessorBaselineId);
+    }
+
+    private static bool IsRequirementType(string typeId) =>
+        typeId.StartsWith("requirements.", StringComparison.Ordinal) ||
+        typeId is "plan.requirement" or "plan.constraint";
 
     /// <summary>
     /// Compares the living approved plan with the last locked baseline item by item. A baseline only
@@ -558,6 +815,11 @@ public sealed class CoordinationService :
     {
         // Validate reference shape through the provider adapter when the registered provider matches;
         // always persist only identifiers/SHAs, never source content.
+        if (scope.ProjectId is null)
+            throw new ArgumentException("Codebase targets require a project scope.");
+        if (string.IsNullOrWhiteSpace(provider))
+            throw new ArgumentException("Provider is required.", nameof(provider));
+
         var normalizedProvider = provider.Trim().ToLowerInvariant();
         var resolvedProvider = normalizedProvider;
         var resolvedRepo = repositoryId;
@@ -572,14 +834,21 @@ public sealed class CoordinationService :
             resolvedBranch = resolved.TargetBranch;
             resolvedSha = resolved.BaseCommitSha;
         }
-        else if (string.IsNullOrWhiteSpace(repositoryId) || string.IsNullOrWhiteSpace(targetBranch) || string.IsNullOrWhiteSpace(baseCommitSha))
+        else
         {
-            throw new ArgumentException("Provider, repositoryId, targetBranch and baseCommitSha are required.");
+            RejectUnsafeRepositoryIdentity(repositoryId, targetBranch, baseCommitSha);
+            if (string.IsNullOrWhiteSpace(repositoryId) || string.IsNullOrWhiteSpace(targetBranch) || string.IsNullOrWhiteSpace(baseCommitSha))
+                throw new ArgumentException("Provider, repositoryId, targetBranch and baseCommitSha are required.");
         }
+
+        var existing = await _repository.FindCodebaseTargetAsync(
+            scope.TenantId, scope.ProjectId, resolvedProvider, resolvedRepo, resolvedBranch, resolvedSha, ct);
+        if (existing is not null)
+            return existing.Id.Value;
 
         var target = CodebaseTarget.Register(
             scope.TenantId,
-            scope.ProjectId!,
+            scope.ProjectId,
             resolvedProvider,
             resolvedRepo,
             resolvedBranch,
@@ -588,6 +857,58 @@ public sealed class CoordinationService :
         await _repository.AddCodebaseTargetAsync(target, ct);
         await _uow.SaveChangesAsync(ct);
         return target.Id.Value;
+    }
+
+    public async Task<IReadOnlyList<CodebaseTargetView>> ListAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        if (scope.ProjectId is null)
+            throw new ArgumentException("Codebase targets require a project scope.");
+        var targets = await _repository.ListCodebaseTargetsByProjectAsync(scope.TenantId, scope.ProjectId, ct);
+        return targets.Select(ToView).ToArray();
+    }
+
+    private static CodebaseTargetView ToView(CodebaseTarget target)
+    {
+        var browse = string.Equals(target.Provider, "github", StringComparison.OrdinalIgnoreCase)
+            ? $"https://github.com/{target.RepositoryId}"
+            : null;
+        return new CodebaseTargetView(
+            target.Id.Value,
+            target.Provider,
+            target.RepositoryId,
+            target.TargetBranch,
+            target.BaseCommitSha,
+            $"{target.Provider}:{target.RepositoryId}@{target.TargetBranch}#{target.BaseCommitSha}",
+            browse,
+            target.CreatedAt);
+    }
+
+    private static void RejectUnsafeRepositoryIdentity(string repositoryId, string targetBranch, string baseCommitSha)
+    {
+        if (string.IsNullOrWhiteSpace(repositoryId) ||
+            repositoryId.Contains('\\', StringComparison.Ordinal) ||
+            repositoryId.StartsWith('/') ||
+            repositoryId.StartsWith('.') ||
+            repositoryId.Contains("..", StringComparison.Ordinal) ||
+            repositoryId.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
+            HasEmbeddedCredentials(repositoryId))
+        {
+            throw new ArgumentException(
+                "Repository identity must be a host pointer (owner/name or remote URL), never a local path, file URL, or credentialed URL.");
+        }
+
+        if (string.IsNullOrWhiteSpace(targetBranch) || targetBranch.Contains("..", StringComparison.Ordinal))
+            throw new ArgumentException("Target branch is required and cannot contain path traversal.");
+        if (string.IsNullOrWhiteSpace(baseCommitSha))
+            throw new ArgumentException("Base commit SHA is required.");
+    }
+
+    private static bool HasEmbeddedCredentials(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            return value.Contains("://", StringComparison.Ordinal) && value.Contains('@');
+        return !string.IsNullOrEmpty(uri.UserInfo) &&
+               !string.Equals(uri.UserInfo, "git", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<Guid> RecordChangeSetAsync(AuthorizedScope scope, ChangeSetDraft draft, CancellationToken ct = default)
@@ -845,12 +1166,18 @@ public sealed class CoordinationService :
         if (!Enum.TryParse<WorkthroughKind>(kind, ignoreCase: true, out var parsedKind))
             throw new ArgumentException("kind must be Succeeded or Blocked.", nameof(kind));
 
-        // Only an agent that actually held a lease on this package may report on it. The lease may have
-        // expired, been released, or been stopped by a plan change: a final claim is still allowed, but one
-        // agent cannot overwrite what another reports about work it never touched.
+        // Identity is checked before the plan gate. An agent that never held a lease is forbidden even
+        // when the plan has also moved; a plan-change conflict is only for an agent that did the work.
+        // The lease may have expired, been released, or been stopped by a plan change: a final claim is
+        // still allowed, but one agent cannot overwrite what another reports about work it never touched.
         if (!await ActorHeldLeaseAsync(scope, package.Id, ct))
             throw new UnauthorizedTenantException(
                 "Only an agent that held a lease on this work package can report a workthrough for it.");
+
+        // A success report is a progress transition and must pass the same eligibility gate as leases
+        // and integration. A blocked/rejected-attempt report may still be recorded without moving Work.
+        if (parsedKind == WorkthroughKind.Succeeded)
+            await RequireOpenPackageAsync(scope, workPackageId, "reported", ct);
 
         // The same content policy as every other free-text ingress: no secrets and no source code.
         var text = string.Join("\n", new[] { outcome, whatSucceeded, blockedReason }
@@ -990,6 +1317,42 @@ public sealed class CoordinationService :
             return $"its campaign is {campaign.Status}.";
         if (await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.Campaign, campaign.Id.Value, ct))
             return "its campaign has been stopped by a kill switch.";
+
+        var unresolved = await _semanticConflicts.ListUnresolvedByProjectAsync(
+            scope.TenantId, package.ProjectId, ct);
+        if (unresolved.Any(conflict =>
+                package.ScopeRevisionIds.Count == 0
+                || package.ScopeRevisionIds.Any(revisionId =>
+                    conflict.InvolvesRevision(new KnowledgeRevisionId(revisionId)))))
+        {
+            return "an unresolved semantic conflict blocks dependent execution.";
+        }
+
+        var latestDecision = await _rebaseDecisions.GetLatestForWorkPackageAsync(
+            scope.TenantId, package.Id, ct);
+        if (latestDecision is null && package.PredecessorWorkPackageId is { } predecessorId)
+        {
+            latestDecision = await _rebaseDecisions.GetLatestForWorkPackageAsync(
+                scope.TenantId, predecessorId, ct);
+            if (latestDecision?.ContinuationWorkPackageId != package.Id)
+                latestDecision = null;
+        }
+
+        var latestContext = await _contexts.GetLatestForTaskAsync(
+            scope.TenantId, package.ProjectId, package.Key, ct);
+        if (latestContext is { IsStale: true })
+            return "its context package is stale. Assemble a new context after an approved rebase/replan.";
+
+        if (latestDecision?.RequiresContextRefresh == true)
+        {
+            var context = await _contexts.GetLatestCurrentForTaskAsync(
+                scope.TenantId, package.ProjectId, package.Key, ct);
+            if (context is null || context.CreatedAt < latestDecision.AuthorizedAt)
+            {
+                return "its rebase decision requires a refreshed context package before work can continue.";
+            }
+        }
+
         return null;
     }
 

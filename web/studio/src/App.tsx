@@ -16,6 +16,7 @@ import { LiveOperationsPage } from './pages/LiveOperationsPage';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PlanMapPage } from './pages/PlanMapPage';
+import { PlanImportPage } from './pages/PlanImportPage';
 import { PlanOutlinePage } from './pages/PlanOutlinePage';
 import { PlanVersionsPage } from './pages/PlanVersionsPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -50,6 +51,7 @@ export default function App() {
               <Route path="overview" element={<OverviewPage />} />
               <Route path="plan-map" element={<PlanMapPage />} />
               <Route path="plan-outline" element={<PlanOutlinePage />} />
+              <Route path="plan-import" element={<PlanImportPage />} />
               <Route path="plan-versions" element={<PlanVersionsPage />} />
               <Route path="knowledge" element={<KnowledgePage />} />
               <Route path="documents" element={<DocumentsPage />} />

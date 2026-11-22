@@ -71,11 +71,7 @@ public sealed class McpWorkthroughIntegrationTests : IClassFixture<IdentityTestF
         Task<JsonElement> Tool(HttpClient client, string name, object arguments) =>
             Call(client, McpMethods.CallTool, new { name, arguments });
 
-        static JsonElement Ok(JsonElement reply)
-        {
-            Assert.Equal(JsonValueKind.Null, reply.GetProperty("error").ValueKind);
-            return reply.GetProperty("result");
-        }
+        static JsonElement Ok(JsonElement reply) => McpJson.Payload(reply);
 
         static JsonElement Refused(JsonElement reply, int code, string kind)
         {
@@ -256,7 +252,7 @@ public sealed class McpWorkthroughIntegrationTests : IClassFixture<IdentityTestF
         }
 
         // An empty object is fine.
-        Assert.Equal(JsonValueKind.Null, (await Call(new { })).GetProperty("error").ValueKind);
+        McpJson.AssertNoError(await Call(new { }));
 
         // A one-element array (what some PowerShell clients send) and a key/value list are refused.
         foreach (var bad in new object[] { new object[] { new { } }, new object[] { new { Key = "a", Value = "b" } }, "text", 5 })
@@ -283,7 +279,10 @@ public sealed class McpWorkthroughIntegrationTests : IClassFixture<IdentityTestF
         {
             db.Add(ProjectMembership.Grant(tenant.Id, project.Id, agent.Id, ProjectRole.Member));
             db.Add(AgentCredential.Issue(tenant.Id, agent.Id, "test", "hashed-test-secret", null));
-            foreach (var capability in new[] { AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge })
+            foreach (var capability in new[]
+                     {
+                         AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge, AgentCapability.ExecuteWorkflow,
+                     })
             {
                 var grant = AgentGrant.Propose(tenant.Id, project.Id, agent.Id, capability, null, Classification.Internal);
                 grant.Approve(owner.Id);

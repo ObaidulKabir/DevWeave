@@ -1,3 +1,4 @@
+using DevWeave.Contracts.Activities.V1;
 using DevWeave.Domain.Activities;
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Knowledge;
@@ -40,4 +41,12 @@ public sealed record RecordAgentExecutionRequest(
     string Purpose,
     ActivityStatus Status,
     DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt);
+    DateTimeOffset? EndedAt,
+    string Provider,
+    string Model,
+    string? ModelVersion = null,
+    string? ConfigurationFingerprint = null,
+    string? ToolFingerprint = null,
+    string? ExternalRunReference = null,
+    string? AuthorizationContext = null,
+    IReadOnlyList<ActivityOutputRequest>? Outputs = null);

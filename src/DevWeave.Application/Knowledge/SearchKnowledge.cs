@@ -1,5 +1,6 @@
 using System.Text;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Security;
 using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
@@ -49,10 +50,8 @@ public sealed class SearchKnowledge
         if (!tenantMemberships.Any(candidate => candidate.Status == MembershipStatus.Active))
             throw new UnauthorizedTenantException("Active tenant membership is required to search knowledge.");
 
-        var memberships = await _memberships.ListByPrincipalAsync(tenantId, actorId, ct);
-        var membership = memberships.FirstOrDefault(candidate =>
-                candidate.ProjectId == projectId &&
-                candidate.Status == ProjectMembershipStatus.Active)
+        var role = await TenantProjectAccess.ResolveProjectRoleAsync(
+                _memberships, tenantId, projectId, actorId, ct, _tenantMemberships)
             ?? throw new UnauthorizedTenantException("Active project membership is required to search knowledge.");
 
         var queryInspection = await _inspector.InspectAsync(
@@ -67,9 +66,7 @@ public sealed class SearchKnowledge
                 queryInspection.Reasons);
         }
 
-        var classificationCeiling = membership.Role is ProjectRole.Owner or ProjectRole.Admin
-            ? Classification.Restricted
-            : Classification.Internal;
+        var classificationCeiling = ClassificationAccess.CeilingFor(role);
 
         return await _search.SearchAsync(
             tenantId,

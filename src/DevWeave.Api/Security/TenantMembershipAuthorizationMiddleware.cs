@@ -1,5 +1,6 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Domain.Activities;
+using Microsoft.Extensions.DependencyInjection;
 using DevWeave.Domain.Artifacts;
 using DevWeave.Domain.Evidence;
 using DevWeave.Domain.Identity;
@@ -76,7 +77,30 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
             membership => membership.Status == MembershipStatus.Active);
         if (activeTenantMembership is null)
         {
-            await HideResource(context);
+            // TEN-009: platform operators may access tenant content only with an active support grant.
+            var isPlatformAdmin = string.Equals(
+                context.User.FindFirst("platform_admin")?.Value,
+                "true",
+                StringComparison.Ordinal);
+            if (!isPlatformAdmin)
+            {
+                await HideResource(context);
+                return;
+            }
+
+            var supportGrants = context.RequestServices.GetRequiredService<ISupportAccessGrantRepository>();
+            var grant = await supportGrants.GetActiveAsync(
+                tenantId,
+                principalId,
+                DateTimeOffset.UtcNow,
+                context.RequestAborted);
+            if (grant is null)
+            {
+                await HideResource(context);
+                return;
+            }
+
+            await next(context);
             return;
         }
 
@@ -96,7 +120,8 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
             relationships,
             activities,
             evidence);
-        if (projectId is not null)
+        if (projectId is not null &&
+            activeTenantMembership.Role is not (MembershipRole.Owner or MembershipRole.Admin))
         {
             var projectRows = await projectMemberships.ListByPrincipalAsync(
                 tenantId,
@@ -133,7 +158,10 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
                path.EndsWith("/reject", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/verify", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith("/review", StringComparison.OrdinalIgnoreCase) ||
-               path.EndsWith("/revoke", StringComparison.OrdinalIgnoreCase);
+               path.EndsWith("/revoke", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/rebase-decisions", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/semantic-conflicts", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith("/analyze", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ProjectId?> ResolveProjectIdAsync(
@@ -233,8 +261,10 @@ public sealed class TenantMembershipAuthorizationMiddleware(RequestDelegate next
         var isTenantMembershipRoute =
             !Guid.TryParse(context.Request.RouteValues["projectId"]?.ToString(), out _) &&
             path.Contains("/members", StringComparison.OrdinalIgnoreCase);
+        var isSupportAccessRoute = path.Contains("/support-access", StringComparison.OrdinalIgnoreCase);
         return isTenantMembershipRoute ||
                isTenantWideCollection ||
+               isSupportAccessRoute ||
                path.Contains("/agents", StringComparison.OrdinalIgnoreCase) ||
                path.Contains("/agent-grants", StringComparison.OrdinalIgnoreCase) ||
                (HttpMethods.IsPost(method) &&

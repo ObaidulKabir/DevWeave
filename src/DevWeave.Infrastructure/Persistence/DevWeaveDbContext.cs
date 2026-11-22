@@ -28,10 +28,12 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Principal> Principals => Set<Principal>();
     public DbSet<Membership> Memberships => Set<Membership>();
+    public DbSet<SupportAccessGrant> SupportAccessGrants => Set<SupportAccessGrant>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ProjectReference> ProjectReferences => Set<ProjectReference>();
     public DbSet<ProjectMembership> ProjectMemberships => Set<ProjectMembership>();
     public DbSet<ProjectGrant> ProjectGrants => Set<ProjectGrant>();
+    public DbSet<ProjectEvent> ProjectEvents => Set<ProjectEvent>();
     public DbSet<LifecycleProfile> LifecycleProfiles => Set<LifecycleProfile>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Milestone> Milestones => Set<Milestone>();
@@ -41,9 +43,11 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<PlanOutlineNode> PlanOutlineNodes => Set<PlanOutlineNode>();
     public DbSet<PlanWorkLink> PlanWorkLinks => Set<PlanWorkLink>();
     public DbSet<PlanExpansionProposal> PlanExpansionProposals => Set<PlanExpansionProposal>();
+    public DbSet<InitialPlanProposal> InitialPlanProposals => Set<InitialPlanProposal>();
     public DbSet<KnowledgeItem> KnowledgeItems => Set<KnowledgeItem>();
     public DbSet<KnowledgeRevision> KnowledgeRevisions => Set<KnowledgeRevision>();
     public DbSet<SchemaDefinition> SchemaDefinitions => Set<SchemaDefinition>();
+    public DbSet<KnowledgeTypeDefinition> KnowledgeTypeDefinitions => Set<KnowledgeTypeDefinition>();
     public DbSet<RelationType> RelationTypes => Set<RelationType>();
     public DbSet<Relationship> Relationships => Set<Relationship>();
     public DbSet<Activity> Activities => Set<Activity>();
@@ -57,6 +61,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<CoordinationEvent> CoordinationEvents => Set<CoordinationEvent>();
     public DbSet<ExecutionCampaign> ExecutionCampaigns => Set<ExecutionCampaign>();
     public DbSet<PlanBaseline> PlanBaselines => Set<PlanBaseline>();
+    public DbSet<PlanBaselineV2> PlanBaselineManifests => Set<PlanBaselineV2>();
     public DbSet<CodebaseTarget> CodebaseTargets => Set<CodebaseTarget>();
     public DbSet<ChangeSet> ChangeSets => Set<ChangeSet>();
     public DbSet<ParticipationOffer> ParticipationOffers => Set<ParticipationOffer>();
@@ -73,7 +78,12 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<Evidence> Evidence => Set<Evidence>();
     public DbSet<AgentGrant> AgentGrants => Set<AgentGrant>();
     public DbSet<AgentCredential> AgentCredentials => Set<AgentCredential>();
+    public DbSet<AgentExecutionMetadata> AgentExecutionMetadata => Set<AgentExecutionMetadata>();
     public DbSet<ContextPackage> ContextPackages => Set<ContextPackage>();
+    public DbSet<RequirementChangeSet> RequirementChangeSets => Set<RequirementChangeSet>();
+    public DbSet<ImpactAnalysisReport> ImpactAnalysisReports => Set<ImpactAnalysisReport>();
+    public DbSet<PlanRebaseDecision> PlanRebaseDecisions => Set<PlanRebaseDecision>();
+    public DbSet<SemanticConflict> SemanticConflicts => Set<SemanticConflict>();
     public DbSet<Integration> Integrations => Set<Integration>();
     public DbSet<InboundEvent> InboundEvents => Set<InboundEvent>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();

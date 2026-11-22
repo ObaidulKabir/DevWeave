@@ -160,21 +160,54 @@ function sessionFromPilotPayload(payload: PilotTokenResponse): StudioSession {
 
 async function readPilotError(response: Response, fallback: string): Promise<never> {
   const body = await response.text().catch(() => undefined);
+  const apiError = readApiErrorMessage(body);
   if (response.status === 404) {
     throw new Error(
-      body?.includes('Not Found') || !body
-        ? 'Pilot auth is unavailable (API not in Development, or identity not found).'
-        : body,
+      apiError ??
+        (body?.includes('Not Found') || !body
+          ? 'Sign-in failed: this host does not mint GUID sessions, or those tenant/owner IDs were not found. Register a tenant first, or use the identity provider when it is configured.'
+          : body),
     );
   }
-  if (response.status === 400) {
-    throw new Error(body || 'Invalid registration or login details.');
+  if (response.status === 400 || response.status === 503) {
+    throw new Error(apiError || body || 'Invalid registration or login details.');
   }
   throw new Error(
     response.status === 0
       ? 'Could not reach the API. Is the control plane running?'
-      : `${fallback} (${response.status}).`,
+      : apiError || `${fallback} (${response.status}).`,
   );
+}
+
+function readApiErrorMessage(body: string | undefined): string | undefined {
+  if (!body?.trim()) {
+    return undefined;
+  }
+
+  try {
+    const payload = JSON.parse(body) as {
+      error?: unknown;
+      detail?: unknown;
+      title?: unknown;
+    };
+    if (typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error.trim();
+    }
+    if (typeof payload.detail === 'string' && payload.detail.trim()) {
+      return payload.detail.trim();
+    }
+    if (
+      typeof payload.title === 'string' &&
+      payload.title.trim() &&
+      payload.title !== 'An error occurred while processing your request.'
+    ) {
+      return payload.title.trim();
+    }
+  } catch {
+    // Body is plain text; callers may use it directly.
+  }
+
+  return undefined;
 }
 
 export async function mintPilotOwnerToken(

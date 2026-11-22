@@ -6,6 +6,7 @@ using DevWeave.Domain.Activities;
 using DevWeave.Domain.Artifacts;
 using DevWeave.Domain.Evidence;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 using EvidenceRecord = DevWeave.Domain.Evidence.Evidence;
 
@@ -47,7 +48,9 @@ public static class EvidenceEndpoints
                 request.Type,
                 request.IntegrityHash,
                 request.RelatedArtifactId is { } artifactId ? new ArtifactId(artifactId) : null,
-                request.RelatedCriterion,
+                new KnowledgeItemId(request.CriterionItemId),
+                new KnowledgeRevisionId(request.CriterionRevisionId),
+                request.RelatedCriterion ?? string.Empty,
                 ct);
 
             return Results.Created($"/tenants/{tenantId}/evidence/{record.Id}", Map(record));
@@ -153,6 +156,8 @@ public static class EvidenceEndpoints
             evidence.Type,
             evidence.IntegrityHash,
             evidence.RelatedArtifactId?.Value,
+            evidence.CriterionItemId?.Value,
+            evidence.CriterionRevisionId?.Value,
             evidence.RelatedCriterion,
             evidence.ReviewState,
             evidence.ReviewedBy?.Value,

@@ -9,6 +9,7 @@ using DevWeave.Contracts.Activities.V1;
 using DevWeave.Contracts.Artifacts.V1;
 using DevWeave.Contracts.Evidence.V1;
 using DevWeave.Contracts.Identity.V1;
+using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Activities;
@@ -172,10 +173,14 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
         var project = await CreateProjectAsync(tenant.Id, "shop-api", profile.Id, actor.Id);
 
         var claim = await CreateClaimAsync(tenant.Id, project.Id, actor.Id);
+        var criterion = await CreateCriterionAsync(tenant.Id, project.Id, actor.Id);
 
-        var recorded = await RecordEvidenceAsync(tenant.Id, claim.Id, "screenshot", "sha256:aa", null, "AC-1");
+        var recorded = await RecordEvidenceAsync(
+            tenant.Id, claim.Id, "screenshot", "sha256:aa", null, criterion.ItemId, criterion.RevisionId, "AC-1");
         Assert.Equal(EvidenceReviewState.Unreviewed, recorded.ReviewState);
         Assert.Null(recorded.ReviewedBy);
+        Assert.Equal(criterion.ItemId, recorded.CriterionItemId);
+        Assert.Equal(criterion.RevisionId, recorded.CriterionRevisionId);
 
         var forClaim = await ListEvidenceForClaimAsync(tenant.Id, claim.Id);
         Assert.Single(forClaim);
@@ -258,6 +263,38 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
         return (await response.Content.ReadFromJsonAsync<ActivityResponse>(JsonOptions))!;
     }
 
+    private async Task<(Guid ItemId, Guid RevisionId)> CreateCriterionAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid actorId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var create = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
+            new CreateKnowledgeItemRequest(
+                $"ac-{Guid.NewGuid():N}"[..20],
+                "Acceptance criterion",
+                Classification.Internal,
+                RepresentationKind.StructuredData,
+                "requirements.functional",
+                "1.0",
+                actorId),
+            JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var item = (await create.Content.ReadFromJsonAsync<KnowledgeItemResponse>(JsonOptions))!;
+
+        var payload = """
+            {"description":"AC-1","acceptanceCriteria":[{"id":"AC-1","statement":"passes"}]}
+            """;
+        using var revisionResponse = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/knowledge/{item.Id}/revisions",
+            new AddRevisionRequest(0, "1.0", payload, actorId, "seed criterion", null, null),
+            JsonOptions);
+        revisionResponse.EnsureSuccessStatusCode();
+        var revision = (await revisionResponse.Content.ReadFromJsonAsync<KnowledgeRevisionResponse>(JsonOptions))!;
+        return (item.Id, revision.Id);
+    }
+
     private async Task<ArtifactResponse> UploadArtifactAsync(
         Guid tenantId,
         Guid projectId,
@@ -332,11 +369,14 @@ public sealed class ArtifactEvidenceRoundTripIntegrationTests : IClassFixture<Id
         string type,
         string? integrityHash,
         Guid? relatedArtifactId,
+        Guid criterionItemId,
+        Guid criterionRevisionId,
         string relatedCriterion)
     {
         using var response = await _client.PostAsJsonAsync(
             $"/tenants/{tenantId}/claims/{claimId}/evidence",
-            new RecordEvidenceRequest(type, integrityHash, relatedArtifactId, relatedCriterion),
+            new RecordEvidenceRequest(
+                type, integrityHash, relatedArtifactId, criterionItemId, criterionRevisionId, relatedCriterion),
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<EvidenceResponse>(JsonOptions))!;
@@ -415,7 +455,9 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
 
         var artifactB = await UploadArtifactAsync(beta.Id, projectB.Id, "notes.txt", "notes.txt", "text/plain", "Internal", actorB.Id, "beta secret");
         var claimB = await CreateClaimAsync(beta.Id, projectB.Id, actorB.Id);
-        var evidenceB = await RecordEvidenceAsync(beta.Id, claimB.Id, "screenshot", "sha256:aa", null, "AC-1");
+        var criterionB = await CreateCriterionAsync(beta.Id, projectB.Id, actorB.Id);
+        var evidenceB = await RecordEvidenceAsync(
+            beta.Id, claimB.Id, "screenshot", "sha256:aa", null, criterionB.ItemId, criterionB.RevisionId, "AC-1");
 
         // HTTP artifact read paths must not disclose beta's artifact to alpha.
         Assert.Null(await GetArtifactAsync(alpha.Id, artifactB.Id));
@@ -512,6 +554,38 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
         return (await response.Content.ReadFromJsonAsync<ActivityResponse>(JsonOptions))!;
     }
 
+    private async Task<(Guid ItemId, Guid RevisionId)> CreateCriterionAsync(
+        Guid tenantId,
+        Guid projectId,
+        Guid actorId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var create = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge",
+            new CreateKnowledgeItemRequest(
+                $"ac-{Guid.NewGuid():N}"[..20],
+                "Acceptance criterion",
+                Classification.Internal,
+                RepresentationKind.StructuredData,
+                "requirements.functional",
+                "1.0",
+                actorId),
+            JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var item = (await create.Content.ReadFromJsonAsync<KnowledgeItemResponse>(JsonOptions))!;
+
+        var payload = """
+            {"description":"AC-1","acceptanceCriteria":[{"id":"AC-1","statement":"passes"}]}
+            """;
+        using var revisionResponse = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/knowledge/{item.Id}/revisions",
+            new AddRevisionRequest(0, "1.0", payload, actorId, "seed criterion", null, null),
+            JsonOptions);
+        revisionResponse.EnsureSuccessStatusCode();
+        var revision = (await revisionResponse.Content.ReadFromJsonAsync<KnowledgeRevisionResponse>(JsonOptions))!;
+        return (item.Id, revision.Id);
+    }
+
     private async Task<ArtifactResponse> UploadArtifactAsync(
         Guid tenantId,
         Guid projectId,
@@ -572,11 +646,14 @@ public sealed class ArtifactEvidenceTenantIsolationIntegrationTests : IClassFixt
         string type,
         string? integrityHash,
         Guid? relatedArtifactId,
+        Guid criterionItemId,
+        Guid criterionRevisionId,
         string relatedCriterion)
     {
         using var response = await _client.PostAsJsonAsync(
             $"/tenants/{tenantId}/claims/{claimId}/evidence",
-            new RecordEvidenceRequest(type, integrityHash, relatedArtifactId, relatedCriterion),
+            new RecordEvidenceRequest(
+                type, integrityHash, relatedArtifactId, criterionItemId, criterionRevisionId, relatedCriterion),
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<EvidenceResponse>(JsonOptions))!;

@@ -7,7 +7,7 @@ import {
   ensureTenantMembership,
   slugifyKey,
 } from '../lib/apps';
-import { apiFetch } from '../lib/api';
+import { apiFetch, publicApiOrigin } from '../lib/api';
 import { formatWhen, shortId } from '../lib/format';
 import type {
   AgentCredential,
@@ -17,8 +17,12 @@ import type {
 } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
-const MCP_CAPABILITIES = ['ReadKnowledge', 'WriteKnowledge', 'AssembleContext', 'ExecuteWorkflow'] as const;
-const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'http://localhost:5080';
+const AGENT_PRESETS = {
+  Planning: ['ReadKnowledge', 'WriteKnowledge', 'TraverseRelations'] as const,
+  Execution: ['ReadKnowledge', 'AssembleContext', 'ExecuteWorkflow'] as const,
+} as const;
+
+type AgentPreset = keyof typeof AGENT_PRESETS;
 
 function maskSecret(id: string): string {
   const compact = id.replace(/-/g, '');
@@ -70,7 +74,8 @@ export function AccessPage() {
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
   const [appForm, setAppForm] = useState({ name: '', key: '', description: '' });
   const [agentEmail, setAgentEmail] = useState('');
-  const [keyLabel, setKeyLabel] = useState('mcp-runtime');
+  const [keyLabel, setKeyLabel] = useState('mcp-planning');
+  const [agentPreset, setAgentPreset] = useState<AgentPreset>('Planning');
   const [issued, setIssued] = useState<AgentCredentialIssued | null>(null);
   const [copied, setCopied] = useState(false);
   const [localNote, setLocalNote] = useState<string | null>(null);
@@ -80,10 +85,11 @@ export function AccessPage() {
     [agents, selectedAgentId],
   );
 
+  const apiOrigin = publicApiOrigin();
   const mcpPath = tenantId && project
     ? `/tenants/${tenantId}/projects/${project.id}/mcp/rpc`
     : '/tenants/{tenantId}/projects/{projectId}/mcp/rpc';
-  const mcpUrl = `${API_ORIGIN}${mcpPath}`;
+  const mcpUrl = `${apiOrigin}${mcpPath}`;
   const authPath = tenantId && selectedAgent
     ? `/tenants/${tenantId}/agents/${selectedAgent.id}/authenticate`
     : '/tenants/{tenantId}/agents/{agentId}/authenticate';
@@ -185,7 +191,7 @@ export function AccessPage() {
       await ensureTenantMembership(tenantId, agent.id);
       await ensureProjectMembership(tenantId, project.id, agent.id);
 
-      for (const capability of MCP_CAPABILITIES) {
+      for (const capability of AGENT_PRESETS[agentPreset]) {
         try {
           await grantAndApprove(tenantId, project.id, agent.id, who, capability);
         } catch {
@@ -193,26 +199,29 @@ export function AccessPage() {
         }
       }
 
+      const defaultLabel = agentPreset === 'Planning' ? 'mcp-planning' : 'mcp-execution';
       const credential = await apiFetch<AgentCredentialIssued>(
         `/tenants/${tenantId}/agents/${agent.id}/credentials`,
         {
           method: 'POST',
-          body: JSON.stringify({ label: keyLabel.trim() || 'mcp-runtime', expiresAt: null }),
+          body: JSON.stringify({ label: keyLabel.trim() || defaultLabel, expiresAt: null }),
         },
       );
 
-      return { agent, credential };
+      return { agent, credential, preset: agentPreset };
     });
 
     if (!result) return;
     setAgentEmail('');
-    setKeyLabel('mcp-runtime');
+    setKeyLabel(result.preset === 'Planning' ? 'mcp-planning' : 'mcp-execution');
     setSelectedAgentId(result.agent.id);
     setIssued(result.credential);
     await loadAgents();
     await loadCredentials(result.agent.id);
     await refresh();
-    setLocalNote('API key issued. Copy the secret now — it is not shown again.');
+    setLocalNote(
+      `${result.preset} API key issued (${AGENT_PRESETS[result.preset].join(', ')}). Copy the secret now — it is not shown again.`,
+    );
   }
 
   async function revokeCredential(credentialId: string) {
@@ -404,6 +413,25 @@ export function AccessPage() {
               </div>
             ) : null}
             <div>
+              <label htmlFor="agent-preset" className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                Agent preset
+              </label>
+              <select
+                id="agent-preset"
+                className="field mt-1"
+                disabled={!live || busy}
+                value={agentPreset}
+                onChange={(event) => {
+                  const next = event.target.value as AgentPreset;
+                  setAgentPreset(next);
+                  setKeyLabel(next === 'Planning' ? 'mcp-planning' : 'mcp-execution');
+                }}
+              >
+                <option value="Planning">Planning — design / propose_initial_plan</option>
+                <option value="Execution">Execution — leases / change sets</option>
+              </select>
+            </div>
+            <div>
               <label htmlFor="key-label" className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
                 Key label
               </label>
@@ -418,12 +446,12 @@ export function AccessPage() {
             </div>
             <button type="submit" className="btn btn-primary" disabled={!live || busy || !project}>
               {agents.length === 0 || agentEmail.trim()
-                ? 'Register agent + create API key'
-                : 'Create API key for selected agent'}
+                ? `Register ${agentPreset.toLowerCase()} agent + create API key`
+                : `Create ${agentPreset.toLowerCase()} API key`}
             </button>
             <p className="text-[11px] leading-relaxed text-[var(--muted)]">
-              Also grants project membership and approves Read/Write knowledge, assemble-context, and execute-workflow
-              capabilities for MCP.
+              Grants project membership and approves only the {agentPreset} preset:{' '}
+              {AGENT_PRESETS[agentPreset].join(', ')}. Use separate agents for planning vs coding.
             </p>
           </form>
 
@@ -507,7 +535,7 @@ export function AccessPage() {
                 1. Exchange the API key secret for a short-lived agent bearer token:
               </p>
               <pre className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white px-3 py-2 font-mono text-[11px] text-[var(--ink)]">
-{`POST ${API_ORIGIN}${authPath}
+{`POST ${apiOrigin}${authPath}
 { "credentialId": "<credential id>", "secret": "<plainTextSecret>" }`}
               </pre>
               <p>

@@ -110,6 +110,36 @@ export interface PlanExpansionProposal {
   resolvedItemId: string | null;
 }
 
+export interface PlanImportProposalSummary {
+  id: string;
+  idempotencyKey: string;
+  payloadHash: string;
+  requireEmptyProject: boolean;
+  status: string;
+  proposedBy: string;
+  proposedAt: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  decisionNote?: string | null;
+  knowledgeCount: number;
+  outlineCount: number;
+  relationCount: number;
+  milestoneCount: number;
+  workItemCount: number;
+  codebaseTargetCount?: number;
+}
+
+export interface CodebaseTarget {
+  id: string;
+  provider: string;
+  repositoryId: string;
+  targetBranch: string;
+  baseCommitSha: string;
+  canonicalRef: string;
+  browseUrl?: string | null;
+  createdAt: string;
+}
+
 export interface PlanOutline {
   nodes: PlanOutlineNode[];
   links: PlanWorkLink[];
@@ -164,6 +194,8 @@ export interface EvidenceItem {
   id: string;
   type: string;
   relatedCriterion: string;
+  criterionItemId?: string | null;
+  criterionRevisionId?: string | null;
   reviewState: string;
   recordedAt?: string;
   integrityHash?: string | null;
@@ -173,8 +205,11 @@ export interface Metric {
   key: string;
   value: number;
   unit: string;
+  definitionVersion?: string;
   includedPopulation: string;
+  excludedPopulation?: string;
   calculatedAt?: string;
+  isEstimate?: boolean;
 }
 
 export interface Membership {
@@ -334,7 +369,8 @@ export interface CoordinationMessage {
   runtimeId: string;
   messageType: string;
   schemaVersion: string;
-  allowedMetadataJson: string;
+  allowedMetadataJson?: string;
+  payloadJson?: string;
   createdAt: string;
 }
 

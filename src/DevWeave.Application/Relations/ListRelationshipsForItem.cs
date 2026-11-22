@@ -13,26 +13,40 @@ namespace DevWeave.Application.Relations;
 public sealed class ListRelationshipsForItem
 {
     private readonly IRelationshipRepository _relationships;
-    private readonly IKnowledgeItemRepository _items;
+    private readonly RelationshipReadAuthorization _authorization;
 
-    public ListRelationshipsForItem(IRelationshipRepository relationships, IKnowledgeItemRepository items)
+    public ListRelationshipsForItem(
+        IRelationshipRepository relationships,
+        RelationshipReadAuthorization authorization)
     {
         _relationships = relationships;
-        _items = items;
+        _authorization = authorization;
     }
 
-    public async Task<IReadOnlyList<Relationship>> ExecuteAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Relationship>> ExecuteAsync(
+        TenantId tenantId,
+        KnowledgeItemId itemId,
+        PrincipalId actorId,
+        CancellationToken ct = default)
     {
-        _ = await _items.GetByIdAsync(tenantId, itemId, ct)
-            ?? throw new NotFoundException($"Knowledge item '{itemId}' was not found within tenant '{tenantId}'.");
+        var (_, role) = await _authorization.RequireVisibleItemAsync(tenantId, itemId, actorId, ct);
 
         var outgoing = await _relationships.ListOutgoingAsync(tenantId, itemId, ct);
         var incoming = await _relationships.ListIncomingAsync(tenantId, itemId, ct);
-
-        return outgoing
+        var candidates = outgoing
             .Concat(incoming)
-            .GroupBy(r => r.Id)
-            .Select(g => g.First())
+            .GroupBy(relationship => relationship.Id)
+            .Select(group => group.First())
+            .ToList();
+
+        var visible = new List<Relationship>();
+        foreach (var relationship in candidates)
+        {
+            if (await _authorization.IsRelationshipVisibleAsync(tenantId, relationship, role, ct))
+                visible.Add(relationship);
+        }
+
+        return visible
             .OrderBy(r => r.CreatedAt)
             .ThenBy(r => r.Id.Value)
             .ToList();

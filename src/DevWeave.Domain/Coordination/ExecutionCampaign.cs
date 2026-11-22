@@ -83,4 +83,18 @@ public sealed class ExecutionCampaign
         UpdatedAt = DateTimeOffset.UtcNow;
         Version++;
     }
+
+    /// <summary>
+    /// Resumes a suspended campaign after an authorized rebase decision. Proposed/active campaigns are
+    /// left alone; completed/failed campaigns cannot resume.
+    /// </summary>
+    public void Resume()
+    {
+        if (Status != CampaignStatus.Suspended)
+            throw new InvalidOperationException($"Campaign '{Id}' cannot resume from status '{Status}'.");
+
+        Status = CampaignStatus.Active;
+        UpdatedAt = DateTimeOffset.UtcNow;
+        Version++;
+    }
 }

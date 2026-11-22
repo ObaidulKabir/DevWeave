@@ -2,6 +2,7 @@ using DevWeave.Domain.Activities;
 using DevWeave.Domain.Artifacts;
 using DevWeave.Domain.Evidence;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 using EvidenceRecord = DevWeave.Domain.Evidence.Evidence;
 
@@ -9,22 +10,32 @@ namespace DevWeave.Domain.Tests.Evidence;
 
 /// <summary>
 /// Proves the Evidence domain invariants for Slice 7 (PRO-006): origin/time/type/integrity metadata,
-/// the governed review-state transitions, and the claim-verification rule that a claim is verified only
-/// when at least one of its evidence records is accepted.
+/// revision-pinned criteria, the governed review-state transitions, and the claim-verification rule
+/// that a claim is verified only when accepted evidence still pins the current criterion revision.
 /// </summary>
 public sealed class EvidenceTests
 {
     private static readonly string[] ExpectedStates = ["Unreviewed", "Accepted", "Rejected", "Contested"];
 
     [Fact]
-    public void PRO_006_creation_populates_origin_time_type_integrity_and_criterion()
+    public void PRO_006_creation_populates_origin_time_type_integrity_and_criterion_pin()
     {
         var (tenant, project) = Seed();
         var activityId = ActivityId.New();
         var artifactId = ArtifactId.New();
+        var criterionItemId = KnowledgeItemId.New();
+        var criterionRevisionId = KnowledgeRevisionId.New();
 
         var evidence = EvidenceRecord.Create(
-            tenant, project, activityId, "screenshot", "sha256:aa", artifactId, "AC-1");
+            tenant,
+            project,
+            activityId,
+            "screenshot",
+            "sha256:aa",
+            artifactId,
+            criterionItemId,
+            criterionRevisionId,
+            "AC-1");
 
         Assert.Equal(tenant, evidence.TenantId);
         Assert.Equal(project, evidence.ProjectId);
@@ -33,6 +44,8 @@ public sealed class EvidenceTests
         Assert.Equal("screenshot", evidence.Type);
         Assert.Equal("sha256:aa", evidence.IntegrityHash);
         Assert.Equal(artifactId, evidence.RelatedArtifactId);
+        Assert.Equal(criterionItemId, evidence.CriterionItemId);
+        Assert.Equal(criterionRevisionId, evidence.CriterionRevisionId);
         Assert.Equal("AC-1", evidence.RelatedCriterion);
         Assert.Equal(EvidenceReviewState.Unreviewed, evidence.ReviewState);
         Assert.Null(evidence.ReviewedBy);
@@ -63,29 +76,33 @@ public sealed class EvidenceTests
     }
 
     [Fact]
-    public void PRO_006_claim_is_verified_only_with_accepted_evidence()
+    public void PRO_006_claim_is_verified_only_with_accepted_current_criterion_pin()
     {
-        Assert.False(EvidenceRecord.ClaimIsVerified(Array.Empty<EvidenceRecord>()));
-        Assert.False(EvidenceRecord.ClaimIsVerified(new[]
-        {
-            CreateEvidence(),
-            CreateEvidence(EvidenceReviewState.Rejected),
-            CreateEvidence(EvidenceReviewState.Contested),
-        }));
+        var criterionItemId = KnowledgeItemId.New();
+        var currentRevisionId = KnowledgeRevisionId.New();
+        var staleRevisionId = KnowledgeRevisionId.New();
 
-        Assert.True(EvidenceRecord.ClaimIsVerified(new[]
-        {
-            CreateEvidence(EvidenceReviewState.Accepted),
-        }));
+        Assert.False(EvidenceRecord.ClaimIsVerified(Array.Empty<EvidenceRecord>(), _ => currentRevisionId));
+        Assert.False(EvidenceRecord.ClaimIsVerified(
+            [CreateEvidence(criterionItemId, currentRevisionId)],
+            _ => currentRevisionId));
+
+        var acceptedCurrent = CreateEvidence(criterionItemId, currentRevisionId, EvidenceReviewState.Accepted);
+        Assert.True(EvidenceRecord.ClaimIsVerified([acceptedCurrent], _ => currentRevisionId));
+
+        var acceptedStale = CreateEvidence(criterionItemId, staleRevisionId, EvidenceReviewState.Accepted);
+        Assert.False(EvidenceRecord.ClaimIsVerified([acceptedStale], _ => currentRevisionId));
     }
 
     [Fact]
     public void PRO_006_contested_evidence_does_not_verify_a_claim()
     {
-        var contested = CreateEvidence();
+        var criterionItemId = KnowledgeItemId.New();
+        var revisionId = KnowledgeRevisionId.New();
+        var contested = CreateEvidence(criterionItemId, revisionId);
         contested.Review(EvidenceReviewState.Contested, PrincipalId.New());
 
-        Assert.False(EvidenceRecord.ClaimIsVerified(new[] { contested }));
+        Assert.False(EvidenceRecord.ClaimIsVerified([contested], _ => revisionId));
     }
 
     [Fact]
@@ -96,13 +113,9 @@ public sealed class EvidenceTests
 
         evidence.Review(EvidenceReviewState.Accepted, reviewer);
 
-        // No-op: re-accepting the same state is rejected.
         Assert.Throws<InvalidOperationException>(() => evidence.Review(EvidenceReviewState.Accepted, reviewer));
-
-        // Illegal: an accepted item cannot move straight to Rejected (must be contested first).
         Assert.Throws<InvalidOperationException>(() => evidence.Review(EvidenceReviewState.Rejected, reviewer));
 
-        // Legal: accept -> contest -> reject.
         evidence.Review(EvidenceReviewState.Contested, reviewer);
         evidence.Review(EvidenceReviewState.Rejected, reviewer);
         Assert.Equal(EvidenceReviewState.Rejected, evidence.ReviewState);
@@ -120,9 +133,27 @@ public sealed class EvidenceTests
         var (tenant, project) = Seed();
 
         Assert.Throws<ArgumentException>(() =>
-            EvidenceRecord.Create(tenant, project, ActivityId.New(), " ", null, null, "AC-1"));
+            EvidenceRecord.Create(
+                tenant,
+                project,
+                ActivityId.New(),
+                " ",
+                null,
+                null,
+                KnowledgeItemId.New(),
+                KnowledgeRevisionId.New(),
+                "AC-1"));
         Assert.Throws<ArgumentException>(() =>
-            EvidenceRecord.Create(tenant, project, ActivityId.New(), "screenshot", null, null, " "));
+            EvidenceRecord.Create(
+                tenant,
+                project,
+                ActivityId.New(),
+                "screenshot",
+                null,
+                null,
+                KnowledgeItemId.New(),
+                KnowledgeRevisionId.New(),
+                " "));
     }
 
     [Fact]
@@ -134,21 +165,32 @@ public sealed class EvidenceTests
             .Select(p => p.Name)
             .ToArray();
 
-        Assert.Equal(new[] { nameof(EvidenceRecord.ReviewState), nameof(EvidenceRecord.ReviewedBy), nameof(EvidenceRecord.ReviewedAt) }, writable);
+        Assert.Equal(
+            new[] { nameof(EvidenceRecord.ReviewState), nameof(EvidenceRecord.ReviewedBy), nameof(EvidenceRecord.ReviewedAt) },
+            writable);
     }
 
     private static (TenantId Tenant, ProjectId Project) Seed() =>
         (TenantId.New(), ProjectId.New());
 
-    private static EvidenceRecord CreateEvidence(EvidenceReviewState? state = null)
+    private static EvidenceRecord CreateEvidence(
+        KnowledgeItemId? criterionItemId = null,
+        KnowledgeRevisionId? criterionRevisionId = null,
+        EvidenceReviewState? state = null)
     {
         var evidence = EvidenceRecord.Create(
-            TenantId.New(), ProjectId.New(), ActivityId.New(), "screenshot", "sha256:aa", ArtifactId.New(), "AC-1");
+            TenantId.New(),
+            ProjectId.New(),
+            ActivityId.New(),
+            "screenshot",
+            "sha256:aa",
+            ArtifactId.New(),
+            criterionItemId ?? KnowledgeItemId.New(),
+            criterionRevisionId ?? KnowledgeRevisionId.New(),
+            "AC-1");
 
         if (state is { } target)
-        {
             evidence.Review(target, PrincipalId.New());
-        }
 
         return evidence;
     }

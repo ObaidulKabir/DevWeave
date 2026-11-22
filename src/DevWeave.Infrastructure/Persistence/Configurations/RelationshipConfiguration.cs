@@ -49,12 +49,23 @@ internal sealed class RelationshipConfiguration : IEntityTypeConfiguration<Relat
             .IsRequired()
             .HasMaxLength(100);
 
+        builder.Property(r => r.Rationale)
+            .HasMaxLength(2000);
+
+        builder.Property(r => r.SourceReference)
+            .HasMaxLength(500);
+
+        builder.Property(r => r.ValidFrom);
+        builder.Property(r => r.ValidTo);
+
         builder.Property(r => r.Status)
             .HasConversion<int>()
             .IsRequired();
 
         builder.Property(r => r.CreatedAt)
             .IsRequired();
+
+        builder.Property(r => r.RevokedAt);
 
         // CreatedBy is a logical pointer to the acting principal, not a foreign key (mirrors KnowledgeItem).
         builder.Property(r => r.CreatedBy)

@@ -1,13 +1,22 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { EmptyState, Panel, Row } from '../components/Panel';
 import { PlanVersionStatusCard } from '../components/PlanVersionStatusCard';
 import { SpecStatusCard } from '../components/SpecStatusCard';
 import { StateBadge } from '../components/StateBadge';
+import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import { formatWhen } from '../lib/format';
+import type { CodebaseTarget, PlanImportProposalSummary } from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 export function OverviewPage() {
-  const { metrics, knowledge, workItems, evidence, activities, campaigns, live } = useWorkspace();
+  const { tenantId, project, metrics, knowledge, workItems, evidence, activities, campaigns, channels, live } =
+    useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
+  const [pendingPlanImports, setPendingPlanImports] = useState(0);
+  const [codebaseTargets, setCodebaseTargets] = useState<CodebaseTarget[]>([]);
   const planningSteps = [
     {
       number: '01',
@@ -47,6 +56,40 @@ export function OverviewPage() {
         { key: 'Campaigns', value: campaigns.length, unit: 'active set', includedPopulation: 'Coordination plane' },
       ];
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!live || !tenantId || !project) {
+      setPendingPlanImports(0);
+      setCodebaseTargets([]);
+      return;
+    }
+    apiFetch<PlanImportProposalSummary[]>(
+      `/tenants/${tenantId}/projects/${project.id}/plan-import-proposals/`,
+    )
+      .then((rows) => {
+        if (!cancelled) {
+          setPendingPlanImports(
+            (Array.isArray(rows) ? rows : []).filter((row) => row.status === 'Proposed').length,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPlanImports(0);
+      });
+    apiFetch<CodebaseTarget[]>(
+      `/tenants/${tenantId}/projects/${project.id}/coordination/codebase-targets`,
+    )
+      .then((rows) => {
+        if (!cancelled) setCodebaseTargets(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCodebaseTargets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, project]);
+
   return (
     <div className="space-y-6">
       <section className="panel rounded-2xl px-6 py-8">
@@ -71,6 +114,8 @@ export function OverviewPage() {
           <Link className="btn btn-ghost" to="/coordination">Coordination</Link>
         </div>
       </section>
+
+      <AgentPushCallout pendingPlanImports={pendingPlanImports} channelMessageCount={postedMessages} />
 
       <section aria-labelledby="planning-flow-title" className="space-y-4">
         <div>
@@ -107,6 +152,34 @@ export function OverviewPage() {
         <SpecStatusCard />
       </div>
 
+      <Panel
+        title="Linked repositories"
+        subtitle="Git-host identity only. Source and history stay in the remote. Campaigns pick a target on Coordination."
+      >
+        {codebaseTargets.length === 0 ? (
+          <EmptyState label="No git repositories registered yet. Planning agents send owner/name + branch + SHA via propose_initial_plan or register_codebase_target." />
+        ) : (
+          <div className="divide-y divide-[var(--line)]">
+            {codebaseTargets.map((target) => (
+              <Row
+                key={target.id}
+                title={`${target.provider}:${target.repositoryId}`}
+                subtitle={`${target.targetBranch} · ${target.baseCommitSha.slice(0, 12)}`}
+                meta={
+                  target.browseUrl ? (
+                    <a className="text-xs font-semibold text-[var(--signal)] hover:underline" href={target.browseUrl} target="_blank" rel="noreferrer">
+                      Open host
+                    </a>
+                  ) : (
+                    <span className="font-mono text-[11px] text-[var(--muted)]">{target.canonicalRef}</span>
+                  )
+                }
+              />
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((metric) => (
           <article key={metric.key} className="panel rounded-2xl p-5">
@@ -137,7 +210,13 @@ export function OverviewPage() {
 
         <Panel title="Knowledge snapshot" subtitle="Lifecycle and verification states stay independent (UI-03).">
           {knowledge.length === 0 ? (
-            <EmptyState label="No knowledge items yet." />
+            <EmptyState
+              label={
+                postedMessages > 0
+                  ? 'No published knowledge yet. Agent payloads are on Coordination until Plan import is approved.'
+                  : 'No knowledge items yet.'
+              }
+            />
           ) : (
             <div className="divide-y divide-[var(--line)]">
               {knowledge.slice(0, 6).map((item) => (

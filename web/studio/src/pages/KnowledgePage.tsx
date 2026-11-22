@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { AgentPushCallout } from '../components/AgentPushCallout';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ContentEditor } from '../components/ContentEditor';
 import { ContentView } from '../components/ContentView';
@@ -7,9 +8,16 @@ import { EmptyState, Panel, Row } from '../components/Panel';
 import { RevisionDiff } from '../components/RevisionDiff';
 import { StateBadge } from '../components/StateBadge';
 import { apiFetch } from '../lib/api';
+import { channelMessageCount } from '../lib/coordination';
 import { diffContent } from '../lib/content';
 import { formatWhen, shortId } from '../lib/format';
-import type { KnowledgeItem, KnowledgeRevision, ReviewDecision, SearchHit } from '../lib/types';
+import type {
+  KnowledgeItem,
+  KnowledgeRevision,
+  PlanImportProposalSummary,
+  ReviewDecision,
+  SearchHit,
+} from '../lib/types';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
 type Filter = 'review' | 'approved' | 'rejected' | 'all';
@@ -37,7 +45,8 @@ function matchesFilter(item: KnowledgeItem, filter: Filter): boolean {
 }
 
 export function KnowledgePage() {
-  const { tenantId, project, live, busy, run, knowledge, setKnowledge } = useWorkspace();
+  const { tenantId, project, live, busy, run, knowledge, setKnowledge, channels } = useWorkspace();
+  const postedMessages = useMemo(() => channelMessageCount(channels), [channels]);
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<Filter>('review');
   const [tab, setTab] = useState<Tab>('read');
@@ -57,6 +66,7 @@ export function KnowledgePage() {
   const [revisions, setRevisions] = useState<KnowledgeRevision[]>([]);
   const [reviews, setReviews] = useState<ReviewDecision[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingPlanImports, setPendingPlanImports] = useState(0);
 
   const selectedId = params.get('item');
   const selected = knowledge.find((item) => item.id === selectedId) ?? null;
@@ -98,6 +108,30 @@ export function KnowledgePage() {
       .then((list) => setSchemas(Array.isArray(list) ? list : []))
       .catch(() => setSchemas([]));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!live || !tenantId || !project) {
+      setPendingPlanImports(0);
+      return;
+    }
+    apiFetch<PlanImportProposalSummary[]>(
+      `/tenants/${tenantId}/projects/${project.id}/plan-import-proposals/`,
+    )
+      .then((rows) => {
+        if (!cancelled) {
+          setPendingPlanImports(
+            (Array.isArray(rows) ? rows : []).filter((row) => row.status === 'Proposed').length,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPlanImports(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, project]);
 
   useEffect(() => {
     if (!tenantId || !selected) {
@@ -269,6 +303,8 @@ export function KnowledgePage() {
         </p>
       </details>
 
+      <AgentPushCallout pendingPlanImports={pendingPlanImports} channelMessageCount={postedMessages} />
+
       {hits.length > 0 ? (
         <Panel title="Search results" subtitle="Only results you are allowed to see.">
           <div className="divide-y divide-[var(--line)]">
@@ -311,7 +347,15 @@ export function KnowledgePage() {
               </div>
             </header>
             {visible.length === 0 ? (
-              <EmptyState label={filter === 'review' ? 'Nothing is waiting for review. 🎉' : 'No items in this view.'} />
+              <EmptyState
+                label={
+                  knowledge.length === 0 && postedMessages > 0
+                    ? 'No published knowledge. Agent Knowledge/Relations/Work messages are on Coordination until Plan import.'
+                    : filter === 'review'
+                      ? 'Nothing is waiting for review. 🎉'
+                      : 'No items in this view.'
+                }
+              />
             ) : (
               <ul className="max-h-[28rem] divide-y divide-[var(--line)] overflow-auto">
                 {visible.map((item) => (

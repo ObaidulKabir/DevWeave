@@ -86,7 +86,10 @@ public sealed record ContextPackageResponse(
     Guid AgentId,
     string? IdempotencyKey,
     DateTimeOffset CreatedAt,
-    IReadOnlyList<ContextPackageEntryResponse> Entries);
+    IReadOnlyList<ContextPackageEntryResponse> Entries,
+    bool IsStale = false,
+    DateTimeOffset? StaleAt = null,
+    string? StaleReason = null);
 
 /// <summary>The append-only activity created when an agent execution is recorded (AGT-005).</summary>
 public sealed record AgentExecutionResponse(
@@ -94,7 +97,10 @@ public sealed record AgentExecutionResponse(
     Guid ContextPackageId,
     ActivityStatus Status,
     DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt);
+    DateTimeOffset? EndedAt,
+    string? Provider = null,
+    string? Model = null,
+    string? ModelVersion = null);
 
 /// <summary>A structured agent error body with a machine-readable code (mapped to 403/409).</summary>
 public sealed record AgentError(string Code, string Message);

@@ -1,6 +1,7 @@
 using DevWeave.Application.Abstractions;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Projects;
 using DevWeave.Domain.Relations;
 
 namespace DevWeave.Application.Relations;
@@ -15,17 +16,20 @@ namespace DevWeave.Application.Relations;
 public sealed class TraverseRelationships
 {
     private readonly IRelationshipRepository _relationships;
-    private readonly IKnowledgeItemRepository _items;
+    private readonly RelationshipReadAuthorization _authorization;
 
-    public TraverseRelationships(IRelationshipRepository relationships, IKnowledgeItemRepository items)
+    public TraverseRelationships(
+        IRelationshipRepository relationships,
+        RelationshipReadAuthorization authorization)
     {
         _relationships = relationships;
-        _items = items;
+        _authorization = authorization;
     }
 
     public async Task<TraversalResult> ExecuteAsync(
         TenantId tenantId,
         KnowledgeItemId startItemId,
+        PrincipalId actorId,
         TraversalDirection direction,
         int maxDepth,
         int maxResults,
@@ -36,9 +40,12 @@ public sealed class TraverseRelationships
         if (maxResults < 1)
             throw new ArgumentOutOfRangeException(nameof(maxResults), "Traversal result limit must be at least 1.");
 
-        // Deny-by-default: a start item from another tenant is indistinguishable from a missing one.
-        _ = await _items.GetByIdAsync(tenantId, startItemId, ct)
-            ?? throw new NotFoundException($"Knowledge item '{startItemId}' was not found within tenant '{tenantId}'.");
+        // Deny-by-default: missing, unauthorized and over-classified start items are indistinguishable.
+        var (_, role) = await _authorization.RequireVisibleItemAsync(
+            tenantId,
+            startItemId,
+            actorId,
+            ct);
 
         var results = new List<TraversalPath>();
         var queue = new Queue<TraversalPath>();
@@ -53,7 +60,7 @@ public sealed class TraverseRelationships
             if (current.Depth >= maxDepth)
                 continue;
 
-            var neighbors = await ResolveNeighborsAsync(tenantId, current.EndItemId, direction, ct);
+            var neighbors = await ResolveNeighborsAsync(tenantId, current.EndItemId, role, direction, ct);
 
             foreach (var neighbor in neighbors)
             {
@@ -94,6 +101,7 @@ public sealed class TraverseRelationships
     private async Task<IReadOnlyList<(Relationship Identity, KnowledgeItemId ToItemId)>> ResolveNeighborsAsync(
         TenantId tenantId,
         KnowledgeItemId itemId,
+        ProjectRole role,
         TraversalDirection direction,
         CancellationToken ct)
     {
@@ -101,13 +109,25 @@ public sealed class TraverseRelationships
             ? await _relationships.ListOutgoingAsync(tenantId, itemId, ct)
             : await _relationships.ListIncomingAsync(tenantId, itemId, ct);
 
-        return relationships
+        var candidates = relationships
             .Where(r => r.Status == RelationshipStatus.Active)
             .OrderBy(r => r.Id.Value)
-            .Select(r => (
-                Identity: r,
-                ToItemId: direction == TraversalDirection.Outgoing ? r.TargetItemId : r.SourceItemId))
             .ToList();
+
+        var visible = new List<(Relationship Identity, KnowledgeItemId ToItemId)>();
+        foreach (var relationship in candidates)
+        {
+            if (!await _authorization.IsRelationshipVisibleAsync(tenantId, relationship, role, ct))
+                continue;
+
+            visible.Add((
+                relationship,
+                direction == TraversalDirection.Outgoing
+                    ? relationship.TargetItemId
+                    : relationship.SourceItemId));
+        }
+
+        return visible;
     }
 
     private static bool PathVisitsNode(TraversalPath path, KnowledgeItemId node)

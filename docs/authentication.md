@@ -18,7 +18,8 @@ Configure these values per environment:
 
 Production startup fails if the OIDC authority/audience are missing or if the agent signing key is
 missing, too short, or still contains the development placeholder marker. Supply secrets through the
-deployment secret manager rather than editing `appsettings.json`.
+deployment secret manager rather than editing `appsettings.json`. Cutover steps:
+[docs/ops/production-oidc-cutover.md](ops/production-oidc-cutover.md).
 
 The OIDC provider must map these DevWeave identity claims into its access token:
 
@@ -47,9 +48,12 @@ symmetrically signed human JWTs minted by the pilot endpoints (same claim shape 
 - `POST /auth/register` — the registration path above, including a development bearer token
 - `POST /auth/pilot/bootstrap` — the same provisioning as registration, plus a development bearer token
 - `POST /auth/pilot/token` — mint a bearer token for an existing active human principal
+- `GET /auth/login-options` — whether GUID (pilot) sign-in is enabled and the OIDC authority Studio should use
 
 Pilot routes return 404 outside Development or when an OIDC authority is configured. `POST /auth/register`
-stays available. Agents still use `POST /tenants/{tenantId}/agents/{agentId}/authenticate`.
+stays available. Agents still use `POST /tenants/{tenantId}/agents/{agentId}/authenticate`. `/auth/pilot/token`
+sets the RLS tenant session from the request body before looking up the Owner; without that, a valid
+Owner appears missing.
 
 ## Current Boundary
 

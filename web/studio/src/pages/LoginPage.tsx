@@ -1,10 +1,45 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { BrandMark } from '../components/BrandMark';
 import { getEnvTenantId, getLastIdentity } from '../lib/session';
 
 const GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+interface LoginOptions {
+  pilotEnabled: boolean;
+  oidcAuthority?: string | null;
+  oidcAudience?: string | null;
+  studioClientId?: string | null;
+}
+
+function resolveOidcAuthorizeUrl(options?: LoginOptions | null): string | null {
+  const authority =
+    (import.meta.env.VITE_OIDC_AUTHORITY as string | undefined)?.trim() ||
+    options?.oidcAuthority?.trim() ||
+    '';
+  if (!authority) return null;
+  const clientId =
+    (import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined)?.trim() ||
+    options?.studioClientId?.trim() ||
+    'devweave-studio';
+  const redirectUri =
+    (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined)?.trim() ||
+    `${window.location.origin}/login`;
+  const audience =
+    (import.meta.env.VITE_OIDC_AUDIENCE as string | undefined)?.trim() ||
+    options?.oidcAudience?.trim() ||
+    'devweave-api';
+  const base = authority.endsWith('/') ? authority : `${authority}/`;
+  const url = new URL('authorize', base);
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'openid profile');
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('audience', audience);
+  return url.toString();
+}
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -13,11 +48,28 @@ export function LoginPage() {
   const from = (location.state as { from?: string } | null)?.from;
   const destination = from && from !== '/login' && from !== '/' ? from : '/apps';
 
+  const [loginOptions, setLoginOptions] = useState<LoginOptions | null>(null);
+  const oidcAuthorizeUrl = useMemo(() => resolveOidcAuthorizeUrl(loginOptions), [loginOptions]);
   const last = getLastIdentity();
   const [tenantId, setTenantId] = useState(() => last?.tenantId ?? getEnvTenantId() ?? '');
   const [principalId, setPrincipalId] = useState(() => last?.principalId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+    void fetch(`${baseUrl}/auth/login-options`, { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as LoginOptions;
+      })
+      .then((options) => {
+        if (options) setLoginOptions(options);
+      })
+      .catch(() => {
+        /* Keep the GUID form; login-options is advisory. */
+      });
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -45,15 +97,22 @@ export function LoginPage() {
     <div className="login-page flex min-h-screen items-center justify-center px-4 py-10">
       <div className="login-panel w-full max-w-md">
         <div className="px-1">
-          <Link to="/" className="font-display text-3xl font-bold tracking-tight text-[var(--ink)] hover:opacity-90">
-            DevWeave
-          </Link>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--signal)]">
+          <BrandMark
+            variant="full"
+            to="/"
+            className="block max-w-xs"
+            imgClassName="h-auto w-full max-w-xs rounded-xl object-contain"
+          />
+          <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--signal)]">
             Tenant login
           </p>
-          <h1 className="mt-6 font-display text-2xl font-bold tracking-tight">Sign in</h1>
+          <h1 className="mt-4 font-display text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
-            Sign in with your tenant and Owner principal to open the applications dashboard.
+            {oidcAuthorizeUrl
+              ? 'Production sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'
+              : loginOptions && loginOptions.pilotEnabled === false
+                ? 'GUID sign-in is disabled on this host. Configure an identity provider, or run the API in Development.'
+                : 'Development sign-in uses your tenant and Owner principal. Register a tenant first if these IDs are new.'}
             {last?.email || last?.tenantName ? (
               <>
                 {' '}
@@ -75,6 +134,17 @@ export function LoginPage() {
             ) : null}
           </p>
         </div>
+
+        {oidcAuthorizeUrl ? (
+          <div className="mt-8 space-y-4">
+            <a className="btn btn-primary w-full" href={oidcAuthorizeUrl}>
+              Sign in with identity provider
+            </a>
+            <p className="text-center text-xs text-[var(--muted)]">
+              Pilot GUID form remains available below for emergency break-glass only.
+            </p>
+          </div>
+        ) : null}
 
         <form className="mt-8 space-y-4" onSubmit={onSubmit} noValidate>
           <label className="block space-y-1.5">
@@ -118,7 +188,7 @@ export function LoginPage() {
           ) : null}
 
           <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in to dashboard'}
+            {busy ? 'Signing in…' : oidcAuthorizeUrl ? 'Break-glass pilot sign-in' : 'Sign in to dashboard'}
           </button>
         </form>
 

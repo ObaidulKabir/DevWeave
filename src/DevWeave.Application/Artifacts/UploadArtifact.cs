@@ -112,7 +112,7 @@ public sealed class UploadArtifact
                 inspection.Reasons);
         }
 
-        var objectKey = BuildObjectKey(tenantId, projectId);
+        var objectKey = BuildObjectKey(tenantId, projectId, key, version);
 
         var artifact = Artifact.Create(
             tenantId,
@@ -157,6 +157,16 @@ public sealed class UploadArtifact
         return versions.Count == 0 ? 1 : versions.Max(v => v.Version) + 1;
     }
 
-    private static string BuildObjectKey(TenantId tenantId, ProjectId projectId) =>
-        $"{tenantId.Value:N}/{projectId.Value:N}/artifacts/{Guid.NewGuid():N}";
+    /// <summary>
+    /// Collision-resistant, write-once object identity (ART-003/006): tenant/project scope, a hash of
+    /// the logical key, the version, and a unique object id so sanitized names cannot collide.
+    /// </summary>
+    public static string BuildObjectKey(TenantId tenantId, ProjectId projectId, string logicalKey, int version)
+    {
+        var keyHash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(logicalKey)))
+            .ToLowerInvariant()[..16];
+        return $"{tenantId.Value:N}/{projectId.Value:N}/artifacts/{keyHash}/v{version}/{Guid.NewGuid():N}";
+    }
 }

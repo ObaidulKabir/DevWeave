@@ -68,10 +68,12 @@ public sealed class RelationType
     /// </summary>
     public bool Accepts(string sourceTypeId, string targetTypeId)
     {
-        if (AllowedSourceTypeIds.Count > 0 && !AllowedSourceTypeIds.Contains(sourceTypeId))
+        if (AllowedSourceTypeIds.Count > 0 &&
+            !AllowedSourceTypeIds.Contains(sourceTypeId, StringComparer.Ordinal))
             return false;
 
-        if (AllowedTargetTypeIds.Count > 0 && !AllowedTargetTypeIds.Contains(targetTypeId))
+        if (AllowedTargetTypeIds.Count > 0 &&
+            !AllowedTargetTypeIds.Contains(targetTypeId, StringComparer.Ordinal))
             return false;
 
         return true;

@@ -64,11 +64,7 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
         Task<JsonElement> Tool(string name, object arguments) =>
             Call(McpMethods.CallTool, new { name, arguments });
 
-        static JsonElement Ok(JsonElement reply)
-        {
-            Assert.Equal(JsonValueKind.Null, reply.GetProperty("error").ValueKind);
-            return reply.GetProperty("result");
-        }
+        static JsonElement Ok(JsonElement reply) => McpJson.Payload(reply);
 
         static void Refused(JsonElement reply, int code, string kind)
         {
@@ -114,7 +110,8 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
             specTopics = new[] { "backend.language" },
         })).GetProperty("id").GetGuid();
 
-        var listed = Assert.Single(Ok(await Tool("list_work_packages", new { campaignId })).EnumerateArray());
+        var listed = Assert.Single(Ok(await Tool("list_work_packages", new { campaignId }))
+            .GetProperty("workPackages").EnumerateArray());
         Assert.True(listed.GetProperty("canProgress").GetBoolean());
         Assert.False(listed.GetProperty("unscoped").GetBoolean());
 
@@ -196,7 +193,10 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
             ProjectMembership.Grant(tenant.Id, project.Id, owner.Id, ProjectRole.Owner),
             ProjectMembership.Grant(tenant.Id, project.Id, agent.Id, ProjectRole.Member));
         db.Add(AgentCredential.Issue(tenant.Id, agent.Id, "test", "hashed-test-secret", null));
-        foreach (var capability in new[] { AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge })
+        foreach (var capability in new[]
+                 {
+                     AgentCapability.ReadKnowledge, AgentCapability.WriteKnowledge, AgentCapability.ExecuteWorkflow,
+                 })
         {
             var grant = AgentGrant.Propose(tenant.Id, project.Id, agent.Id, capability, null, Classification.Internal);
             grant.Approve(owner.Id);

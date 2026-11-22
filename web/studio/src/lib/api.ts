@@ -2,6 +2,24 @@ import { getAccessToken, getActiveTenantId } from './session';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/**
+ * Absolute origin for copy/paste MCP and agent URLs shown in Owner Studio.
+ * Prefer an explicit public API origin, then the browser host (production same-origin
+ * nginx proxy), never a hard-coded localhost fallback when the page is on another host.
+ */
+export function publicApiOrigin(): string {
+  const configured = (
+    (import.meta.env.VITE_PUBLIC_API_ORIGIN as string | undefined) ||
+    (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+    ''
+  ).replace(/\/$/, '');
+  if (configured) return configured;
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return 'http://localhost:5080';
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

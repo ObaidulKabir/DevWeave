@@ -112,6 +112,9 @@ POST /tenants/{tenantId}/projects/{projectId}/plan/outline
 POST /tenants/{tenantId}/projects/{projectId}/plan/work-links
 POST /tenants/{tenantId}/projects/{projectId}/plan/proposals
 POST /tenants/{tenantId}/projects/{projectId}/plan/proposals/{proposalId}/decide
+GET  /tenants/{tenantId}/projects/{projectId}/plan-import-proposals
+POST /tenants/{tenantId}/projects/{projectId}/plan-import-proposals/{proposalId}/approve
+POST /tenants/{tenantId}/projects/{projectId}/plan-import-proposals/{proposalId}/reject
 POST /tenants/{tenantId}/projects/{projectId}/coordination/baselines
 ```
 
@@ -119,12 +122,16 @@ These routes have different authorization policies. Use the authenticated princi
 
 ## For MCP-connected agents
 
-The project MCP endpoint is `/tenants/{tenantId}/projects/{projectId}/mcp/rpc` and requires an authenticated **agent** identity. Use `read_plan_outline` with a `ReadKnowledge` grant to inspect the permitted hierarchy and pinned Work links. Use `propose_plan_expansion` with a `WriteKnowledge` grant to submit `{parentItemId, key, title, typeId, rationale}` for human review. These tools do **not** create/revise/approve Knowledge, Relations, Milestones, or WorkItems. Request a human/API handoff for those writes and retain the returned IDs.
+The project MCP endpoint is `/tenants/{tenantId}/projects/{projectId}/mcp/rpc` and requires an authenticated **agent** identity.
 
-1. Prepare a structured proposal using the template below. Identify each proposed item and relation separately from persisted IDs. Ask for missing requirements rather than filling them with invented facts.
-2. Hand Knowledge, Relation, and planning Work creation/review to an authorized human path. Read back resulting IDs, revision numbers, and approval states before treating the plan as authoritative.
-3. After the human-controlled baseline is established, use `get_plan_baseline` to inspect its recorded snapshot. The tool named `list_ready_work` currently **creates a WorkPackage** under a campaign; it is not a read-only list of planned WorkItems. Use it only with explicit authorization and verified campaign/baseline IDs.
-4. For execution, register the runtime, use `request_assignment` for a fenced lease, `heartbeat_lease` to maintain it, and durable messages/cursors to coordinate. Scope every call to the project; do not send source code, patches, secrets, or private raw payloads through the knowledge or coordination plane.
+**Planning agents** (`ReadKnowledge` + `WriteKnowledge`): use `read_plan_outline` to inspect the hierarchy; when it is empty, call `list_schemas` (and `list_relation_types` if needed) then `propose_initial_plan` — never `send_project_message` — to submit a full Knowledge/outline/Relations/Work bundle; use `propose_plan_expansion` for incremental child ideas under a reviewed parent. None of these tools bind the plan until an Owner/Admin reviews them in Studio (**Plan import** for bundles, **Plan outline** for expansions). Channel messages are coordination logs, not published plan records.
+
+**Execution agents** (`ExecuteWorkflow`): after a baseline and campaign exist, register a runtime, lease work, and submit change-set references. They cannot call `propose_initial_plan`.
+
+1. Prefer `propose_initial_plan` over retyping nodes in Studio. Identify client-local refs in the bundle; the approve response returns the server ID mapping.
+2. Owners approve the immutable payload in Studio → Plan import (no manual recreation of each node).
+3. After the human-controlled baseline is established, use `get_plan_baseline` to inspect its recorded snapshot. The tool named `list_ready_work` currently **creates a WorkPackage** under a campaign; it is not a read-only list of planned WorkItems.
+4. For execution, use a separate execution credential: `request_assignment`, `heartbeat_lease`, and durable messages/cursors. Do not send source code, patches, or secrets through the control plane. Git repository identity is a codebase target (`provider`, `owner/name` or remote URL, branch, commit SHA) recorded by `propose_initial_plan.codebaseTargets` or `register_codebase_target`; the git host remains authoritative for history and source.
 
 **Current enforcement caveat:** the baseline API currently persists supplied revision and dependency IDs without checking each revision's approval/project ownership in `LockAsync`. Treat those checks as a mandatory human/application precondition, not as a guarantee that the endpoint already enforces them.
 

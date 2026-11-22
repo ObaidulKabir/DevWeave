@@ -41,6 +41,15 @@ internal sealed class ContextPackageConfiguration : IEntityTypeConfiguration<Con
         builder.Property(p => p.CreatedAt)
             .IsRequired();
 
+        builder.Property(p => p.IsStale)
+            .IsRequired();
+        builder.Property(p => p.StaleAt);
+        builder.Property(p => p.StaleReason)
+            .HasMaxLength(2000);
+
+        builder.HasIndex(p => new { p.TenantId, p.ProjectId, p.IsStale, p.CreatedAt });
+        builder.HasIndex(p => new { p.TenantId, p.ProjectId, p.TaskKey, p.IsStale, p.CreatedAt });
+
         // Revision-pinned entries are persisted as owned child rows (AGT-004, AGT-005).
         builder.OwnsMany(p => p.Entries, entries =>
         {

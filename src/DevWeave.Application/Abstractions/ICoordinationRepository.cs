@@ -4,7 +4,12 @@ using DevWeave.Domain.Projects;
 
 namespace DevWeave.Application.Abstractions;
 
-public interface ICoordinationRepository
+public interface IWorkPackageImpactSource
+{
+    Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
+}
+
+public interface ICoordinationRepository : IWorkPackageImpactSource
 {
     // Channels
     Task AddChannelAsync(CoordinationChannel channel, CancellationToken ct = default);
@@ -47,6 +52,15 @@ public interface ICoordinationRepository
     // Codebase Targets
     Task AddCodebaseTargetAsync(CodebaseTarget target, CancellationToken ct = default);
     Task<CodebaseTarget?> GetCodebaseTargetByIdAsync(TenantId tenantId, CodebaseTargetId id, CancellationToken ct = default);
+    Task<List<CodebaseTarget>> ListCodebaseTargetsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
+    Task<CodebaseTarget?> FindCodebaseTargetAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        string provider,
+        string repositoryId,
+        string targetBranch,
+        string baseCommitSha,
+        CancellationToken ct = default);
 
     // Change Sets
     Task AddChangeSetAsync(ChangeSet changeSet, CancellationToken ct = default);

@@ -3,6 +3,7 @@ using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 using Microsoft.AspNetCore.Mvc;
@@ -31,6 +32,7 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         group.MapPost("/codebase-targets", RegisterCodebaseTargetAsync);
+        group.MapGet("/codebase-targets", ListCodebaseTargetsAsync);
         group.MapPost("/change-sets", RecordChangeSetAsync);
 
         group.MapPost("/campaigns", CreateCampaignAsync)
@@ -65,8 +67,7 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/channels", OpenChannelAsync);
-        group.MapGet("/channels", ListChannelsAsync)
-            .RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/channels", ListChannelsAsync);
         group.MapPost("/channels/{channelId:guid}/messages", SendMessageAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/channels/{channelId:guid}/messages", ReplayMessagesAsync);
@@ -174,6 +175,36 @@ public static class CoordinationEndpoints
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> ListCodebaseTargetsAsync(
+        Guid tenantId,
+        Guid projectId,
+        HttpContext http,
+        ICodebaseRegistry registry,
+        IAgentGrantRepository grants,
+        CancellationToken ct)
+    {
+        if (string.Equals(
+                http.User.FindFirst(AuthClaims.PrincipalType)?.Value,
+                "AiAgent",
+                StringComparison.Ordinal))
+        {
+            var tenant = new TenantId(tenantId);
+            var project = new ProjectId(projectId);
+            var actor = AuthenticatedPrincipal.GetId(http);
+            var now = DateTimeOffset.UtcNow;
+            var allowed = (await grants.ListForAgentAsync(tenant, actor, ct))
+                .Any(grant =>
+                    grant.IsActive(now) &&
+                    grant.CoversProject(project) &&
+                    grant.Capability is AgentCapability.ReadKnowledge or AgentCapability.ExecuteWorkflow);
+            if (!allowed)
+                return Results.Forbid();
+        }
+
+        var targets = await registry.ListAsync(Scope(tenantId, projectId, http, "List codebase targets"), ct);
+        return Results.Ok(targets);
     }
 
     private static async Task<IResult> RecordChangeSetAsync(
@@ -429,8 +460,30 @@ public static class CoordinationEndpoints
     }
 
     private static async Task<IResult> ListChannelsAsync(
-        Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)
+        Guid tenantId,
+        Guid projectId,
+        HttpContext http,
+        ICoordinationRepository repository,
+        IAgentGrantRepository grants,
+        CancellationToken ct)
     {
+        if (string.Equals(
+                http.User.FindFirst(AuthClaims.PrincipalType)?.Value,
+                "AiAgent",
+                StringComparison.Ordinal))
+        {
+            var tenant = new TenantId(tenantId);
+            var project = new ProjectId(projectId);
+            var actor = AuthenticatedPrincipal.GetId(http);
+            var allowed = (await grants.ListForAgentAsync(tenant, actor, ct))
+                .Any(grant =>
+                    grant.IsActive(DateTimeOffset.UtcNow) &&
+                    grant.CoversProject(project) &&
+                    grant.Capability == AgentCapability.ExecuteWorkflow);
+            if (!allowed)
+                return Results.Forbid();
+        }
+
         var channels = await repository.ListChannelsByProjectAsync(
             new TenantId(tenantId), new ProjectId(projectId), ct);
         return Results.Ok(channels
@@ -462,30 +515,34 @@ public static class CoordinationEndpoints
 
     private static async Task<IResult> RenewLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] RenewLeaseRequest request,
+        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             var lease = await leases.RenewAsync(
-                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, ct);
+                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, runtimeId, ct);
             return Results.Ok(lease);
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (UnauthorizedTenantException) { return Results.Forbid(); }
     }
 
     private static async Task<IResult> ReleaseLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] ReleaseLeaseRequest request,
+        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             await leases.ReleaseAsync(
-                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, ct);
+                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, runtimeId, ct);
             return Results.NoContent();
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (UnauthorizedTenantException) { return Results.Forbid(); }
     }
 
     private static async Task<IResult> OpenChannelAsync(
@@ -530,7 +587,12 @@ public static class CoordinationEndpoints
             var page = await channels.ReplayAsync(
                 Scope(tenantId, projectId, http, "Replay messages"),
                 channelId, afterSequence, limit <= 0 ? 50 : Math.Min(limit, 200), ct);
-            return Results.Ok(page);
+            return Results.Ok(new
+            {
+                messages = page.Items,
+                items = page.Items,
+                nextCursor = page.NextCursor,
+            });
         }
         catch (NotFoundException) { return Results.NotFound(); }
     }

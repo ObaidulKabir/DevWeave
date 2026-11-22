@@ -3,6 +3,7 @@ using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
 
 namespace DevWeave.Application.Knowledge;
 
@@ -12,6 +13,7 @@ public sealed class CreateKnowledgeItem
     private readonly IProjectRepository _projects;
     private readonly IPrincipalRepository _principals;
     private readonly ISchemaDefinitionRepository _schemas;
+    private readonly IKnowledgeTypeDefinitionRepository _types;
     private readonly IProjectMembershipRepository _memberships;
     private readonly IUnitOfWork _unitOfWork;
 
@@ -20,6 +22,7 @@ public sealed class CreateKnowledgeItem
         IProjectRepository projects,
         IPrincipalRepository principals,
         ISchemaDefinitionRepository schemas,
+        IKnowledgeTypeDefinitionRepository types,
         IProjectMembershipRepository memberships,
         IUnitOfWork unitOfWork)
     {
@@ -28,6 +31,7 @@ public sealed class CreateKnowledgeItem
         _projects = projects;
         _principals = principals;
         _schemas = schemas;
+        _types = types;
         _unitOfWork = unitOfWork;
     }
 
@@ -61,6 +65,11 @@ public sealed class CreateKnowledgeItem
         var schema = await _schemas.FindAsync(typeId, schemaVersion, ct);
         if (schema is null || !schema.IsActive)
             throw new NotFoundException($"No active schema '{typeId}' version '{schemaVersion}' is registered.");
+
+        var type = await _types.GetByTypeIdAsync(typeId, ct);
+        if (type is not null && !type.AllowsKnowledgeEnvelope)
+            throw new ConflictException(
+                $"Type '{typeId}' maps to {type.StorageKind} and cannot be stored as a Knowledge envelope.");
 
         if (await _items.KeyExistsAsync(tenantId, projectId, key, ct))
             throw new ConflictException($"A knowledge item with key '{key}' already exists in project '{projectId}' within tenant '{tenantId}'.");

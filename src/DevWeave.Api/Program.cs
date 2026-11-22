@@ -6,10 +6,12 @@ using DevWeave.Api.Endpoints.Archives;
 using DevWeave.Api.Endpoints.Integrations;
 using DevWeave.Application;
 using DevWeave.Infrastructure;
+using DevWeave.Infrastructure.Persistence;
 using DevWeave.Mcp.Protocol;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -157,6 +159,29 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
+var connectionString = app.Configuration.GetConnectionString("DevWeave");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DevWeave is required. Set it in the environment or appsettings for this host.");
+}
+
+// Compose and CI deploy rebuild containers but do not run `dotnet ef`. When enabled, the API applies
+// pending migrations before it accepts traffic so registration can write tenants on a fresh volume.
+// Prefer ConnectionStrings:DevWeaveMigrate (privileged) when the app connection uses role=devweave_app.
+var migrateOnStartup = app.Configuration.GetValue(
+    "Database:MigrateOnStartup",
+    defaultValue: false);
+if (migrateOnStartup)
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+    var migrateConnection = app.Configuration.GetConnectionString("DevWeaveMigrate");
+    if (!string.IsNullOrWhiteSpace(migrateConnection))
+        db.Database.SetConnectionString(migrateConnection);
+    db.Database.Migrate();
+}
+
 app.UseExceptionHandler();
 
 app.UseAuthentication();
@@ -175,17 +200,34 @@ app.MapGet("/", () => Results.Ok(new
 
 // Probe surface consumed by deployment checks and synthetic availability monitoring (SRS 12.2).
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
+app.MapGet("/health/ready", async (DevWeaveDbContext db, CancellationToken ct) =>
+{
+    try
+    {
+        if (!await db.Database.CanConnectAsync(ct))
+            return Results.Json(new { status = "not_ready", reason = "database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        return Results.Ok(new { status = "ready" });
+    }
+    catch (Exception)
+    {
+        return Results.Json(new { status = "not_ready", reason = "database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+}).AllowAnonymous();
 
 // Tenant and principal surface (SRS TEN-001..TEN-004).
 app.MapIdentityEndpoints();
+app.MapSupportAccessEndpoints();
 
 // Project and lifecycle surface (SRS PRJ-001..PRJ-006, PRJ-009, LFC-001).
 app.MapProjectEndpoints();
+app.MapProjectionEndpoints();
 app.MapWorkPlanningEndpoints();
 
 // Knowledge item and revision surface (SRS KNW-001..KNW-013, REV-001..REV-008, BR-004..BR-009).
 app.MapKnowledgeEndpoints();
 app.MapPlanDesignEndpoints();
+app.MapPlanImportEndpoints();
 
 // Integration surface (SRS INT-001..INT-008).
 app.MapIntegrationEndpoints();
@@ -215,6 +257,9 @@ app.MapAgentEndpoints();
 
 // Commercial Pilot surface (SRS COM-001..COM-026).
 app.MapCommercialEndpoints();
+
+// Requirement impact analysis and plan rebase decisions (dynamic project state §6–§8).
+app.MapImpactEndpoints();
 
 // Coordination plane REST surface (SRS MCO / MCP foundations).
 app.MapCoordinationEndpoints();

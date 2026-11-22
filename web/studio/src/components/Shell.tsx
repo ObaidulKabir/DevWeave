@@ -1,6 +1,7 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useWorkspace } from '../workspace/WorkspaceContext';
+import { BrandMark } from './BrandMark';
 
 const NAV = [
   ['/apps', 'Applications'],
@@ -9,6 +10,7 @@ const NAV = [
   ['/overview', 'Overview'],
   ['/plan-map', 'Plan map'],
   ['/plan-outline', 'Plan outline'],
+  ['/plan-import', 'Plan import'],
   ['/plan-versions', 'Plan versions'],
   ['/knowledge', 'Knowledge'],
   ['/documents', 'Documents'],
@@ -36,24 +38,47 @@ export function Shell() {
 
   return (
     <div className="studio-shell flex min-h-screen">
-      <aside className="hidden w-72 shrink-0 bg-[var(--ink)] px-4 py-6 text-white lg:flex lg:flex-col" aria-label="Owner Studio navigation">
-        <div className="px-3">
-          <p className="font-display text-2xl font-bold tracking-tight">DevWeave</p>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-teal-200/80">Owner Studio</p>
+      <aside
+        className="studio-nav-rail flex w-[13.5rem] shrink-0 flex-col border-r border-[var(--line)] bg-white/95 sm:w-56 lg:w-64"
+        aria-label="Owner Studio navigation"
+      >
+        <div className="border-b border-[var(--line)] px-4 py-4">
+          <BrandMark
+            variant="icon"
+            to="/apps"
+            imgClassName="h-12 w-12 rounded-xl object-contain bg-white ring-1 ring-[var(--line)]"
+          />
+          <p className="mt-3 font-display text-lg font-extrabold tracking-tight text-[var(--ink)]">DevWeave</p>
+          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">
+            Owner Studio
+          </p>
         </div>
 
-        <nav className="mt-10 space-y-1" aria-label="Primary">
+        <p className="px-4 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+          Menu
+        </p>
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3" aria-label="Primary">
           {NAV.map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === '/apps'} className="studio-nav-link">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/apps'}
+              className={({ isActive }) =>
+                `block rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  isActive
+                    ? 'bg-teal-50 text-[var(--signal)]'
+                    : 'text-[var(--ink-soft)] hover:bg-[var(--mist)] hover:text-[var(--ink)]'
+                }`
+              }
+            >
               {label}
             </NavLink>
           ))}
         </nav>
 
-        <div className="mt-auto space-y-3">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-xs text-slate-300">
-            <p className="font-semibold text-teal-100">Control plane</p>
+        <div className="mt-auto space-y-2 border-t border-[var(--line)] px-3 py-3">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--mist)]/60 p-3 text-xs text-[var(--muted)]">
+            <p className="font-semibold text-[var(--ink-soft)]">Control plane</p>
             <p className="mt-2 flex items-center gap-2">
               <span
                 className={`h-2 w-2 rounded-full ${
@@ -64,18 +89,15 @@ export function Shell() {
               <span>{connection}</span>
             </p>
             {principalId ? (
-              <p className="mt-2 font-mono text-[10px] text-slate-400">
+              <p className="mt-2 font-mono text-[10px]">
                 Owner {principalId.slice(0, 8)}…
                 {source === 'env' ? ' · env' : ''}
               </p>
             ) : null}
-            <p className="mt-3 leading-relaxed text-slate-400">
-              Plan, document, verify and coordinate multi-agent delivery without storing source code.
-            </p>
           </div>
           <button
             type="button"
-            className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-2.5 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/5 hover:text-white"
+            className="w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-left text-sm font-semibold text-[var(--ink-soft)] transition hover:bg-[var(--mist)]"
             onClick={onLogout}
           >
             Sign out
@@ -84,20 +106,34 @@ export function Shell() {
       </aside>
 
       <div className="min-w-0 flex-1">
-        {/* UI-02: persistent tenant + project context */}
         <header className="border-b border-[var(--line)] bg-white/80 px-4 py-4 backdrop-blur sm:px-8">
-          <div className="mx-auto flex max-w-7xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--signal)]">Current context</p>
-              <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="font-display text-2xl font-bold tracking-tight">{project?.name ?? 'DevWeave'}</h1>
-                <span className="font-mono text-xs text-[var(--muted)]">{project?.key}</span>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <BrandMark
+                variant="icon"
+                to="/apps"
+                className="shrink-0"
+                imgClassName="h-16 w-16 rounded-xl object-contain bg-white ring-1 ring-[var(--line)] sm:h-[72px] sm:w-[72px]"
+              />
+              <div className="min-w-0">
+                <Link
+                  to="/apps"
+                  className="block font-display text-3xl font-extrabold leading-none tracking-tight text-[var(--ink)] hover:opacity-90 sm:text-[2.35rem]"
+                >
+                  DevWeave
+                </Link>
+                <h1 className="mt-2 truncate text-base font-medium leading-snug tracking-tight text-[var(--ink-soft)] sm:text-lg">
+                  {project?.name ?? 'No project selected'}
+                  {project?.key ? (
+                    <span className="ml-2 font-mono text-xs font-normal text-[var(--muted)]">{project.key}</span>
+                  ) : null}
+                </h1>
+                <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                  Tenant <span className="font-mono">{tenantId ?? 'preview'}</span>
+                  {' · '}
+                  Project <span className="font-mono">{project?.id.slice(0, 8) ?? '—'}</span>
+                </p>
               </div>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Tenant <span className="font-mono">{tenantId ?? 'preview'}</span>
-                {' · '}
-                Project <span className="font-mono">{project?.id.slice(0, 8) ?? '—'}</span>
-              </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <label className="text-xs text-[var(--muted)]" htmlFor="project-switcher">
@@ -119,25 +155,6 @@ export function Shell() {
             </div>
           </div>
         </header>
-
-        <nav className="border-b border-[var(--line)] bg-white/90 px-4 py-2 lg:hidden" aria-label="Mobile primary">
-          <div className="flex gap-2 overflow-x-auto">
-            {NAV.map(([to, label]) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/apps'}
-                className={({ isActive }) =>
-                  `shrink-0 rounded-lg px-3 py-2 text-sm font-semibold ${
-                    isActive ? 'bg-teal-50 text-[var(--signal)]' : 'text-[var(--muted)]'
-                  }`
-                }
-              >
-                {label}
-              </NavLink>
-            ))}
-          </div>
-        </nav>
 
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
           {error ? (

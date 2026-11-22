@@ -26,11 +26,15 @@ services:
       retries: 5
 
   # S3-compatible object storage stand-in for artifact binaries (SRS 3.1, 7.1).
+  # Official minio/minio and quay.io/minio/minio no longer allow anonymous pulls.
+  # Chainguard publishes a pullable community image; override with OBJECT_STORAGE_IMAGE
+  # (for example quay.io/minio/aistor/minio:latest when a license is installed).
   object-storage:
-    image: ${OBJECT_STORAGE_IMAGE:-quay.io/minio/aistor/minio:latest}
+    image: ${OBJECT_STORAGE_IMAGE:-cgr.dev/chainguard/minio:latest}
     container_name: devweave-object-storage
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    user: "0:0"
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${OBJECT_STORAGE__ACCESSKEY:-devweave}
       MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE__SECRETKEY:-change-me-locally}
@@ -38,13 +42,15 @@ services:
       - "${OBJECT_STORAGE_PORT:-9000}:9000"
       - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - devweave-object-storage-data:/data 
+      - devweave-object-storage-data:/data
+    # Do not gate api/workers on this check: AIStor without a license returns 503 on
+    # /minio/health/ready, and Chainguard images have no shell/curl for a CMD-SHELL probe.
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
+      test: ["CMD", "/usr/bin/minio", "--version"]
+      interval: 30s
       timeout: 5s
-      retries: 5
-
+      retries: 3
+      start_period: 10s
 
   api:
     profiles: ["app"]
@@ -55,15 +61,18 @@ services:
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
-      object-storage: { condition: service_healthy }
+      object-storage: { condition: service_started }
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
-      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      # App traffic uses the least-privilege role. Migrations use DevWeaveMigrate without SET ROLE.
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally};Options=-c role=devweave_app
+      ConnectionStrings__DevWeaveMigrate: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      Database__MigrateOnStartup: ${DATABASE_MIGRATE_ON_STARTUP:-true}
+      Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
+      Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
       ObjectStorage__Endpoint: http://object-storage:9000
       ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
       Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}
-      Auth__Oidc__Authority: ${OIDC__AUTHORITY:-}
-      Auth__Oidc__Audience: ${OIDC__AUDIENCE:-devweave-api}
     ports:
       - "${API_PORT:-5080}:8080"
 
@@ -76,9 +85,9 @@ services:
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
-      object-storage: { condition: service_healthy }
+      object-storage: { condition: service_started }
     environment:
-      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally}
+      ConnectionStrings__DevWeave: Host=postgres;Port=5432;Database=${POSTGRES_DB:-devweave};Username=${POSTGRES_USER:-devweave};Password=${POSTGRES_PASSWORD:-change-me-locally};Options=-c role=devweave_app
       ObjectStorage__Endpoint: http://object-storage:9000
       ObjectStorage__Bucket: ${OBJECT_STORAGE__BUCKET:-devweave-artifacts}
       Auth__SigningKey: ${Auth__SigningKey:-devweave-local-dev-signing-key-change-in-production-0123456789}

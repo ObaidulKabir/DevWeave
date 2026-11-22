@@ -43,6 +43,11 @@ export function EvidencePage() {
                     <StateBadge value={item.reviewState} />
                   </div>
                   <p className="mt-2 text-xs text-[var(--muted)]">{item.relatedCriterion}</p>
+                  {item.criterionRevisionId ? (
+                    <p className="mt-1 text-[11px] text-[var(--muted)]">
+                      pinned revision {item.criterionRevisionId.slice(0, 8)}
+                    </p>
+                  ) : null}
                   <MetaLine source={item.integrityHash} updatedAt={item.recordedAt} />
                 </div>
                 <button
@@ -61,7 +66,7 @@ export function EvidencePage() {
       <ConfirmDialog
         open={Boolean(reviewTarget)}
         title="Accept this evidence?"
-        body="Acceptance is an audited review decision. It qualifies claims for verification but is not itself delivery approval (UI-06)."
+        body="Confirm acceptance. This audited review (UI-03/UI-06) qualifies claims for verification; it is not delivery approval. Reported evidence stays distinct from verified state (PRO-005)."
         confirmLabel="Accept"
         busy={busy}
         onCancel={() => setReviewTarget(null)}

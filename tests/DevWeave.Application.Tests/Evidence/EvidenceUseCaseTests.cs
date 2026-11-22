@@ -13,8 +13,9 @@ namespace DevWeave.Application.Tests.Evidence;
 
 /// <summary>
 /// Exercises the Evidence use cases (SRS PRO-006) against in-memory fakes, focusing on flow
-/// correctness: record-review-list, the origin-must-be-a-claim guard, and the claim-verification rule
-/// that a claim stays unverified until at least one evidence record is accepted (PRO-005/PRO-006).
+/// correctness: record-review-list, the origin-must-be-a-claim guard, revision-pinned criteria, and
+/// the claim-verification rule that a claim stays unverified until accepted evidence pins the current
+/// criterion revision (PRO-005/PRO-006).
 /// </summary>
 public sealed class EvidenceUseCaseTests
 {
@@ -24,12 +25,22 @@ public sealed class EvidenceUseCaseTests
         var (fakes, seed) = await SeedAsync();
         var reviewer = await SeedPrincipalAsync(fakes, seed.Tenant, "reviewer@alphacorp.com");
 
-        var record = new RecordEvidence(fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.UnitOfWork);
+        var record = new RecordEvidence(
+            fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.Items, fakes.Revisions, fakes.UnitOfWork);
         var evidence = await record.ExecuteAsync(
-            seed.Tenant, seed.ClaimId, "screenshot", "sha256:aa", null, "AC-1");
+            seed.Tenant,
+            seed.ClaimId,
+            "screenshot",
+            "sha256:aa",
+            null,
+            seed.CriterionItemId,
+            seed.CriterionRevisionId,
+            "AC-1");
 
         Assert.Equal(seed.ClaimId, evidence.OriginActivityId);
         Assert.Equal(seed.Project, evidence.ProjectId);
+        Assert.Equal(seed.CriterionItemId, evidence.CriterionItemId);
+        Assert.Equal(seed.CriterionRevisionId, evidence.CriterionRevisionId);
         Assert.Equal(EvidenceReviewState.Unreviewed, evidence.ReviewState);
         Assert.Null(evidence.ReviewedBy);
 
@@ -47,30 +58,35 @@ public sealed class EvidenceUseCaseTests
         Assert.Equal(reviewer.Id, reviewed.ReviewedBy);
         Assert.NotNull(reviewed.ReviewedAt);
 
-        // A no-op or illegal transition is surfaced as a conflict rather than applied.
         await Assert.ThrowsAsync<ConflictException>(() =>
             new ReviewEvidence(fakes.Evidence, fakes.Principals, fakes.UnitOfWork)
                 .ExecuteAsync(seed.Tenant, evidence.Id, EvidenceReviewState.Accepted, reviewer.Id));
     }
 
     [Fact]
-    public async Task PRO_006_claim_remains_unverified_until_an_evidence_record_is_accepted()
+    public async Task PRO_006_claim_remains_unverified_until_an_evidence_record_is_accepted_on_current_pin()
     {
         var (fakes, seed) = await SeedAsync();
         var reviewer = await SeedPrincipalAsync(fakes, seed.Tenant, "reviewer@alphacorp.com");
-        var verification = new GetClaimVerification(fakes.Activities, fakes.Evidence);
+        var verification = new GetClaimVerification(fakes.Activities, fakes.Evidence, fakes.Items);
 
-        // No evidence: unverified.
         var empty = await verification.ExecuteAsync(seed.Tenant, seed.ClaimId);
         Assert.False(empty.IsVerified);
         Assert.Empty(empty.Evidence);
 
-        // Unreviewed evidence: still unverified.
-        var evidence = await new RecordEvidence(fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.UnitOfWork)
-            .ExecuteAsync(seed.Tenant, seed.ClaimId, "screenshot", "sha256:aa", null, "AC-1");
+        var evidence = await new RecordEvidence(
+                fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.Items, fakes.Revisions, fakes.UnitOfWork)
+            .ExecuteAsync(
+                seed.Tenant,
+                seed.ClaimId,
+                "screenshot",
+                "sha256:aa",
+                null,
+                seed.CriterionItemId,
+                seed.CriterionRevisionId,
+                "AC-1");
         Assert.False((await verification.ExecuteAsync(seed.Tenant, seed.ClaimId)).IsVerified);
 
-        // Accepted evidence: verified (PRO-005/PRO-006).
         await new ReviewEvidence(fakes.Evidence, fakes.Principals, fakes.UnitOfWork)
             .ExecuteAsync(seed.Tenant, evidence.Id, EvidenceReviewState.Accepted, reviewer.Id);
 
@@ -78,26 +94,47 @@ public sealed class EvidenceUseCaseTests
         Assert.True(verified.IsVerified);
         Assert.Single(verified.Evidence);
         Assert.Equal(seed.ClaimId.Value, verified.ClaimId);
+
+        // Revising the criterion removes verification eligibility until new current-revision evidence exists.
+        var criterion = (await fakes.Items.GetByIdAsync(seed.Tenant, seed.CriterionItemId))!;
+        var next = criterion.AddRevision("1.0", "{\"statement\":\"changed\"}", seed.Actor, "revise", null, seed.CriterionRevisionId, 1);
+        await fakes.Revisions.AddAsync(next);
+        Assert.False((await verification.ExecuteAsync(seed.Tenant, seed.ClaimId)).IsVerified);
     }
 
     [Fact]
     public async Task PRO_006_evidence_requires_a_claim_origin_for_the_acting_tenant()
     {
         var (fakes, seed) = await SeedAsync();
-        var record = new RecordEvidence(fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.UnitOfWork);
+        var record = new RecordEvidence(
+            fakes.Evidence, fakes.Activities, fakes.Artifacts, fakes.Items, fakes.Revisions, fakes.UnitOfWork);
 
-        // A missing claim inside the tenant is indistinguishable from a cross-tenant one.
         await Assert.ThrowsAsync<NotFoundException>(() =>
-            record.ExecuteAsync(seed.Tenant, ActivityId.New(), "screenshot", null, null, "AC-1"));
+            record.ExecuteAsync(
+                seed.Tenant,
+                ActivityId.New(),
+                "screenshot",
+                null,
+                null,
+                seed.CriterionItemId,
+                seed.CriterionRevisionId,
+                "AC-1"));
 
-        // A non-claim activity cannot receive evidence.
         var nonClaim = Activity.Create(
             seed.Tenant, seed.Project, ActivityType.Generated, seed.Actor, "generate", ActivityStatus.Completed,
             DateTimeOffset.UtcNow, null, null, null, null, Array.Empty<ActivityInput>(), Array.Empty<ActivityOutput>());
         await fakes.Activities.AddAsync(nonClaim);
 
         await Assert.ThrowsAsync<ConflictException>(() =>
-            record.ExecuteAsync(seed.Tenant, nonClaim.Id, "screenshot", null, null, "AC-1"));
+            record.ExecuteAsync(
+                seed.Tenant,
+                nonClaim.Id,
+                "screenshot",
+                null,
+                null,
+                seed.CriterionItemId,
+                seed.CriterionRevisionId,
+                "AC-1"));
     }
 
     private static async Task<(Fakes Fakes, Seed Seed)> SeedAsync()
@@ -110,13 +147,27 @@ public sealed class EvidenceUseCaseTests
         var project = Project.Create(tenant.Id, "Shop API", "shop-api", null, LifecycleProfileId.New(), actor.Id);
         await fakes.Projects.AddAsync(project);
 
+        var criterion = KnowledgeItem.Create(
+            tenant.Id,
+            project.Id,
+            "ac-1",
+            "Acceptance criterion 1",
+            Classification.Internal,
+            RepresentationKind.Text,
+            "requirements.functional",
+            "1.0",
+            actor.Id);
+        var revision = criterion.AddRevision("1.0", "{\"description\":\"pass\"}", actor.Id, "seed", null, null, 0);
+        await fakes.Items.AddAsync(criterion);
+        await fakes.Revisions.AddAsync(revision);
+
         var claim = Activity.Create(
             tenant.Id, project.Id, ActivityType.Claim, actor.Id, "blueprint meets AC-1", ActivityStatus.Completed,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null,
             Array.Empty<ActivityInput>(), Array.Empty<ActivityOutput>());
         await fakes.Activities.AddAsync(claim);
 
-        return (fakes, new Seed(tenant.Id, project.Id, actor.Id, claim.Id));
+        return (fakes, new Seed(tenant.Id, project.Id, actor.Id, claim.Id, criterion.Id, revision.Id));
     }
 
     private static async Task<Principal> SeedPrincipalAsync(Fakes fakes, TenantId tenantId, string email)
@@ -128,13 +179,21 @@ public sealed class EvidenceUseCaseTests
 
     private static Fakes CreateFakes() => new();
 
-    private sealed record Seed(TenantId Tenant, ProjectId Project, PrincipalId Actor, ActivityId ClaimId);
+    private sealed record Seed(
+        TenantId Tenant,
+        ProjectId Project,
+        PrincipalId Actor,
+        ActivityId ClaimId,
+        KnowledgeItemId CriterionItemId,
+        KnowledgeRevisionId CriterionRevisionId);
 
     private sealed class Fakes
     {
         public InMemoryEvidenceRepository Evidence { get; } = new();
         public InMemoryActivityRepository Activities { get; } = new();
         public InMemoryArtifactRepository Artifacts { get; } = new();
+        public InMemoryKnowledgeItemRepository Items { get; } = new();
+        public InMemoryKnowledgeRevisionRepository Revisions { get; } = new();
         public InMemoryProjectRepository Projects { get; } = new();
         public InMemoryPrincipalRepository Principals { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
@@ -219,6 +278,51 @@ public sealed class EvidenceUseCaseTests
 
         public Task<IReadOnlyList<Artifact>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Artifact>>(Items.Where(a => a.TenantId == tenantId).ToList());
+    }
+
+    private sealed class InMemoryKnowledgeItemRepository : IKnowledgeItemRepository
+    {
+        public List<KnowledgeItem> Items { get; } = new();
+
+        public Task AddAsync(KnowledgeItem item, CancellationToken ct = default)
+        {
+            Items.Add(item);
+            return Task.CompletedTask;
+        }
+
+        public Task<KnowledgeItem?> GetByIdAsync(TenantId tenantId, KnowledgeItemId id, CancellationToken ct = default) =>
+            Task.FromResult(Items.FirstOrDefault(i => i.TenantId == tenantId && i.Id == id));
+
+        public Task<IReadOnlyList<KnowledgeItem>> ListByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeItem>>(Items.Where(i => i.TenantId == tenantId && i.ProjectId == projectId).ToList());
+
+        public Task<bool> KeyExistsAsync(TenantId tenantId, ProjectId projectId, string key, CancellationToken ct = default) =>
+            Task.FromResult(Items.Any(i => i.TenantId == tenantId && i.ProjectId == projectId && i.Key == key));
+
+        public Task<IReadOnlyList<KnowledgeItem>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeItem>>(Items.Where(i => i.TenantId == tenantId).ToList());
+    }
+
+    private sealed class InMemoryKnowledgeRevisionRepository : IKnowledgeRevisionRepository
+    {
+        public List<KnowledgeRevision> Revisions { get; } = new();
+
+        public Task AddAsync(KnowledgeRevision revision, CancellationToken ct = default)
+        {
+            Revisions.Add(revision);
+            return Task.CompletedTask;
+        }
+
+        public Task<KnowledgeRevision?> GetByIdAsync(TenantId tenantId, KnowledgeRevisionId id, CancellationToken ct = default) =>
+            Task.FromResult(Revisions.FirstOrDefault(r => r.TenantId == tenantId && r.Id == id));
+
+        public Task<IReadOnlyList<KnowledgeRevision>> ListByItemAsync(TenantId tenantId, KnowledgeItemId itemId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeRevision>>(
+                Revisions.Where(r => r.TenantId == tenantId && r.KnowledgeItemId == itemId).ToList());
+
+        public Task<IReadOnlyList<KnowledgeRevision>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnowledgeRevision>>(
+                Revisions.Where(r => r.TenantId == tenantId).ToList());
     }
 
     private sealed class InMemoryPrincipalRepository : IPrincipalRepository

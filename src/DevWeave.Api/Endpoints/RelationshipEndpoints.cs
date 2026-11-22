@@ -64,7 +64,11 @@ public static class RelationshipEndpoints
                 new KnowledgeItemId(request.TargetItemId),
                 request.RelationTypeCode,
                 AuthenticatedPrincipal.GetId(http),
-                ct);
+                ct,
+                request.Rationale,
+                request.SourceReference,
+                request.ValidFrom,
+                request.ValidTo);
 
             return Results.Created(
                 $"/tenants/{tenantId}/relationships/{relationship.Id}",
@@ -88,9 +92,14 @@ public static class RelationshipEndpoints
         Guid tenantId,
         Guid projectId,
         ListRelationshipsForProject useCase,
+        HttpContext http,
         CancellationToken ct)
     {
-        var relationships = await useCase.ExecuteAsync(new TenantId(tenantId), new ProjectId(projectId), ct);
+        var relationships = await useCase.ExecuteAsync(
+            new TenantId(tenantId),
+            new ProjectId(projectId),
+            AuthenticatedPrincipal.GetId(http),
+            ct);
 
         return Results.Ok(relationships.Select(Map).ToList());
     }
@@ -99,9 +108,14 @@ public static class RelationshipEndpoints
         Guid tenantId,
         Guid relationshipId,
         GetRelationship useCase,
+        HttpContext http,
         CancellationToken ct)
     {
-        var relationship = await useCase.ExecuteAsync(new TenantId(tenantId), new RelationshipId(relationshipId), ct);
+        var relationship = await useCase.ExecuteAsync(
+            new TenantId(tenantId),
+            new RelationshipId(relationshipId),
+            AuthenticatedPrincipal.GetId(http),
+            ct);
 
         return relationship is null
             ? Results.NotFound()
@@ -143,11 +157,16 @@ public static class RelationshipEndpoints
         Guid tenantId,
         Guid itemId,
         ListRelationshipsForItem useCase,
+        HttpContext http,
         CancellationToken ct)
     {
         try
         {
-            var relationships = await useCase.ExecuteAsync(new TenantId(tenantId), new KnowledgeItemId(itemId), ct);
+            var relationships = await useCase.ExecuteAsync(
+                new TenantId(tenantId),
+                new KnowledgeItemId(itemId),
+                AuthenticatedPrincipal.GetId(http),
+                ct);
 
             return Results.Ok(relationships.Select(Map).ToList());
         }
@@ -162,6 +181,7 @@ public static class RelationshipEndpoints
         Guid itemId,
         TraverseRelationshipsRequest request,
         TraverseRelationships useCase,
+        HttpContext http,
         CancellationToken ct)
     {
         if (request.MaxDepth < 1 || request.MaxResults < 1)
@@ -174,6 +194,7 @@ public static class RelationshipEndpoints
             var result = await useCase.ExecuteAsync(
                 new TenantId(tenantId),
                 new KnowledgeItemId(itemId),
+                AuthenticatedPrincipal.GetId(http),
                 request.Direction,
                 request.MaxDepth,
                 request.MaxResults,
@@ -269,7 +290,12 @@ public static class RelationshipEndpoints
             relationship.RelationTypeCode,
             relationship.Status,
             relationship.CreatedAt,
-            relationship.CreatedBy.Value);
+            relationship.CreatedBy.Value,
+            relationship.Rationale,
+            relationship.SourceReference,
+            relationship.ValidFrom,
+            relationship.ValidTo,
+            relationship.RevokedAt);
 
     private static RelationTypeResponse Map(RelationType type) =>
         new(

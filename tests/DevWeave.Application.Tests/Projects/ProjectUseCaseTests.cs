@@ -91,6 +91,31 @@ public sealed class ProjectUseCaseTests
     }
 
     [Fact]
+    public async Task tenant_owner_lists_every_tenant_project_without_project_membership()
+    {
+        var fakes = CreateFakes();
+        var tenant = Tenant.Create("Alpha Corp");
+        var profile = await new CreateLifecycleProfile(fakes.Profiles, fakes.UnitOfWork)
+            .ExecuteAsync(tenant.Id, "agile", "Agile", "1.0");
+        var creator = await SeedPrincipalAsync(fakes, tenant.Id, "creator@alphacorp.com");
+        var owner = await SeedPrincipalAsync(fakes, tenant.Id, "owner@alphacorp.com");
+        var member = await SeedPrincipalAsync(fakes, tenant.Id, "member@alphacorp.com");
+        await SeedTenantRoleAsync(fakes, tenant.Id, owner.Id, MembershipRole.Owner);
+        await SeedTenantRoleAsync(fakes, tenant.Id, member.Id, MembershipRole.Member);
+
+        var project = await new CreateProject(fakes.Projects, fakes.Profiles, fakes.Principals, fakes.Memberships, fakes.UnitOfWork)
+            .ExecuteAsync(tenant.Id, "Shop API", "shop-api", null, profile.Id, creator.Id);
+
+        var list = new ListProjectsForTenant(fakes.Projects, fakes.Memberships, fakes.TenantMemberships);
+        var ownerProjects = await list.ExecuteAsync(tenant.Id, owner.Id);
+        Assert.Single(ownerProjects);
+        Assert.Equal(project.Id, ownerProjects[0].Id);
+
+        var memberProjects = await list.ExecuteAsync(tenant.Id, member.Id);
+        Assert.Empty(memberProjects);
+    }
+
+    [Fact]
     public async Task PRJ_004_PRJ_009_archive_restore_and_delete_walk_the_governed_lifecycle()
     {
         var fakes = CreateFakes();
@@ -196,6 +221,14 @@ public sealed class ProjectUseCaseTests
         return principal;
     }
 
+    private static async Task SeedTenantRoleAsync(
+        Fakes fakes, TenantId tenantId, PrincipalId principalId, MembershipRole role)
+    {
+        var membership = Membership.Invite(tenantId, principalId, role);
+        membership.Activate();
+        await fakes.TenantMemberships.AddAsync(membership);
+    }
+
     private sealed class Fakes
     {
         public InMemoryProjectRepository Projects { get; } = new();
@@ -203,7 +236,29 @@ public sealed class ProjectUseCaseTests
         public InMemoryProjectMembershipRepository Memberships { get; } = new();
         public InMemoryLifecycleProfileRepository Profiles { get; } = new();
         public InMemoryPrincipalRepository Principals { get; } = new();
+        public InMemoryTenantMembershipRepository TenantMemberships { get; } = new();
         public InMemoryUnitOfWork UnitOfWork { get; } = new();
+    }
+
+    private sealed class InMemoryTenantMembershipRepository : IMembershipRepository
+    {
+        public List<Membership> Memberships { get; } = new();
+
+        public Task AddAsync(Membership membership, CancellationToken ct = default)
+        {
+            Memberships.Add(membership);
+            return Task.CompletedTask;
+        }
+
+        public Task<Membership?> GetByIdAsync(TenantId tenantId, MembershipId id, CancellationToken ct = default) =>
+            Task.FromResult(Memberships.FirstOrDefault(m => m.TenantId == tenantId && m.Id == id));
+
+        public Task<IReadOnlyList<Membership>> ListByTenantAsync(TenantId tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>(Memberships.Where(m => m.TenantId == tenantId).ToList());
+
+        public Task<IReadOnlyList<Membership>> ListByPrincipalAsync(TenantId tenantId, PrincipalId principalId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Membership>>(
+                Memberships.Where(m => m.TenantId == tenantId && m.PrincipalId == principalId).ToList());
     }
 
     private sealed class InMemoryProjectRepository : IProjectRepository

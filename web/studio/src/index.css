@@ -126,6 +126,14 @@ select {
   color: #ecfeff;
 }
 
+.studio-nav-rail {
+  position: sticky;
+  top: 0;
+  align-self: stretch;
+  height: 100vh;
+  max-height: 100vh;
+}
+
 .panel {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.82);

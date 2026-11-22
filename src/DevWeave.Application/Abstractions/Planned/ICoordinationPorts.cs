@@ -46,6 +46,7 @@ public interface ICodebaseRegistry
 {
     Task<Guid> RegisterAsync(AuthorizedScope scope, string provider, string repositoryId,
         string targetBranch, string baseCommitSha, CancellationToken ct = default);
+    Task<IReadOnlyList<CodebaseTargetView>> ListAsync(AuthorizedScope scope, CancellationToken ct = default);
     Task<Guid> RecordChangeSetAsync(AuthorizedScope scope, ChangeSetDraft draft,
         CancellationToken ct = default);
 }
@@ -80,8 +81,8 @@ public interface ILeaseAuthority
     Task<LeaseView> AcquireAsync(AuthorizedScope scope, LeaseRequest request,
         CancellationToken ct = default);
     Task<LeaseView> RenewAsync(AuthorizedScope scope, Guid leaseId, long expectedFence,
-        DateTimeOffset expiresAt, CancellationToken ct = default);
-    Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence,
+        DateTimeOffset expiresAt, Guid runtimeId, CancellationToken ct = default);
+    Task ReleaseAsync(AuthorizedScope scope, Guid leaseId, long expectedFence, Guid runtimeId,
         CancellationToken ct = default);
 }
 

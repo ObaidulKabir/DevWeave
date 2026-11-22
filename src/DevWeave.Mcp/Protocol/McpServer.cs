@@ -185,6 +185,7 @@ public sealed class McpServer
             "C9 handoff — release_lease, then send_project_message the SHA, paths, and remaining scope before another device continues; " +
             "C10 integrate — request_integration queues a reference, it does not merge; " +
             "C11 production — there is no deploy tool; deploy only after a human has verified and approved in Studio or the API. " +
+            "C12 refused — -32009 conflict, -32004 not-found, -32003 forbidden, -32602 invalid, -32601 unknown tool; do not retry a conflict. " +
             "A second device must register its own runtime and must not heartbeat a lease held elsewhere."
     };
 

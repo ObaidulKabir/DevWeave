@@ -88,4 +88,16 @@ public sealed class TaskLease
 
         Status = LeaseStatus.Released;
     }
+
+    /// <summary>
+    /// Drops an active lease whose expiry has passed so the scope can be taken again.
+    /// The partial unique index only ignores non-active rows.
+    /// </summary>
+    public void Expire()
+    {
+        if (Status != LeaseStatus.Active)
+            throw new InvalidOperationException("Lease is not active.");
+
+        Status = LeaseStatus.Expired;
+    }
 }

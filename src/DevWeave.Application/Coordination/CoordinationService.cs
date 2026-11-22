@@ -244,13 +244,22 @@ public sealed class CoordinationService :
             await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.AgentPrincipal, scope.ActorId.Value, ct))
             throw new ConflictException("This runtime or agent has been stopped by a kill switch and cannot take new work.");
 
-        var existing = await _repository.GetActiveLeaseAsync(scope.TenantId, new WorkPackageId(request.WorkPackageId), request.ResourceScope, ct);
+        var existing = await _repository.GetOccupyingLeaseAsync(scope.TenantId, new WorkPackageId(request.WorkPackageId), request.ResourceScope, ct);
         if (existing != null)
         {
-            if (existing.RuntimeId.Value == request.RuntimeId)
+            if (existing.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                existing.Expire();
+                await _uow.SaveChangesAsync(ct);
+            }
+            else if (existing.RuntimeId.Value == request.RuntimeId)
+            {
                 return Map(existing);
-            
-            throw new ConflictException("Resource is already leased by another runtime.");
+            }
+            else
+            {
+                throw new ConflictException("Resource is already leased by another runtime.");
+            }
         }
 
         var lease = TaskLease.Acquire(

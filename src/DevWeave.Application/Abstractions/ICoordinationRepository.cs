@@ -35,6 +35,9 @@ public interface ICoordinationRepository : IWorkPackageImpactSource
     Task AddLeaseAsync(TaskLease lease, CancellationToken ct = default);
     Task<TaskLease?> GetLeaseByIdAsync(TenantId tenantId, LeaseId id, CancellationToken ct = default);
     Task<TaskLease?> GetActiveLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default);
+
+    /// <summary>The active row for a scope, including one whose expiry has already passed.</summary>
+    Task<TaskLease?> GetOccupyingLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default);
     Task<List<TaskLease>> ListLeasesByWorkPackageAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default);
     Task<List<TaskLease>> ListActiveLeasesByRuntimeAsync(TenantId tenantId, RuntimeId runtimeId, CancellationToken ct = default);
     Task<List<TaskLease>> ListActiveLeasesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);

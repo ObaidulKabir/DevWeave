@@ -149,6 +149,30 @@ a person approved it, tests passed, git merged, or production changed.
 
 **Do not:** look for the bundle under Coordination. It stays on Plan import until approval. After approval, use C4 for further design.
 
+### C3 existing build — A git product DevWeave has not recorded
+
+**When:** the repository already contains the product. `read_plan_outline` is empty, or it already has nodes and you are adding slices.
+
+**Agent:** Planning.
+
+1. Same discovery as C3: `list_schemas`, and `list_relation_types` when you send relations. One work item per slice you can name (already built, partial, or not started). Do not put `status` or `Done` on the bundle.
+2. Empty outline, including a full existing repo: `propose_initial_plan` with `requireEmptyProject: true`. A project has one outline root, so a second import does not attach another tree or edit an existing item. A new child is `propose_plan_expansion`.
+3. Success is status `Proposed`. Ask the Owner to approve. Imported work is Planned / NotStarted / Unverified / Pending.
+4. After approval, `list_work_items`, then `report_work_item` once per slice: `done` when that slice is already in git, `InProgress` when it is partial, and leave `NotStarted` when work has not begun. `done` stores reported state `Completed`.
+5. `get_project_metrics`. `work.completion_estimate` is reported-complete items divided by all work items. `work.reported_completed_count` is the count. `closedloop.evidence_backed_completion` stays 0 until a human verifies.
+
+**Human gate:** Plan import approval. Verify and approve of Work stay in Studio. Reported completion is your claim of how much is built, not acceptance.
+
+**Do not:** send proposal status Done. `update_work_item_plan_state` has no Done state. Do not paste source.
+
+### Changing a requirement
+
+A published requirement changes by a new revision, which a human adds and reviews. The previous revision stays. `read_plan_outline` keeps each work link on that previous revision until a human re-pins it. There is no MCP tool to add a revision, edit requirement content, or move the pin.
+
+A new revision clears review. `propose_plan_expansion` under that item is refused until a human reviews the new revision. After that review, the expansion is still only a child proposal.
+
+`report_work_item` sends `expectedVersion` from `list_work_items` when you want to guard the write. A stale version is `-32009`.
+
 ### C4 — Design after a plan exists
 
 **When:** the outline is published and you need a child idea or a Work status claim.
@@ -295,14 +319,15 @@ The control plane suspends old campaigns first. Affected work stays stopped unti
 | Tool | Use it to | Key arguments |
 | --- | --- | --- |
 | `read_plan_outline` | Read the outline, revision-pinned work links and your own proposals | none |
-| `propose_initial_plan` | Submit a full plan bundle for Owner approval (empty-project import). Call `list_schemas` first. | `idempotencyKey`, `knowledge`, `outline`, optional relations/work/`codebaseTargets` |
+| `propose_initial_plan` | Submit a plan bundle for Owner approval. Empty outline uses `requireEmptyProject: true`, including an existing git product. `false` still cannot add a second outline root. The bundle has no Done status | `idempotencyKey`, `knowledge`, `outline`, optional relations/work/`codebaseTargets`, `requireEmptyProject` |
 | `list_codebase_targets` | List registered git-host pointers (no source) | none |
 | `register_codebase_target` | Record a git identity (`owner/name` or clean remote URL + branch + SHA). Planning only. | `provider`, `repositoryId`, `targetBranch`, `baseCommitSha` |
 | `propose_plan_expansion` | Suggest a child item for human review | `parentItemId`, `key`, `title`, `typeId`, `rationale` |
-| `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import | none |
+| `list_schemas` | Discover active `typeId` / `schemaVersion` pairs accepted by plan import. Prefer `requirements.functional` and `requirements.nonfunctional`; `plan.*` stays valid | none |
+| `get_project_metrics` | Read authorized metrics. `work.completion_estimate` is how much work is reported complete. `closedloop.evidence_backed_completion` counts only human-verified items. The ratios are separate | none |
 | `list_relation_types` | Discover active relation codes, endpoint constraints, direction and cardinality | none |
-| `list_work_items` | Read Work items and the four independent states | none |
-| `report_work_item` | Planning claim of reported progress (`done`/`Completed`, `not-done`, …). Not verification. | `workItemId` or `key`, `state`, `reason`, optional `expectedVersion` |
+| `list_work_items` | Read Work items and the four independent states. Imported items start Planned / NotStarted / Unverified / Pending | none |
+| `report_work_item` | Planning claim of reported progress. For an existing build, `done` means the slice is already in git. Not verification. | `workItemId` or `key`, `state` (`done`, `InProgress`, `NotStarted`, …), `reason`, optional `expectedVersion` |
 | `update_work_item_plan_state` | Planning update of planned/backlog state | `workItemId` or `key`, `state`, `reason`, optional `expectedVersion` |
 
 The same schema vocabulary is available to the authenticated agent at

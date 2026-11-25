@@ -105,7 +105,18 @@ export function KnowledgePage() {
 
   useEffect(() => {
     apiFetch<SchemaChoice[]>('/schemas/discover')
-      .then((list) => setSchemas(Array.isArray(list) ? list : []))
+      .then((list) => {
+        const loaded = Array.isArray(list) ? list : [];
+        setSchemas(loaded);
+        setForm((current) => {
+          if (current.typeId !== 'plan.requirement') return current;
+          const canonical = loaded.find((schema) => schema.namespace === 'requirements.functional')
+            ?? loaded.find((schema) => schema.namespace.startsWith('requirements.'));
+          return canonical
+            ? { ...current, typeId: canonical.namespace, schemaVersion: canonical.version }
+            : current;
+        });
+      })
       .catch(() => setSchemas([]));
   }, []);
 

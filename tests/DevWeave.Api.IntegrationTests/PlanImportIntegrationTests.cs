@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DevWeave.Application.Abstractions;
+using DevWeave.Contracts.Knowledge.V1;
 using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Coordination;
@@ -20,6 +22,15 @@ namespace DevWeave.Api.IntegrationTests;
 
 public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFactory>
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
     private readonly IdentityTestFactory _factory;
 
     public PlanImportIntegrationTests(IdentityTestFactory factory)
@@ -132,6 +143,11 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         Assert.Contains("Plan import", description, StringComparison.Ordinal);
         Assert.Contains("send_project_message", description, StringComparison.Ordinal);
         Assert.Contains("parentRef", description, StringComparison.Ordinal);
+        Assert.Contains("there is no Done", description, StringComparison.Ordinal);
+        Assert.Contains("work.completion_estimate", description, StringComparison.Ordinal);
+        Assert.Contains("requireEmptyProject", description, StringComparison.Ordinal);
+        Assert.Contains("one outline root", description, StringComparison.Ordinal);
+        Assert.Contains("previous revision", description, StringComparison.Ordinal);
 
         var knowledgeRequired = propose.GetProperty("inputSchema").GetProperty("properties")
             .GetProperty("knowledge").GetProperty("items").GetProperty("required")
@@ -156,6 +172,15 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
             .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "report_work_item");
         Assert.Contains("WriteKnowledge", reportTool.GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("verify", reportTool.GetProperty("description").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("existing build", reportTool.GetProperty("description").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("done", reportTool.GetProperty("description").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-32009", reportTool.GetProperty("inputSchema").GetProperty("properties")
+            .GetProperty("expectedVersion").GetProperty("description").GetString(), StringComparison.Ordinal);
+
+        var metricsTool = listPlannerDoc.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Single(t => t.GetProperty("name").GetString() == "get_project_metrics");
+        Assert.Contains("work.completion_estimate", metricsTool.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("evidence_backed_completion", metricsTool.GetProperty("description").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -411,6 +436,471 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
     }
 
     [Fact]
+    public async Task Planning_agent_submits_knowledge_relation_milestone_and_work_for_owner_approval()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var due = new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero);
+        const string decision = """{"context":"Checkout","decision":"Use the ledger"}""";
+        const string requirement = """{"description":"Checkout","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay"}]}""";
+
+        using var proposed = await CallToolAsync(agent, url, 1, new
+        {
+            name = "propose_initial_plan",
+            arguments = DesignGraph(suffix, due, decision, requirement),
+        });
+        var proposal = McpJson.Payload(proposed.RootElement);
+        var proposalId = proposal.GetProperty("id").GetGuid();
+        Assert.Equal("Proposed", proposal.GetProperty("status").GetString());
+
+        using (var before = _factory.Services.CreateScope())
+        {
+            var db = before.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            Assert.Equal(0, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+        }
+
+        await ApproveImportAsync(seed, proposalId);
+
+        using var after = _factory.Services.CreateScope();
+        var saved = after.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var items = await saved.KnowledgeItems.Where(item => item.ProjectId == seed.Project.Id).ToListAsync();
+        var decisionItem = Assert.Single(items, item => item.Key == $"ADR-{suffix}");
+        var requirementItem = Assert.Single(items, item => item.Key == $"FR-{suffix}");
+        Assert.Equal("architecture.decision", decisionItem.TypeId);
+        Assert.Equal("requirements.functional", requirementItem.TypeId);
+        Assert.Equal("Checkout decision", decisionItem.Title);
+        Assert.Equal("Checkout", requirementItem.Title);
+
+        var revisions = await saved.KnowledgeRevisions.Where(revision => revision.TenantId == seed.Tenant.Id).ToListAsync();
+        Assert.Contains("Use the ledger", Assert.Single(revisions, revision => revision.Id == decisionItem.CurrentRevisionId).Content, StringComparison.Ordinal);
+        Assert.Contains("AC-1", Assert.Single(revisions, revision => revision.Id == requirementItem.CurrentRevisionId).Content, StringComparison.Ordinal);
+
+        var nodes = await saved.PlanOutlineNodes.Where(node => node.ProjectId == seed.Project.Id).ToListAsync();
+        Assert.Null(Assert.Single(nodes, node => node.ItemId == decisionItem.Id).ParentItemId);
+        Assert.Equal(decisionItem.Id, Assert.Single(nodes, node => node.ItemId == requirementItem.Id).ParentItemId);
+
+        var edge = Assert.Single(await saved.Relationships.Where(row => row.ProjectId == seed.Project.Id).ToListAsync());
+        Assert.Equal(decisionItem.Id, edge.SourceItemId);
+        Assert.Equal(requirementItem.Id, edge.TargetItemId);
+
+        var milestone = Assert.Single(await saved.Milestones.Where(row => row.ProjectId == seed.Project.Id).ToListAsync());
+        Assert.Equal($"M-{suffix}", milestone.Key);
+        Assert.Equal("Checkout release", milestone.Title);
+        Assert.Equal(due, milestone.DueAt);
+
+        var work = await saved.WorkItems.Where(row => row.ProjectId == seed.Project.Id).ToListAsync();
+        var first = Assert.Single(work, row => row.Key == $"W1-{suffix}");
+        var second = Assert.Single(work, row => row.Key == $"W2-{suffix}");
+        Assert.Equal(milestone.Id, first.MilestoneId);
+        Assert.Null(second.MilestoneId);
+        Assert.Equal(WorkPriority.High, first.Priority);
+        var dependency = Assert.Single(await saved.WorkItemDependencies.Where(row => row.ProjectId == seed.Project.Id).ToListAsync());
+        Assert.Equal(second.Id, dependency.WorkItemId);
+        Assert.Equal(first.Id, dependency.DependsOnId);
+
+        using var outline = await CallToolAsync(agent, url, 2, new { name = "read_plan_outline", arguments = new { } });
+        var link = Assert.Single(McpJson.Payload(outline.RootElement).GetProperty("links").EnumerateArray());
+        Assert.Equal(first.Id.Value, link.GetProperty("workItemId").GetGuid());
+        Assert.Equal(requirementItem.Id.Value, link.GetProperty("knowledgeItemId").GetGuid());
+        Assert.Equal(requirementItem.CurrentRevisionId!.Value, link.GetProperty("revisionId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Propose_initial_plan_refuses_invalid_design_bundles()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        var inactiveCode = $"retired-{Guid.NewGuid():N}";
+        var draftNamespace = $"draft.{Guid.NewGuid():N}";
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var db = setup.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var retired = RelationType.Create(inactiveCode, "Retired");
+            retired.Deprecate();
+            db.Add(retired);
+            db.Add(SchemaDefinition.Create(draftNamespace, "1.0", "test", "Draft note", """{"type":"object"}"""));
+            await db.SaveChangesAsync();
+        }
+
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var rootOutline = new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } };
+        var pairOutline = new object[]
+        {
+            new { itemRef = "root", parentRef = (string?)null, position = 0 },
+            new { itemRef = "child", parentRef = "root", position = 0 },
+        };
+
+        await AssertRefusedAsync(agent, url, 1,
+            Core($"unknown-{Guid.NewGuid():N}", new[] { Note("root"), Note("child") }, pairOutline,
+                relations: new object[] { new { sourceRef = "root", targetRef = "child", relationTypeCode = $"missing-{Guid.NewGuid():N}" } }),
+            -32004, "not-found", "not registered");
+        await AssertRefusedAsync(agent, url, 2,
+            Core($"inactive-{Guid.NewGuid():N}", new[] { Note("root"), Note("child") }, pairOutline,
+                relations: new object[] { new { sourceRef = "root", targetRef = "child", relationTypeCode = inactiveCode } }),
+            -32009, "conflict", "not active");
+        await AssertRefusedAsync(agent, url, 3,
+            Core($"endpoint-{Guid.NewGuid():N}", new[] { Note("root"), Note("child") }, pairOutline,
+                relations: new object[] { new { sourceRef = "root", targetRef = "child", relationTypeCode = "satisfies" } }),
+            -32602, "invalid", "does not allow");
+        await AssertRefusedAsync(agent, url, 4,
+            Core($"milestone-{Guid.NewGuid():N}", new[] { Note("root") }, rootOutline,
+                workItems: new object[]
+                {
+                    new { @ref = "w1", key = $"w-{Guid.NewGuid():N}"[..12], title = "Build", description = "Deliver", milestoneRef = "missing", priority = "Normal", dependsOnRefs = Array.Empty<string>() },
+                }),
+            -32602, "invalid", "milestoneRef");
+        await AssertRefusedAsync(agent, url, 5,
+            Core($"source-{Guid.NewGuid():N}", new[] { Note("root", representationKind: "SourceCode") }, rootOutline),
+            -32602, "invalid", "SourceCode");
+        await AssertRefusedAsync(agent, url, 6,
+            Core($"ceiling-{Guid.NewGuid():N}", new[] { Note("root", classification: "Restricted") }, rootOutline),
+            -32003, "forbidden", "classification ceiling");
+        await AssertRefusedAsync(agent, url, 7,
+            Core($"draft-{Guid.NewGuid():N}", new[] { Note("root", typeId: draftNamespace) }, rootOutline),
+            -32004, "not-found", "No active schema");
+        await AssertRefusedAsync(agent, url, 8,
+            Core($"shape-{Guid.NewGuid():N}", new[] { Note("root", typeId: "requirements.functional", content: """{"summary":"Checkout"}""") }, rootOutline),
+            -32602, "invalid", "JSON Schema");
+
+        using var check = _factory.Services.CreateScope();
+        var unchanged = check.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        Assert.Equal(0, await unchanged.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+    }
+
+    [Fact]
+    public async Task Repeated_plan_import_keeps_one_proposal_and_refuses_a_filled_outline()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var key = $"once-{Guid.NewGuid():N}";
+        var bundle = Core(key, new[] { Note("root", content: """{"summary":"Checkout"}""") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } });
+        var changed = Core(key, new[] { Note("root", content: """{"summary":"Billing"}""") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } });
+
+        using var first = await CallToolAsync(agent, url, 1, new { name = "propose_initial_plan", arguments = bundle });
+        var proposalId = McpJson.Payload(first.RootElement).GetProperty("id").GetGuid();
+        using var again = await CallToolAsync(agent, url, 2, new { name = "propose_initial_plan", arguments = bundle });
+        Assert.Equal(proposalId, McpJson.Payload(again.RootElement).GetProperty("id").GetGuid());
+        Assert.Equal("Proposed", McpJson.Payload(again.RootElement).GetProperty("status").GetString());
+
+        await AssertRefusedAsync(agent, url, 3, changed, -32009, "conflict", "different plan payload");
+        await ApproveImportAsync(seed, proposalId);
+        await AssertRefusedAsync(agent, url, 4, bundle, -32009, "conflict", "decided plan import");
+        await AssertRefusedAsync(agent, url, 5,
+            Core($"next-{Guid.NewGuid():N}", new[] { Note("root") },
+                new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } }),
+            -32009, "conflict", "not empty");
+    }
+
+    [Fact]
+    public async Task Design_discovery_lists_canonical_schema_and_satisfies_endpoints()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        PrincipalId readerId;
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var db = setup.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var reader = Principal.Create(seed.Tenant.Id, $"reader-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+            db.Add(reader);
+            db.Add(ProjectMembership.Grant(seed.Tenant.Id, seed.Project.Id, reader.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(seed.Tenant.Id, reader.Id, "test", "hashed-reader", null));
+            var grant = AgentGrant.Propose(seed.Tenant.Id, seed.Project.Id, reader.Id, AgentCapability.ReadKnowledge, null, Classification.Internal);
+            grant.Approve(seed.Owner.Id);
+            db.Add(grant);
+            await db.SaveChangesAsync();
+            readerId = reader.Id;
+        }
+
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var readerClient = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, readerId.Value);
+        var url = McpUrl(seed);
+
+        using var schemas = await CallToolAsync(planner, url, 1, new { name = "list_schemas", arguments = new { } });
+        var functional = Assert.Single(
+            McpJson.Payload(schemas.RootElement).GetProperty("schemas").EnumerateArray(),
+            schema => schema.GetProperty("typeId").GetString() == "requirements.functional");
+        Assert.Equal("1.0", functional.GetProperty("schemaVersion").GetString());
+        Assert.True(functional.GetProperty("isCanonical").GetBoolean());
+
+        using var relations = await CallToolAsync(planner, url, 2, new { name = "list_relation_types", arguments = new { } });
+        var satisfies = Assert.Single(
+            McpJson.Payload(relations.RootElement).GetProperty("relationTypes").EnumerateArray(),
+            relation => relation.GetProperty("code").GetString() == "satisfies");
+        Assert.Contains(satisfies.GetProperty("allowedSourceTypeIds").EnumerateArray(), type => type.GetString() == "architecture.decision");
+        Assert.Contains(satisfies.GetProperty("allowedTargetTypeIds").EnumerateArray(), type => type.GetString() == "requirements.functional");
+
+        using var listed = await readerClient.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 3, McpMethods.ListTools, new { }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        var names = listedDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToHashSet();
+        Assert.Contains("list_schemas", names);
+        Assert.DoesNotContain("list_relation_types", names);
+        await AssertRefusedAsync(readerClient, url, 4, new { }, -32003, "forbidden", "list_relation_types", "list_relation_types");
+    }
+
+    [Fact]
+    public async Task Plan_expansion_stays_a_proposal_until_a_human_accepts_the_child()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var bundle = Core($"expand-{Guid.NewGuid():N}", new[] { Note("root", content: """{"summary":"Checkout"}""") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } });
+        using var proposed = await CallToolAsync(agent, url, 1, new { name = "propose_initial_plan", arguments = bundle });
+        await ApproveImportAsync(seed, McpJson.Payload(proposed.RootElement).GetProperty("id").GetGuid());
+
+        Guid rootId;
+        using (var before = _factory.Services.CreateScope())
+        {
+            var db = before.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            rootId = (await db.PlanOutlineNodes.SingleAsync(node => node.ProjectId == seed.Project.Id)).ItemId.Value;
+            Assert.Equal(1, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+        }
+
+        using var expansion = await CallToolAsync(agent, url, 2, new
+        {
+            name = "propose_plan_expansion",
+            arguments = new
+            {
+                parentItemId = rootId,
+                key = "child-module",
+                title = "Child module",
+                typeId = "doc.note",
+                rationale = "Split checkout",
+            },
+        });
+        var expansionId = McpJson.Payload(expansion.RootElement).GetProperty("id").GetGuid();
+        Assert.Equal("Proposed", McpJson.Payload(expansion.RootElement).GetProperty("status").GetString());
+
+        using (var held = _factory.Services.CreateScope())
+        {
+            var db = held.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            Assert.Equal(1, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+            Assert.Equal(1, await db.PlanOutlineNodes.CountAsync(node => node.ProjectId == seed.Project.Id));
+        }
+
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var tenant = seed.Tenant.Id.Value;
+        using var created = await owner.PostAsJsonAsync(
+            $"/tenants/{tenant}/projects/{seed.Project.Id.Value}/knowledge",
+            new CreateKnowledgeItemRequest("child-module", "Child module", Classification.Internal, RepresentationKind.Text, "doc.note", "1.0", seed.Owner.Id.Value),
+            JsonOptions);
+        var child = await ReadOkAsync<KnowledgeItemResponse>(created, HttpStatusCode.Created);
+        using var revised = await owner.PostAsJsonAsync(
+            $"/tenants/{tenant}/knowledge/{child.Id}/revisions",
+            new AddRevisionRequest(0, "1.0", """{"summary":"Split checkout"}""", seed.Owner.Id.Value, "Accepted child", null, null),
+            JsonOptions);
+        var revision = await ReadOkAsync<KnowledgeRevisionResponse>(revised, HttpStatusCode.Created);
+        using var approved = await owner.PostAsJsonAsync(
+            $"/tenants/{tenant}/knowledge/{child.Id}/approve",
+            new ReviewRevisionRequest(revision.Id, "Reviewed"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+
+        using (var createdOnly = _factory.Services.CreateScope())
+        {
+            var db = createdOnly.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            Assert.Equal(2, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+            Assert.Equal(1, await db.PlanOutlineNodes.CountAsync(node => node.ProjectId == seed.Project.Id));
+        }
+
+        using var decided = await owner.PostAsJsonAsync(
+            $"/tenants/{tenant}/projects/{seed.Project.Id.Value}/plan/proposals/{expansionId}/decide",
+            new { acceptedItemId = child.Id },
+            JsonOptions);
+        using var decision = await ReadOkAsync<JsonDocument>(decided, HttpStatusCode.OK);
+        Assert.Equal("Accepted", decision.RootElement.GetProperty("status").GetString());
+
+        using var outline = await CallToolAsync(agent, url, 3, new { name = "read_plan_outline", arguments = new { } });
+        var childNode = Assert.Single(
+            McpJson.Payload(outline.RootElement).GetProperty("nodes").EnumerateArray(),
+            node => node.GetProperty("itemId").GetGuid() == child.Id);
+        Assert.Equal(rootId, childNode.GetProperty("parentItemId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Changing_a_requirement_leaves_the_work_link_on_the_previous_revision()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        var url = McpUrl(seed);
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var proposed = await CallToolAsync(agent, url, 1, new
+        {
+            name = "propose_initial_plan",
+            arguments = DesignGraph(
+                suffix,
+                new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
+                """{"context":"Checkout","decision":"Use the ledger"}""",
+                """{"description":"Checkout","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay"}]}"""),
+        });
+        await ApproveImportAsync(seed, McpJson.Payload(proposed.RootElement).GetProperty("id").GetGuid());
+
+        using var outline = await CallToolAsync(agent, url, 2, new { name = "read_plan_outline", arguments = new { } });
+        var link = Assert.Single(McpJson.Payload(outline.RootElement).GetProperty("links").EnumerateArray());
+        var pinnedRevisionId = link.GetProperty("revisionId").GetGuid();
+        var requirementId = link.GetProperty("knowledgeItemId").GetGuid();
+
+        using var listed = await agent.PostAsJsonAsync(url, new JsonRpcRequest("2.0", 3, McpMethods.ListTools, new { }));
+        using var listedDoc = await listed.Content.ReadFromJsonAsync<JsonDocument>();
+        var names = listedDoc!.RootElement.GetProperty("result").GetProperty("tools")
+            .EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToHashSet();
+        Assert.DoesNotContain("add_revision", names);
+        Assert.DoesNotContain("revise_requirement", names);
+        await AssertRefusedAsync(agent, url, 4, new { knowledgeItemId = requirementId }, -32601, "unknown-tool", "Unknown tool", "add_revision");
+
+        using var revised = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/knowledge/{requirementId}/revisions",
+            new AddRevisionRequest(
+                1, "1.0",
+                """{"description":"Checkout revised","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay by card"}]}""",
+                seed.Owner.Id.Value, "Tighten checkout", null, null),
+            JsonOptions);
+        var revision = await ReadOkAsync<KnowledgeRevisionResponse>(revised, HttpStatusCode.Created);
+        Assert.NotEqual(pinnedRevisionId, revision.Id);
+
+        using var staleApproval = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/knowledge/{requirementId}/approve",
+            new ReviewRevisionRequest(pinnedRevisionId, "Old text"));
+        Assert.Equal(HttpStatusCode.Conflict, staleApproval.StatusCode);
+
+        using var stillPinned = await CallToolAsync(agent, url, 5, new { name = "read_plan_outline", arguments = new { } });
+        Assert.Equal(pinnedRevisionId, Assert.Single(McpJson.Payload(stillPinned.RootElement).GetProperty("links").EnumerateArray()).GetProperty("revisionId").GetGuid());
+
+        await AssertRefusedAsync(agent, url, 6, new
+        {
+            parentItemId = requirementId,
+            key = "checkout-child",
+            title = "Checkout child",
+            typeId = "requirements.functional",
+            rationale = "Split the revised requirement",
+        }, -32009, "conflict", "human-reviewed", "propose_plan_expansion");
+
+        using var approved = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/knowledge/{requirementId}/approve",
+            new ReviewRevisionRequest(revision.Id, "Reviewed the revision"));
+        Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+
+        using var expansion = await CallToolAsync(agent, url, 7, new
+        {
+            name = "propose_plan_expansion",
+            arguments = new
+            {
+                parentItemId = requirementId,
+                key = "checkout-child",
+                title = "Checkout child",
+                typeId = "requirements.functional",
+                rationale = "Split the revised requirement",
+            },
+        });
+        Assert.Equal("Proposed", McpJson.Payload(expansion.RootElement).GetProperty("status").GetString());
+
+        using var after = _factory.Services.CreateScope();
+        var db = after.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var requirement = await db.KnowledgeItems.SingleAsync(item => item.Id == new KnowledgeItemId(requirementId));
+        Assert.Equal(revision.Id, requirement.CurrentRevisionId!.Value);
+        Assert.Equal(2, await db.KnowledgeRevisions.CountAsync(row => row.KnowledgeItemId == requirement.Id));
+        Assert.Equal(pinnedRevisionId, Assert.Single(await db.PlanWorkLinks.Where(row => row.ProjectId == seed.Project.Id).ToListAsync()).RevisionId.Value);
+        Assert.Equal(2, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+    }
+
+    [Fact]
+    public async Task A_second_import_cannot_add_another_outline_root()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var outline = new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } };
+        var first = Core($"root-{Guid.NewGuid():N}", new[] { Note("root", content: """{"summary":"Checkout"}""") }, outline);
+        using var proposed = await CallToolAsync(agent, url, 1, new { name = "propose_initial_plan", arguments = first });
+        await ApproveImportAsync(seed, McpJson.Payload(proposed.RootElement).GetProperty("id").GetGuid());
+
+        var second = Core(
+            $"child-{Guid.NewGuid():N}",
+            new[] { Note("root", content: """{"summary":"Billing"}""") },
+            outline,
+            requireEmptyProject: false);
+        using var appended = await CallToolAsync(agent, url, 2, new { name = "propose_initial_plan", arguments = second });
+        var proposalId = McpJson.Payload(appended.RootElement).GetProperty("id").GetGuid();
+        Assert.Equal("Proposed", McpJson.Payload(appended.RootElement).GetProperty("status").GetString());
+
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        using var approve = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals/{proposalId}/approve",
+            new DecideInitialPlanProposalRequest("Append"));
+        Assert.Equal(HttpStatusCode.Conflict, approve.StatusCode);
+        Assert.Contains("one outline root", await approve.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        Assert.Equal(1, await db.PlanOutlineNodes.CountAsync(node => node.ProjectId == seed.Project.Id));
+        var original = Assert.Single(await db.KnowledgeRevisions.Where(row => row.TenantId == seed.Tenant.Id && row.RevisionNumber == 1).ToListAsync(),
+            row => row.Content.Contains("Checkout", StringComparison.Ordinal));
+        Assert.Contains("Checkout", original.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Stale_work_report_version_is_refused()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var bundle = Core($"version-{Guid.NewGuid():N}", new[] { Note("root") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } },
+            workItems: new object[]
+            {
+                new
+                {
+                    @ref = "w1",
+                    key = $"W-{Guid.NewGuid():N}"[..12],
+                    title = "Deliver checkout",
+                    description = "Ship the slice",
+                    milestoneRef = (string?)null,
+                    priority = "Normal",
+                    dependsOnRefs = Array.Empty<string>(),
+                },
+            });
+        using var proposed = await CallToolAsync(agent, url, 1, new { name = "propose_initial_plan", arguments = bundle });
+        await ApproveImportAsync(seed, McpJson.Payload(proposed.RootElement).GetProperty("id").GetGuid());
+
+        using var listed = await CallToolAsync(agent, url, 2, new { name = "list_work_items", arguments = new { } });
+        var item = Assert.Single(McpJson.Payload(listed.RootElement).GetProperty("workItems").EnumerateArray());
+        var version = item.GetProperty("version").GetInt32();
+        var key = item.GetProperty("key").GetString();
+        Assert.Equal("NotStarted", item.GetProperty("reportedState").GetString());
+
+        await AssertRefusedAsync(agent, url, 3, new
+        {
+            key,
+            state = "done",
+            reason = "Already built",
+            expectedVersion = version + 5,
+        }, -32009, "conflict", "version", "report_work_item");
+
+        using var reported = await CallToolAsync(agent, url, 4, new
+        {
+            name = "report_work_item",
+            arguments = new { key, state = "InProgress", reason = "Part of the slice exists", expectedVersion = version },
+        });
+        var partial = McpJson.Payload(reported.RootElement).GetProperty("item");
+        Assert.Equal("InProgress", partial.GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", partial.GetProperty("verificationState").GetString());
+        Assert.Equal(version + 1, partial.GetProperty("version").GetInt32());
+
+        using var done = await CallToolAsync(agent, url, 5, new
+        {
+            name = "report_work_item",
+            arguments = new { key, state = "done", reason = "Slice is in git", expectedVersion = partial.GetProperty("version").GetInt32() },
+        });
+        Assert.Equal("Completed", McpJson.Payload(done.RootElement).GetProperty("item").GetProperty("reportedState").GetString());
+    }
+
+    [Fact]
     public async Task Agent_proposer_cannot_approve_plan_import()
     {
         var seed = await SeedAsync(planning: true, execution: false);
@@ -461,6 +951,162 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         await db.SaveChangesAsync();
         return new Seed(tenant, project, owner, planner, executor);
     }
+
+    private static string McpUrl(Seed seed) =>
+        $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+    private async Task ApproveImportAsync(Seed seed, Guid proposalId)
+    {
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        using var approve = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/plan-import-proposals/{proposalId}/approve",
+            new DecideInitialPlanProposalRequest("Looks good"));
+        if (approve.StatusCode != HttpStatusCode.OK)
+            throw new HttpRequestException($"{(int)approve.StatusCode} {await approve.Content.ReadAsStringAsync()}");
+    }
+
+    private static async Task<JsonDocument> CallToolAsync(HttpClient client, string url, int id, object parameters)
+    {
+        using var response = await client.PostAsJsonAsync(url, new JsonRpcRequest("2.0", id, McpMethods.CallTool, parameters));
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new HttpRequestException($"{(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        return (await response.Content.ReadFromJsonAsync<JsonDocument>())!;
+    }
+
+    private static async Task AssertRefusedAsync(
+        HttpClient client,
+        string url,
+        int id,
+        object arguments,
+        int code,
+        string kind,
+        string message,
+        string tool = "propose_initial_plan")
+    {
+        using var document = await CallToolAsync(client, url, id, new { name = tool, arguments });
+        var error = document.RootElement.GetProperty("error");
+        Assert.Equal(code, error.GetProperty("code").GetInt32());
+        Assert.Equal(kind, error.GetProperty("data").GetProperty("kind").GetString());
+        Assert.Contains(message, error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<T> ReadOkAsync<T>(HttpResponseMessage response, HttpStatusCode expected)
+    {
+        if (response.StatusCode != expected)
+            throw new HttpRequestException($"{(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        return (await response.Content.ReadFromJsonAsync<T>(JsonOptions))!;
+    }
+
+    private static object DesignGraph(string suffix, DateTimeOffset due, string decision, string requirement) => new
+    {
+        idempotencyKey = $"design-{suffix}",
+        requireEmptyProject = true,
+        knowledge = new object[]
+        {
+            new
+            {
+                @ref = "adr",
+                key = $"ADR-{suffix}",
+                title = "Checkout decision",
+                typeId = "architecture.decision",
+                schemaVersion = "1.0",
+                classification = "Internal",
+                representationKind = "StructuredData",
+                content = decision,
+                reason = "Record the checkout decision",
+            },
+            new
+            {
+                @ref = "req",
+                key = $"FR-{suffix}",
+                title = "Checkout",
+                typeId = "requirements.functional",
+                schemaVersion = "1.0",
+                classification = "Internal",
+                representationKind = "StructuredData",
+                content = requirement,
+                reason = "Record the checkout requirement",
+            },
+        },
+        outline = new object[]
+        {
+            new { itemRef = "adr", parentRef = (string?)null, position = 0 },
+            new { itemRef = "req", parentRef = "adr", position = 0 },
+        },
+        relations = new object[]
+        {
+            new { sourceRef = "adr", targetRef = "req", relationTypeCode = "satisfies" },
+        },
+        milestones = new object[]
+        {
+            new { @ref = "m1", key = $"M-{suffix}", title = "Checkout release", dueAt = due },
+        },
+        workItems = new object[]
+        {
+            new
+            {
+                @ref = "w1",
+                key = $"W1-{suffix}",
+                title = "Deliver checkout",
+                description = "Ship the ledger path",
+                milestoneRef = "m1",
+                priority = "High",
+                dependsOnRefs = Array.Empty<string>(),
+            },
+            new
+            {
+                @ref = "w2",
+                key = $"W2-{suffix}",
+                title = "Review checkout",
+                description = "Review the ledger path",
+                milestoneRef = (string?)null,
+                priority = "Normal",
+                dependsOnRefs = new[] { "w1" },
+            },
+        },
+        workLinks = new object[]
+        {
+            new { workItemRef = "w1", knowledgeRef = "req" },
+        },
+    };
+
+    private static object Note(
+        string @ref,
+        string typeId = "doc.note",
+        string schemaVersion = "1.0",
+        string content = """{"summary":"Checkout"}""",
+        string classification = "Internal",
+        string representationKind = "Text") => new
+    {
+        @ref,
+        key = $"k-{Guid.NewGuid():N}"[..16],
+        title = "Checkout",
+        typeId,
+        schemaVersion,
+        classification,
+        representationKind,
+        content,
+        reason = "Design coverage",
+    };
+
+    private static object Core(
+        string idempotencyKey,
+        object[] knowledge,
+        object[] outline,
+        object[]? relations = null,
+        object[]? milestones = null,
+        object[]? workItems = null,
+        bool requireEmptyProject = true) => new
+    {
+        idempotencyKey,
+        requireEmptyProject,
+        knowledge,
+        outline,
+        relations = relations ?? Array.Empty<object>(),
+        milestones = milestones ?? Array.Empty<object>(),
+        workItems = workItems ?? Array.Empty<object>(),
+        workLinks = Array.Empty<object>(),
+    };
 
     private static object MinimalPlan(string idempotencyKey) => new
     {

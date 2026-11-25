@@ -2,6 +2,7 @@ using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Security;
 using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Activities;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
@@ -14,6 +15,10 @@ public sealed class ProjectReporting : IProjectReporting
     private readonly IKnowledgeItemRepository _knowledgeItems;
     private readonly IRelationshipRepository _relationships;
     private readonly IWorkPlanningRepository _work;
+    private readonly IKnowledgeRevisionRepository _revisions;
+    private readonly IEvidenceRepository _evidence;
+    private readonly IActivityRepository _activities;
+    private readonly IAgentExecutionMetadataRepository _executionMetadata;
     private readonly IProjectMembershipRepository _projectMemberships;
     private readonly IMembershipRepository _tenantMemberships;
     private readonly IAuditJournal _auditJournal;
@@ -23,6 +28,10 @@ public sealed class ProjectReporting : IProjectReporting
         IKnowledgeItemRepository knowledgeItems,
         IRelationshipRepository relationships,
         IWorkPlanningRepository work,
+        IKnowledgeRevisionRepository revisions,
+        IEvidenceRepository evidence,
+        IActivityRepository activities,
+        IAgentExecutionMetadataRepository executionMetadata,
         IProjectMembershipRepository projectMemberships,
         IMembershipRepository tenantMemberships,
         IAuditJournal auditJournal)
@@ -31,6 +40,10 @@ public sealed class ProjectReporting : IProjectReporting
         _knowledgeItems = knowledgeItems;
         _relationships = relationships;
         _work = work;
+        _revisions = revisions;
+        _evidence = evidence;
+        _activities = activities;
+        _executionMetadata = executionMetadata;
         _projectMemberships = projectMemberships;
         _tenantMemberships = tenantMemberships;
         _auditJournal = auditJournal;
@@ -108,6 +121,28 @@ public sealed class ProjectReporting : IProjectReporting
                 "Does not imply verified completion",
                 true),
         };
+
+        var visibleIds = visibleItemIds;
+        var revisions = (await _revisions.ListByTenantAsync(scope.TenantId, ct))
+            .Where(revision => visibleIds.Contains(revision.KnowledgeItemId))
+            .ToArray();
+        var evidence = (await _evidence.ListForProjectAsync(scope.TenantId, scope.ProjectId, ct))
+            .Where(record => record.CriterionItemId is null || visibleIds.Contains(record.CriterionItemId))
+            .ToArray();
+        var activities = await _activities.ListForProjectAsync(scope.TenantId, scope.ProjectId, ct);
+        var generated = activities.Where(activity => activity.Type == ActivityType.Generated).Select(activity => activity.Id).ToArray();
+        var metadata = generated.Length == 0
+            ? Array.Empty<Domain.Agents.AgentExecutionMetadata>()
+            : await _executionMetadata.ListForProjectActivitiesAsync(scope.TenantId, generated, ct);
+        metrics.AddRange(ClosedLoopAnalytics.Compute(new ClosedLoopPopulation(
+            items,
+            revisions,
+            relationships,
+            evidence,
+            workItems,
+            generated.Length,
+            metadata.Count,
+            asOf)));
 
         return metrics;
     }

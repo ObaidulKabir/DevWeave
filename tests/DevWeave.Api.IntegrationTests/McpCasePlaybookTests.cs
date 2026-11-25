@@ -48,6 +48,12 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
         Assert.Contains("C1 brainstorm", instructions, StringComparison.Ordinal);
         Assert.Contains("C2 specifications", instructions, StringComparison.Ordinal);
         Assert.Contains("C3 empty plan", instructions, StringComparison.Ordinal);
+        Assert.Contains("C3 existing build", instructions, StringComparison.Ordinal);
+        Assert.Contains("work.completion_estimate", instructions, StringComparison.Ordinal);
+        Assert.Contains("there is no Done", instructions, StringComparison.Ordinal);
+        Assert.Contains("one outline root", instructions, StringComparison.Ordinal);
+        Assert.Contains("previous revision", instructions, StringComparison.Ordinal);
+        Assert.Contains("stale version is -32009", instructions, StringComparison.Ordinal);
         Assert.Contains("C4 later design", instructions, StringComparison.Ordinal);
         Assert.Contains("C5 plan moved", instructions, StringComparison.Ordinal);
         Assert.Contains("C6 code", instructions, StringComparison.Ordinal);
@@ -75,6 +81,60 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
         Assert.DoesNotContain("request_assignment", planningTools);
         Assert.DoesNotContain("submit_change_set", planningTools);
         Assert.DoesNotContain(planningTools, name => name.Contains("deploy", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("get_project_metrics", planningTools);
+    }
+
+    [Fact]
+    public async Task Planner_reads_closed_loop_metrics()
+    {
+        var seed = await SeedAsync();
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        var payload = McpJson.Payload(await CallAsync(planner, url, 1, McpMethods.CallTool, new
+        {
+            name = "get_project_metrics",
+            arguments = new { },
+        }));
+        var metrics = payload.GetProperty("metrics").EnumerateArray().ToList();
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.traceability_coverage");
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.freshness");
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.actionability");
+        var coverage = Assert.Single(metrics, metric =>
+            metric.GetProperty("key").GetString() == "closedloop.requirement_verification_coverage");
+        Assert.Equal("closed-loop.1.0", coverage.GetProperty("definitionVersion").GetString());
+    }
+
+    [Fact]
+    public async Task Metrics_are_refused_without_ReadKnowledge()
+    {
+        var seed = await SeedAsync();
+        PrincipalId courierId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var courier = Principal.Create(seed.Tenant.Id, $"courier-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+            db.Add(courier);
+            db.Add(ProjectMembership.Grant(seed.Tenant.Id, seed.Project.Id, courier.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(seed.Tenant.Id, courier.Id, "test", "hashed-courier", null));
+            db.Add(Approved(seed.Tenant.Id, seed.Project.Id, courier.Id, seed.Owner.Id, AgentCapability.ExecuteWorkflow));
+            await db.SaveChangesAsync();
+            courierId = courier.Id;
+        }
+
+        using var courierClient = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, courierId.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var tools = await ToolNamesAsync(courierClient, url, 1);
+        Assert.DoesNotContain("get_project_metrics", tools);
+
+        var refused = await CallAsync(courierClient, url, 2, McpMethods.CallTool, new
+        {
+            name = "get_project_metrics",
+            arguments = new { },
+        });
+        var error = refused.GetProperty("error");
+        Assert.Equal(-32003, error.GetProperty("code").GetInt32());
+        Assert.Equal("forbidden", error.GetProperty("data").GetProperty("kind").GetString());
     }
 
     [Fact]

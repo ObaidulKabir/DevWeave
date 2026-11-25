@@ -41,6 +41,7 @@ public sealed class McpServer
     private readonly ISchemaDefinitionRepository _schemas;
     private readonly IKnowledgeTypeDefinitionRepository _knowledgeTypes;
     private readonly IRelationTypeRepository _relationTypes;
+    private readonly IProjectReporting _reporting;
     private readonly ILogger<McpServer> _logger;
     private readonly JsonSerializerOptions _options;
 
@@ -65,6 +66,7 @@ public sealed class McpServer
         ISchemaDefinitionRepository schemas,
         IKnowledgeTypeDefinitionRepository knowledgeTypes,
         IRelationTypeRepository relationTypes,
+        IProjectReporting reporting,
         ILogger<McpServer> logger)
     {
         _channels = channels;
@@ -85,6 +87,7 @@ public sealed class McpServer
         _schemas = schemas;
         _knowledgeTypes = knowledgeTypes;
         _relationTypes = relationTypes;
+        _reporting = reporting;
         _logger = logger;
         _options = new JsonSerializerOptions
         {
@@ -165,11 +168,13 @@ public sealed class McpServer
             "empty, stop and ask the Owner to register and publish schemas (agents cannot); " +
             "(3) list_relation_types when submitting relations — use an active code; sourceRef and targetRef must " +
             "be knowledge refs from this bundle, never file paths; " +
-            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true, knowledge[], " +
+            "(4) propose_initial_plan with a unique idempotencyKey, requireEmptyProject true when the outline is " +
+            "empty (false skips the empty check and still cannot add a second outline root), knowledge[], " +
             "outline[] with exactly one root (parentRef null), and optional codebaseTargets[] git identities " +
             "(provider, owner/name or remote URL, branch, commit SHA — never clones, blobs, diffs, or source); " +
             "(5) success returns status Proposed — ask the Owner to Approve and materialize. You cannot approve " +
-            "your own proposal. After approval, use propose_plan_expansion for incremental children and " +
+            "your own proposal. Proposal status is only Proposed, Approved, or Rejected; there is no Done, and " +
+            "work items in the bundle have no completion field. After approval, use propose_plan_expansion for incremental children and " +
             "register_codebase_target / list_codebase_targets for additional git pointers. Git hosting remains authoritative. " +
             "Planning agents update Work item status with list_work_items then report_work_item (reported/done) " +
             "or update_work_item_plan_state (planned). Verify and approve stay human-only in Studio. " +
@@ -177,6 +182,17 @@ public sealed class McpServer
             "codebase. DevWeave is the control plane, not the IDE and not the git host. Pick one case: " +
             "C0 connect — register_runtime, list_codebase_targets, then get_plan_status or read_plan_outline; " +
             "C1 brainstorm and C3 empty plan — Planning only, propose_initial_plan, never send_project_message; " +
+            "C3 existing build — the git repo already has the product: if read_plan_outline is empty, propose_initial_plan " +
+            "with requireEmptyProject true and one work item per built, partial, or unstarted slice; do not send status Done. " +
+            "A project has one outline root, so requireEmptyProject false does not attach another tree. " +
+            "Change a requirement by a human revision; read_plan_outline keeps each work link on the previous revision until a human re-pins it. " +
+            "There is no MCP tool to add a revision. propose_plan_expansion is refused until that new revision is human-reviewed, and it still only files a child proposal. " +
+            "After the Owner approves, " +
+            "list_work_items (new items are Planned / NotStarted / Unverified / Pending) and report_work_item done for a slice " +
+            "already in git, InProgress for a partial slice, and leave NotStarted when work has not begun. " +
+            "Send expectedVersion from that list; a stale version is -32009. Then get_project_metrics: " +
+            "work.completion_estimate is reported-complete items divided by all work items, and work.reported_completed_count is the count. " +
+            "closedloop.evidence_backed_completion stays 0 until a human verifies. Reported completion is not acceptance. " +
             "C2 specifications — propose_spec_* and wait until a human binds them; " +
             "C4 later design — propose_plan_expansion; " +
             "C5 plan moved — if get_work_status says canProgress false, stop coding, report_workthrough Blocked, release_lease; " +
@@ -301,14 +317,14 @@ public sealed class McpServer
         NamedTool("get_plan_baseline", "Describe a locked plan baseline as an export-style manifest (stable revision ids). Artifact checksum integrity is enforced on tenant export/import paths; do not invent checksums",
             new { baselineId = UuidProp() },
             new[] { "baselineId" }),
-        NamedTool("read_plan_outline", "Read the published project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored). If the outline is empty, submit design with propose_initial_plan — do not post it on Coordination.",
+        NamedTool("read_plan_outline", "Read the published project outline, revision-pinned Work links, and your own proposals within your ReadKnowledge grant and classification ceiling. Items above the ceiling are omitted (not errored). A newer requirement revision does not move a work link; the link stays on the previous revision until a human re-pins it. If the outline is empty, submit design with propose_initial_plan — do not post it on Coordination.",
             new { }, Array.Empty<string>()),
-        NamedTool("propose_plan_expansion", "Submit a child Knowledge idea under an already published parent for human review on Plan outline. Does not create or approve an item. Use propose_initial_plan instead when the project outline is empty. Requires WriteKnowledge grant within your classification ceiling",
+        NamedTool("propose_plan_expansion", "Submit a child Knowledge idea under an already published parent for human review on Plan outline. Does not create or approve an item, and does not revise the parent. Refused while the parent's current revision is not human-reviewed. Use propose_initial_plan instead when the project outline is empty. Requires WriteKnowledge grant within your classification ceiling",
             new { parentItemId = UuidProp(), key = StringProp(), title = StringProp(), typeId = StringProp(), rationale = StringProp() },
             new[] { "parentItemId", "key", "title", "typeId", "rationale" }),
         NamedTool("propose_initial_plan",
             "Publish a Knowledge/outline/Relations/Work bundle for Owner approval. This is the only MCP path that can populate those Studio tabs. send_project_message never creates plan records. " +
-            "Procedure: call read_plan_outline (empty tree => import here); call list_schemas and copy typeId/schemaVersion (if schemas is empty, stop — the Owner must publish schemas); call list_relation_types for relationTypeCode if you include relations (endpoints must be knowledge refs, not file paths); call this tool; then tell the Owner to open Studio → Plan import → Approve and materialize. Success returns id with status Proposed. You cannot approve your own proposal. Default requireEmptyProject is true. " +
+            "Procedure: call read_plan_outline (empty tree => import here, including an existing git product DevWeave has not recorded); call list_schemas and copy typeId/schemaVersion (if schemas is empty, stop — the Owner must publish schemas); call list_relation_types for relationTypeCode if you include relations (endpoints must be knowledge refs, not file paths); call this tool; then tell the Owner to open Studio → Plan import → Approve and materialize. Success returns id with status Proposed. You cannot approve your own proposal. Proposal status is Proposed, Approved, or Rejected — there is no Done. Default requireEmptyProject is true. A project has one outline root, so false does not add another tree or edit an existing requirement. A changed requirement is a new human revision; this tool has no revision field, and work links stay on the previous revision. Work items have no status field; they materialize as Planned / NotStarted. After approval, record how much of an existing build is finished with report_work_item (done, InProgress, or NotStarted) and read work.completion_estimate from get_project_metrics. That estimate is not verification. " +
             "Each knowledge item needs ref, key, title, typeId, schemaVersion, classification (Public|Internal|Confidential|Restricted within your ceiling), representationKind (Text|StructuredData|Diagram|Chart|Document|Media|ExternalReference; never SourceCode), content, and reason. Outline needs exactly one root with parentRef null; every itemRef is a knowledge ref. Work priority is Low|Normal|High|Critical. workLinks.knowledgeRef must be in the outline. Optional codebaseTargets[] record git-host identity only (provider, repositoryId, targetBranch, baseCommitSha). Requires WriteKnowledge on a Planning agent.",
             new
             {
@@ -316,7 +332,7 @@ public sealed class McpServer
                 requireEmptyProject = new
                 {
                     type = "boolean",
-                    description = "Default true. Refuse the import when the project already has outline nodes. Set false only to append to a non-empty project.",
+                    description = "Default true, including an existing git product whose DevWeave outline is still empty. Refuse when outline nodes already exist. False skips that check and still cannot add a second outline root or change an existing requirement.",
                 },
                 knowledge = ArrayOf(
                     ObjectSchema(
@@ -379,7 +395,7 @@ public sealed class McpServer
                             dependsOnRefs = new { type = "array", items = StringProp("Other work item refs in this bundle. Must be acyclic.") },
                         },
                         ["ref", "key", "title", "description", "priority"]),
-                    "Optional. At most 200."),
+                    "Optional. At most 200. No status or Done field: completion is reported after Owner approval with report_work_item."),
                 workLinks = ArrayOf(
                     ObjectSchema(
                         new
@@ -419,16 +435,18 @@ public sealed class McpServer
             new { }, Array.Empty<string>()),
         NamedTool("list_relation_types", "List active relation types for plan-import relations. Call before propose_initial_plan if you include relations. Use code as relationTypeCode. sourceRef and targetRef must be knowledge refs from the same bundle, not file paths.",
             new { }, Array.Empty<string>()),
-        NamedTool("list_work_items", "List this project's Work items with independent planned, reported, verification, and approval states. Use after Owner Plan import. ReadKnowledge. Verify and approve are not MCP tools — humans do those in Studio.",
+        NamedTool("get_project_metrics", "Read authorized project metrics, including closed-loop verification, traceability, and evidence-backed completion. Each dimension is separate. For an existing build, work.completion_estimate is reported-complete work items divided by all work items, and work.reported_completed_count is that numerator. closedloop.evidence_backed_completion counts only items a human has verified. Reported completion is an estimate and is not verification. Read-only. Requires ReadKnowledge.",
             new { }, Array.Empty<string>()),
-        NamedTool("report_work_item", "Planning agent claim of Work item progress (reported state). Does not verify or approve. Pass workItemId or key from list_work_items. state: NotStarted, InProgress, Blocked, Completed, Failed; aliases done=Completed and not-done=reopen or leave unfinished. Legal jumps: NotStarted→InProgress|Blocked|Completed|Failed; InProgress/Blocked→Blocked|Completed|Failed|InProgress; Completed/Failed→InProgress only. Optional expectedVersion (defaults to current). Requires WriteKnowledge. Humans still verify and approve in Studio.",
+        NamedTool("list_work_items", "List this project's Work items with independent planned, reported, verification, and approval states. Use after Owner Plan import. A newly imported item is Planned / NotStarted / Unverified / Pending even when the git slice already exists; reportedState becomes Completed only after report_work_item done. ReadKnowledge. Verify and approve are not MCP tools — humans do those in Studio.",
+            new { }, Array.Empty<string>()),
+        NamedTool("report_work_item", "Planning agent claim of Work item progress (reported state). Does not verify or approve. After an existing build is imported, call this once per work item: done when that slice already exists in git, InProgress when it is partial, and omit the call to leave NotStarted. Pass workItemId or key from list_work_items. state: NotStarted, InProgress, Blocked, Completed, Failed; aliases done=Completed and not-done=reopen or leave unfinished. There is no Done value. Legal jumps: NotStarted→InProgress|Blocked|Completed|Failed; InProgress/Blocked→Blocked|Completed|Failed|InProgress; Completed/Failed→InProgress only. Optional expectedVersion (defaults to current). Requires WriteKnowledge. Then read work.completion_estimate. Humans still verify and approve in Studio.",
             new
             {
                 workItemId = UuidProp(),
                 key = StringProp("Work item key from list_work_items or plan import."),
                 state = StringProp("ReportedExecutionState or done / not-done."),
                 reason = StringProp("Why this report is true. References only — no source or secrets."),
-                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version. A mismatch is -32009 conflict." },
             },
             ["state", "reason"]),
         NamedTool("update_work_item_plan_state", "Planning agent update of Work item planned state (backlog/workflow, not execution claim). Pass workItemId or key. state: Planned, Ready, InProgress, Blocked, Cancelled. Legal jumps: Planned→Ready|Cancelled; Ready→Planned|InProgress|Cancelled; InProgress→Blocked|Cancelled; Blocked→InProgress|Cancelled; Cancelled→Planned. Optional expectedVersion. Requires WriteKnowledge. Verify and approve stay human-only.",
@@ -438,7 +456,7 @@ public sealed class McpServer
                 key = StringProp("Work item key from list_work_items or plan import."),
                 state = StringProp("PlannedWorkState."),
                 reason = StringProp("Why the planned state is changing."),
-                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version." },
+                expectedVersion = new { type = "integer", description = "CAS version from list_work_items. Defaults to the current version. A mismatch is -32009 conflict." },
             },
             ["state", "reason"]),
         NamedTool("resolve_spec", "Resolve the single binding specification decision for a topic in this project, as data. Returns origin, revision ids and any conflicts. Honors ReadKnowledge grant",
@@ -529,6 +547,10 @@ public sealed class McpServer
             "list_schemas" => await ListSchemasAsync(ct),
             "list_relation_types" => await ListRelationTypesAsync(ct),
             "list_work_items" => await ListWorkItemsFromArgsAsync(scope, ct),
+            "get_project_metrics" => new
+            {
+                metrics = await _reporting.GetMetricsAsync(scope, DateTimeOffset.UtcNow, ct),
+            },
             "report_work_item" => await ReportWorkItemFromArgsAsync(scope, args, ct),
             "update_work_item_plan_state" => await UpdateWorkItemPlanStateFromArgsAsync(scope, args, ct),
             "resolve_spec" => SpecProjection.Resolution(await _specs.ResolveAsync(

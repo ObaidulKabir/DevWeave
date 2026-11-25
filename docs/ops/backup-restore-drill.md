@@ -19,6 +19,12 @@ scratch compose stack (not a live customer tenant) before promoting production c
 | Verification | `GET /health/ready` 200; `POST /auth/register` 200 |
 | Evidence | This file; `docs/mvp-evidence-register.md` OPS-004 |
 
+## Point-in-time restore
+
+`scripts/ops/pitr-restore-drill.ps1` prints the scratch procedure and exits without restoring anything.
+WAL archiving is not enabled. Do not record a point-in-time RPO until an operator runs that procedure
+against a scratch stack and writes the measured times here.
+
 ## Production note
 
 A production-timed drill must re-record RTO/RPO with the live hostnames and retention

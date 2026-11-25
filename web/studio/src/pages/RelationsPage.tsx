@@ -33,6 +33,13 @@ export function RelationsPage() {
         </Link>
       </section>
       <AgentPushCallout pendingPlanImports={0} channelMessageCount={postedMessages} />
+      <Panel title="Endpoint rules" subtitle="Invalid endpoints are refused. Legacy plan.* and design.* names remain accepted during migration.">
+        <ul className="space-y-2 px-5 py-4 text-sm text-[var(--muted)]">
+          <li><span className="font-mono text-[var(--ink)]">satisfies</span> — architecture or specification to a requirement.</li>
+          <li><span className="font-mono text-[var(--ink)]">implements</span> — component, interface, or delivery record to a requirement or specification.</li>
+          <li><span className="font-mono text-[var(--ink)]">validates</span> — a test, lesson, or feedback record to a requirement.</li>
+        </ul>
+      </Panel>
       <Panel title="Relationship explorer" subtitle="Read each row from source to target; a revoked link is no longer active.">
         {relationships.length === 0 ? (
           <EmptyState

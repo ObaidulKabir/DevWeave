@@ -17,7 +17,11 @@ public sealed class OutboxMessage
     public string CorrelationId { get; private set; } = string.Empty;
     public PrincipalId ActorId { get; private set; } = default!;
     public DateTimeOffset OccurredAt { get; private set; }
+    public DateTimeOffset AvailableAt { get; private set; }
+    public int AttemptCount { get; private set; }
     public DateTimeOffset? ProcessedAt { get; private set; }
+    public DateTimeOffset? PoisonedAt { get; private set; }
+    public string? LastError { get; private set; }
 
     private OutboxMessage() { }
 
@@ -39,12 +43,38 @@ public sealed class OutboxMessage
             SchemaVersion = schemaVersion,
             PayloadJson = payloadJson,
             CorrelationId = correlationId,
-            OccurredAt = DateTimeOffset.UtcNow
+            OccurredAt = DateTimeOffset.UtcNow,
+            AvailableAt = DateTimeOffset.UtcNow,
         };
     }
 
     public void MarkProcessed()
     {
         ProcessedAt = DateTimeOffset.UtcNow;
+        LastError = null;
+    }
+
+    /// <summary>
+    /// Records a failed delivery. Attempts below <paramref name="maxAttempts"/> become due again
+    /// after exponential backoff. The last failure is poison and is no longer claimed.
+    /// </summary>
+    public void RecordFailure(string error, DateTimeOffset now, int maxAttempts)
+    {
+        if (ProcessedAt is not null)
+            throw new InvalidOperationException("A processed outbox message cannot fail again.");
+        if (maxAttempts < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts));
+
+        AttemptCount++;
+        var text = string.IsNullOrWhiteSpace(error) ? "Delivery failed." : error.Trim();
+        LastError = text.Length <= 500 ? text : text[..500];
+        if (AttemptCount >= maxAttempts)
+        {
+            PoisonedAt = now;
+            return;
+        }
+
+        var delaySeconds = Math.Pow(2, AttemptCount);
+        AvailableAt = now.AddSeconds(delaySeconds);
     }
 }

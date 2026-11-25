@@ -1,4 +1,5 @@
 using DevWeave.Domain.Activities;
+using DevWeave.Domain.Archives;
 using DevWeave.Domain.Audit;
 using DevWeave.Domain.Agents;
 using DevWeave.Domain.Coordination;
@@ -87,6 +88,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<Integration> Integrations => Set<Integration>();
     public DbSet<InboundEvent> InboundEvents => Set<InboundEvent>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<ArchiveJob> ArchiveJobs => Set<ArchiveJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

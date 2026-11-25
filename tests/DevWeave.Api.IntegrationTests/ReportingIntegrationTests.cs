@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DevWeave.Contracts.Activities.V1;
+using DevWeave.Contracts.Evidence.V1;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Knowledge.V1;
@@ -9,10 +11,16 @@ using DevWeave.Contracts.Projects.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Relations.V1;
 using DevWeave.Contracts.Schema.V1;
+using DevWeave.Domain.Activities;
+using DevWeave.Domain.Agents;
+using DevWeave.Domain.Evidence;
 using DevWeave.Domain.Identity;
-using DevWeave.Domain.Schema;
 using DevWeave.Domain.Knowledge;
+using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
+using DevWeave.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.IntegrationTests;
@@ -64,6 +72,20 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         var estimate = Assert.Single(metrics, m => m.Key == "work.completion_estimate");
         Assert.True(estimate.IsEstimate);
         Assert.Equal("1.0", estimate.DefinitionVersion);
+        foreach (var key in new[]
+        {
+            "closedloop.requirement_verification_coverage",
+            "closedloop.traceability_coverage",
+            "closedloop.evidence_backed_completion",
+            "closedloop.completeness",
+            "closedloop.freshness",
+            "closedloop.actionability",
+        })
+        {
+            var metric = Assert.Single(metrics, candidate => candidate.Key == key);
+            Assert.Equal("closed-loop.1.0", metric.DefinitionVersion);
+            Assert.False(metric.IsEstimate);
+        }
 
         // 4. Generate Report (REP-002)
         var reportDraft = new ReportDraft("Quarterly Review");
@@ -132,6 +154,164 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
             new ReportDraft("Unauthorized report"),
             JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, reportAttempt.StatusCode);
+    }
+
+    [Fact]
+    public async Task Closed_loop_metrics_follow_the_authorized_view()
+    {
+        var tenant = await CreateTenantAsync("Closed Loop Corp");
+        var owner = await CreateOwnerAsync(tenant.Id, "owner@closed-loop.test");
+        var member = await CreatePrincipalAsync(tenant.Id, "member@closed-loop.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "loop", "Loop", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "closed-loop", profile.Id, owner.Id);
+        await ActivateTenantMembershipAsync(tenant.Id, member.Id, MembershipRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, member.Id, ProjectRole.Member);
+
+        var decision = await SeedTypedKnowledgeAsync(
+            tenant.Id, project.Id, "ADR-1", "Checkout decision", "architecture.decision", owner.Id, Classification.Internal);
+        var visible = await SeedTypedKnowledgeAsync(
+            tenant.Id, project.Id, "FR-1", "Checkout", "requirements.functional", owner.Id, Classification.Internal);
+        var hidden = await SeedTypedKnowledgeAsync(
+            tenant.Id, project.Id, "FR-2", "Restricted billing", "requirements.functional", owner.Id, Classification.Restricted);
+        const string requirement = """{"description":"Checkout","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay"}]}""";
+        await AddRevisionAsync(tenant.Id, decision.Id, owner.Id, 0, """{"context":"Checkout","decision":"Use the ledger"}""");
+        var visibleRevision = await AddRevisionAsync(tenant.Id, visible.Id, owner.Id, 0, requirement);
+        var hiddenRevision = await AddRevisionAsync(
+            tenant.Id, hidden.Id, owner.Id, 0, requirement.Replace("Checkout", "Billing", StringComparison.Ordinal), DateTimeOffset.UtcNow.AddDays(-1));
+        await ApproveAsync(tenant.Id, visible.Id, visibleRevision.Id, owner.Id);
+        await ApproveAsync(tenant.Id, hidden.Id, hiddenRevision.Id, owner.Id);
+        await CreateRelationshipAsync(tenant.Id, project.Id, decision.Id, visible.Id, owner.Id, "satisfies");
+
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using var memberClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, member.Id);
+        var ownerMetrics = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        var memberMetrics = await GetMetricsAsync(memberClient, tenant.Id, project.Id);
+
+        Assert.Equal("closed-loop.1.0", AssertMetric(ownerMetrics, "closedloop.traceability_coverage", 0.5m).DefinitionVersion);
+        Assert.Contains("Numerator 1, denominator 2", Population(ownerMetrics, "closedloop.traceability_coverage"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 1, denominator 1", Population(memberMetrics, "closedloop.traceability_coverage"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 2, denominator 2", Population(ownerMetrics, "closedloop.completeness"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 1, denominator 1", Population(memberMetrics, "closedloop.completeness"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 2, denominator 3", Population(ownerMetrics, "closedloop.freshness"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 2, denominator 2", Population(memberMetrics, "closedloop.freshness"), StringComparison.Ordinal);
+        Assert.DoesNotContain("FR-2", Population(memberMetrics, "closedloop.completeness"), StringComparison.Ordinal);
+        Assert.DoesNotContain("denominator 2", Population(memberMetrics, "closedloop.completeness"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Closed_loop_values_follow_evidence_work_and_provenance()
+    {
+        var tenant = await CreateTenantAsync("Closed Loop Values");
+        var owner = await CreateOwnerAsync(tenant.Id, "owner@closed-loop-values.test");
+        var admin = await CreatePrincipalAsync(tenant.Id, "admin@closed-loop-values.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "values", "Values", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "closed-loop-values", profile.Id, owner.Id);
+        await ActivateTenantMembershipAsync(tenant.Id, admin.Id, MembershipRole.Member);
+        await GrantProjectMembershipAsync(tenant.Id, project.Id, admin.Id, ProjectRole.Admin);
+        using var ownerClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using var adminClient = _factory.CreateAuthenticatedHumanClient(tenant.Id, admin.Id);
+
+        var requirement = await SeedTypedKnowledgeAsync(
+            tenant.Id, project.Id, "FR-1", "Checkout", "requirements.functional", owner.Id, Classification.Internal);
+        const string currentContent = """{"description":"Checkout","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay"}]}""";
+        var revision = await AddRevisionAsync(tenant.Id, requirement.Id, owner.Id, 0, currentContent);
+        await ApproveAsync(tenant.Id, requirement.Id, revision.Id, owner.Id);
+
+        var claim = await PostCreatedAsync<ActivityResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/projects/{project.Id}/activities",
+            new RecordActivityRequest(
+                ActivityType.Claim, owner.Id, "Record the checkout claim", ActivityStatus.Completed,
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null,
+                Array.Empty<ActivityInputRequest>(), Array.Empty<ActivityOutputRequest>()));
+        var evidence = await PostCreatedAsync<EvidenceResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/claims/{claim.Id}/evidence",
+            new RecordEvidenceRequest("test-run", "sha256:abc", null, requirement.Id, revision.Id, "Checkout"));
+        await SendAsync(ownerClient, HttpMethod.Post, $"/tenants/{tenant.Id}/evidence/{evidence.Id}/review",
+            new ReviewEvidenceRequest(EvidenceReviewState.Accepted, owner.Id));
+
+        var covered = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        AssertMetric(covered, "closedloop.reliability", 1m);
+        AssertMetric(covered, "closedloop.requirement_verification_coverage", 1m);
+
+        await AddRevisionAsync(tenant.Id, requirement.Id, owner.Id, 1,
+            """{"description":"Checkout revised","acceptanceCriteria":[{"id":"AC-1","statement":"The buyer can pay"}]}""");
+        var stale = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        Assert.Contains("Numerator 0, denominator 1", Population(stale, "closedloop.reliability"), StringComparison.Ordinal);
+        Assert.Equal(0m, AssertMetric(stale, "closedloop.reliability", 0m).Value);
+
+        var open = await PostCreatedAsync<WorkItemResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/projects/{project.Id}/work-items",
+            new CreateWorkItemRequest("W-1", "Ship checkout", "Deliver checkout", null, null, null, WorkPriority.Normal, Array.Empty<Guid>()));
+        var blocked = await PostCreatedAsync<WorkItemResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/projects/{project.Id}/work-items",
+            new CreateWorkItemRequest("W-2", "Ship billing", "Deliver billing", null, null, null, WorkPriority.Normal, Array.Empty<Guid>()));
+        await SendAsync(ownerClient, HttpMethod.Patch, $"/tenants/{tenant.Id}/projects/{project.Id}/work-items/{blocked.Id}/planned-state",
+            new UpdatePlannedStateRequest(PlannedWorkState.Ready, "ready", blocked.Version));
+        await SendAsync(ownerClient, HttpMethod.Patch, $"/tenants/{tenant.Id}/projects/{project.Id}/work-items/{blocked.Id}/planned-state",
+            new UpdatePlannedStateRequest(PlannedWorkState.InProgress, "start", blocked.Version + 1));
+        await SendAsync(ownerClient, HttpMethod.Patch, $"/tenants/{tenant.Id}/projects/{project.Id}/work-items/{blocked.Id}/planned-state",
+            new UpdatePlannedStateRequest(PlannedWorkState.Blocked, "waiting", blocked.Version + 2));
+        await SendAsync(ownerClient, HttpMethod.Post, $"/tenants/{tenant.Id}/projects/{project.Id}/work-items/{open.Id}/report",
+            new ReportWorkRequest(ReportedExecutionState.Completed, "reported done", open.Version));
+
+        var reported = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        Assert.Contains("Numerator 0, denominator 1", Population(reported, "closedloop.evidence_backed_completion"), StringComparison.Ordinal);
+        Assert.Contains("Numerator 1, denominator 2", Population(reported, "closedloop.actionability"), StringComparison.Ordinal);
+
+        await SendAsync(adminClient, HttpMethod.Post, $"/tenants/{tenant.Id}/projects/{project.Id}/work-items/{open.Id}/verify",
+            new ReviewWorkRequest("independently verified", open.Version + 1));
+        var verified = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        Assert.Contains("Numerator 1, denominator 1", Population(verified, "closedloop.evidence_backed_completion"), StringComparison.Ordinal);
+
+        var bare = await PostCreatedAsync<ActivityResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/projects/{project.Id}/activities",
+            new RecordActivityRequest(
+                ActivityType.Generated, owner.Id, "Draft without a model record", ActivityStatus.Completed,
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "gen-bare", null, null,
+                Array.Empty<ActivityInputRequest>(), Array.Empty<ActivityOutputRequest>()));
+        var recorded = await PostCreatedAsync<ActivityResponse>(ownerClient,
+            $"/tenants/{tenant.Id}/projects/{project.Id}/activities",
+            new RecordActivityRequest(
+                ActivityType.Generated, owner.Id, "Draft with a model record", ActivityStatus.Completed,
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "gen-recorded", null, null,
+                Array.Empty<ActivityInputRequest>(), Array.Empty<ActivityOutputRequest>()));
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            db.AgentExecutionMetadata.Add(AgentExecutionMetadata.Create(
+                new ActivityId(recorded.Id), new TenantId(tenant.Id), "cursor", "grok"));
+            await db.SaveChangesAsync();
+        }
+
+        var provenance = await GetMetricsAsync(ownerClient, tenant.Id, project.Id);
+        Assert.Contains("Numerator 1, denominator 2", Population(provenance, "closedloop.provenance_quality"), StringComparison.Ordinal);
+        Assert.NotEqual(bare.Id, recorded.Id);
+    }
+
+    private async Task<T> PostCreatedAsync<T>(HttpClient client, string url, object body)
+    {
+        using var response = await client.PostAsJsonAsync(url, body, JsonOptions);
+        await EnsureSuccess(response);
+        return (await response.Content.ReadFromJsonAsync<T>(JsonOptions))!;
+    }
+
+    private async Task SendAsync(HttpClient client, HttpMethod method, string url, object body)
+    {
+        using var request = new HttpRequestMessage(method, url)
+        {
+            Content = JsonContent.Create(body, options: JsonOptions),
+        };
+        using var response = await client.SendAsync(request);
+        await EnsureSuccess(response);
+    }
+
+    private static async Task EnsureSuccess(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        var body = await response.Content.ReadAsStringAsync();
+        throw new HttpRequestException($"{(int)response.StatusCode} {response.StatusCode}: {body}");
     }
 
     private async Task<TenantResponse> CreateTenantAsync(string name)
@@ -241,15 +421,47 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         return (await response.Content.ReadFromJsonAsync<KnowledgeItemResponse>(JsonOptions))!;
     }
 
-    private async Task<KnowledgeRevisionResponse> AddRevisionAsync(Guid tenantId, Guid itemId, Guid actor, int expected, string content)
+    private async Task<KnowledgeItemResponse> SeedTypedKnowledgeAsync(
+        Guid tenantId,
+        Guid projectId,
+        string key,
+        string title,
+        string typeId,
+        Guid createdBy,
+        Classification classification)
+    {
+        var client = _factory.CreateAuthenticatedHumanClient(tenantId, createdBy);
+        var draft = new CreateKnowledgeItemRequest(
+            key, title, classification, RepresentationKind.StructuredData, typeId, "1.0", createdBy);
+        using var response = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/knowledge", draft, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<KnowledgeItemResponse>(JsonOptions))!;
+    }
+
+    private Task<KnowledgeRevisionResponse> AddRevisionAsync(Guid tenantId, Guid itemId, Guid actor, int expected, string content) =>
+        AddRevisionAsync(tenantId, itemId, actor, expected, content, null);
+
+    private async Task<KnowledgeRevisionResponse> AddRevisionAsync(
+        Guid tenantId, Guid itemId, Guid actor, int expected, string content, DateTimeOffset? validTo)
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actor);
         using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/knowledge/{itemId}/revisions",
-            new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null),
+            new AddRevisionRequest(expected, "1.0", content, actor, "Baseline", null, null, null, validTo),
             JsonOptions);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<KnowledgeRevisionResponse>(JsonOptions))!;
+    }
+
+    private async Task ApproveAsync(Guid tenantId, Guid itemId, Guid revisionId, Guid actorId)
+    {
+        using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
+        using var response = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/knowledge/{itemId}/approve",
+            new ReviewRevisionRequest(revisionId, "Approved for the metric"),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
     }
 
     private async Task CreateRelationshipAsync(
@@ -257,12 +469,13 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         Guid projectId,
         Guid sourceItemId,
         Guid targetItemId,
-        Guid actorId)
+        Guid actorId,
+        string relationTypeCode = "references")
     {
         using var client = _factory.CreateAuthenticatedHumanClient(tenantId, actorId);
         using var response = await client.PostAsJsonAsync(
             $"/tenants/{tenantId}/projects/{projectId}/relationships",
-            new CreateRelationshipRequest(sourceItemId, targetItemId, "references", actorId),
+            new CreateRelationshipRequest(sourceItemId, targetItemId, relationTypeCode, actorId, "Covers the target"),
             JsonOptions);
         response.EnsureSuccessStatusCode();
     }
@@ -276,6 +489,9 @@ public sealed class ReportingIntegrationTests : IClassFixture<IdentityTestFactor
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<List<MetricView>>(JsonOptions))!;
     }
+
+    private static string Population(IEnumerable<MetricView> metrics, string key) =>
+        Assert.Single(metrics, candidate => candidate.Key == key).IncludedPopulation;
 
     private static MetricView AssertMetric(
         IEnumerable<MetricView> metrics,

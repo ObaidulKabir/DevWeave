@@ -207,7 +207,23 @@ app.MapGet("/health/ready", async (DevWeaveDbContext db, CancellationToken ct) =
         if (!await db.Database.CanConnectAsync(ct))
             return Results.Json(new { status = "not_ready", reason = "database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
 
-        return Results.Ok(new { status = "ready" });
+        var pending = await db.Database.GetPendingMigrationsAsync(ct);
+        if (pending.Any())
+            return Results.Json(new { status = "not_ready", reason = "migrations" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var lagCutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var outboxLag = await db.OutboxMessages.CountAsync(
+            message => message.ProcessedAt == null && message.PoisonedAt == null && message.OccurredAt <= lagCutoff,
+            ct);
+        var poisoned = await db.OutboxMessages.CountAsync(
+            message => message.PoisonedAt != null && message.ProcessedAt == null,
+            ct);
+        if (outboxLag > 100)
+            return Results.Json(
+                new { status = "not_ready", reason = "outbox_lag", outboxLag, poisoned },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        return Results.Ok(new { status = "ready", outboxLag, poisoned });
     }
     catch (Exception)
     {

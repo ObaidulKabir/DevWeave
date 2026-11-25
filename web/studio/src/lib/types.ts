@@ -180,6 +180,12 @@ export interface Milestone {
   version?: number;
 }
 
+export interface ActivityPin {
+  itemId: string;
+  revisionId: string;
+  position: number;
+}
+
 export interface Activity {
   id: string;
   type: string;
@@ -188,6 +194,25 @@ export interface Activity {
   startedAt: string;
   actor?: string;
   reason?: string | null;
+  inputs?: ActivityPin[];
+  outputs?: ActivityPin[];
+}
+
+export interface AgentExecutionProvenance {
+  provider: string;
+  model: string;
+  modelVersion?: string | null;
+  configurationFingerprint?: string | null;
+  toolFingerprint?: string | null;
+  externalRunReference?: string | null;
+}
+
+export interface ActivityProvenance {
+  activityId: string;
+  activityType: string;
+  used: { itemId: string; revisionId: string }[];
+  generated: { itemId: string; revisionId: string }[];
+  agentExecution?: AgentExecutionProvenance | null;
 }
 
 export interface EvidenceItem {

@@ -34,6 +34,10 @@ export function ReportsPage() {
         }
       >
         <div className="space-y-4 p-5">
+          <p className="text-xs leading-relaxed text-[var(--muted)]">
+            Closed-loop coverage, traceability, evidence-backed completion, and the quality dimensions are separate ratios.
+            A reported-complete work item does not raise evidence-backed completion until it is independently verified.
+          </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {metrics.length === 0 ? (
               <p className="text-sm text-[var(--muted)]">No metrics available yet.</p>

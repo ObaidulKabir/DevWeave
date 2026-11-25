@@ -26,6 +26,7 @@ public sealed class PlanImportService(
     IAgentGrantRepository grants,
     IAgentCredentialRepository credentials,
     ISchemaDefinitionRepository schemas,
+    IPayloadValidator payloads,
     IRelationTypeRepository relationTypes,
     IContentInspector inspector,
     CreateKnowledgeItem createItem,
@@ -344,6 +345,9 @@ public sealed class PlanImportService(
             var schema = await schemas.FindAsync(draft.TypeId, draft.SchemaVersion, ct);
             if (schema is null || !schema.IsActive)
                 throw new NotFoundException($"No active schema '{draft.TypeId}' version '{draft.SchemaVersion}' is registered.");
+            var issues = payloads.Validate(draft.Content, schema.Document);
+            if (issues.Count > 0)
+                throw new PayloadValidationException(issues);
         }
 
         if (payload.Outline is null || payload.Outline.Count == 0)
@@ -384,6 +388,11 @@ public sealed class PlanImportService(
                 ?? throw new NotFoundException($"Relation type '{edge.RelationTypeCode}' is not registered.");
             if (!type.IsActive)
                 throw new ConflictException($"Relation type '{edge.RelationTypeCode}' is not active.");
+            var sourceTypeId = payload.Knowledge.First(item => item.Ref == edge.SourceRef).TypeId;
+            var targetTypeId = payload.Knowledge.First(item => item.Ref == edge.TargetRef).TypeId;
+            if (!type.Accepts(sourceTypeId, targetTypeId))
+                throw new ArgumentException(
+                    $"Relation type '{edge.RelationTypeCode}' does not allow '{sourceTypeId}' to '{targetTypeId}'.");
         }
 
         var milestoneRefs = new HashSet<string>(StringComparer.Ordinal);

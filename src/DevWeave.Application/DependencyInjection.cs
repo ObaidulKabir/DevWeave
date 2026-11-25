@@ -2,6 +2,7 @@ using DevWeave.Application.Activities;
 using DevWeave.Application.Audit;
 using DevWeave.Application.Commercial;
 using DevWeave.Application.Coordination;
+using DevWeave.Application.Delivery;
 using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Archives;
 using DevWeave.Application.Integrations;
@@ -153,6 +154,9 @@ public static class DependencyInjection
         services.AddScoped<IAuditJournal, AuditJournal>();
         services.AddScoped<IPortableArchive, PortableArchive>();
         services.AddScoped<IProjectReporting, ProjectReporting>();
+        services.AddSingleton<ArchiveReaderRegistry>();
+        services.AddScoped<ProjectArchiveService>();
+        services.AddScoped<OutboxDispatcher>();
         services.AddScoped<ResourcePolicyEngine>();
         services.AddScoped<IResourcePolicy>(sp => sp.GetRequiredService<ResourcePolicyEngine>());
         services.AddScoped<IProjectGraphProjection, ProjectGraphProjection>();

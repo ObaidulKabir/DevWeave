@@ -204,4 +204,45 @@ public sealed class OutboxReadinessTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal("migrations", body.GetProperty("reason").GetString());
     }
+
+    [Fact]
+    public async Task INT_004_delivery_records_an_audit_without_copying_the_payload()
+    {
+        using var factory = new IdentityTestFactory();
+        factory.PrepareDatabase();
+        Guid messageId;
+        const string payload = """{"secret":"do-not-copy"}""";
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var tenant = Tenant.Create("Outbox audit");
+            var actor = Principal.Create(tenant.Id, $"actor-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+            db.AddRange(tenant, actor);
+            var message = OutboxMessage.Create(tenant.Id, actor.Id, "ArchiveExported", "1", payload, "audit");
+            db.OutboxMessages.Add(message);
+            await db.SaveChangesAsync();
+            messageId = message.Id;
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dispatcher = new OutboxDispatcher(scope.ServiceProvider.GetRequiredService<IOutboxStore>());
+            var consumer = scope.ServiceProvider.GetRequiredService<OutboxDeliveryConsumer>();
+            var delivered = await dispatcher.DispatchAsync(consumer.ConsumeAsync);
+            Assert.Equal(1, delivered);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var message = await db.OutboxMessages.SingleAsync(row => row.Id == messageId);
+            Assert.NotNull(message.ProcessedAt);
+            var audit = await db.AuditLogs.SingleAsync(row =>
+                row.Action == OutboxDeliveryConsumer.Action && row.ResourceId == messageId.ToString("D"));
+            Assert.Equal(OutboxDeliveryConsumer.ResourceType, audit.ResourceType);
+            Assert.Contains("ArchiveExported", audit.MetadataJson, StringComparison.Ordinal);
+            Assert.DoesNotContain("do-not-copy", audit.MetadataJson, StringComparison.Ordinal);
+        }
+    }
 }

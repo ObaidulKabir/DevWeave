@@ -1,4 +1,5 @@
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Lifecycle;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 
@@ -9,15 +10,21 @@ public sealed class AddProjectReference
     private readonly IProjectRepository _projects;
     private readonly IProjectReferenceRepository _references;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IProjectMembershipRepository? _projectMemberships;
+    private readonly IMembershipRepository? _tenantMemberships;
 
     public AddProjectReference(
         IProjectRepository projects,
         IProjectReferenceRepository references,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IProjectMembershipRepository? projectMemberships = null,
+        IMembershipRepository? tenantMemberships = null)
     {
         _projects = projects;
         _references = references;
         _unitOfWork = unitOfWork;
+        _projectMemberships = projectMemberships;
+        _tenantMemberships = tenantMemberships;
     }
 
     public async Task<ProjectReference> ExecuteAsync(
@@ -38,5 +45,26 @@ public sealed class AddProjectReference
         await _unitOfWork.SaveChangesAsync(ct);
 
         return reference;
+    }
+
+    public async Task<ProjectReference> ExecuteForActorAsync(
+        TenantId tenantId,
+        ProjectId projectId,
+        PrincipalId actorId,
+        bool platformAdmin,
+        ProjectReferenceType type,
+        string externalId,
+        string? url,
+        CancellationToken ct = default)
+    {
+        if (!platformAdmin)
+        {
+            if (_projectMemberships is null)
+                throw new NotFoundException($"Project '{projectId}' was not found within tenant '{tenantId}'.");
+            await ProjectWorkAuthorization.EnsureMemberAsync(
+                _projectMemberships, tenantId, projectId, actorId, reviewerOnly: false, ct, _tenantMemberships);
+        }
+
+        return await ExecuteAsync(tenantId, projectId, type, externalId, url, ct);
     }
 }

@@ -71,8 +71,10 @@ public sealed class CoordinationRepository : ICoordinationRepository
         }
         else
         {
-            existing.UpdateAcknowledged(cursor.LastAcknowledgedSequence);
+            existing.UpdateNotified(cursor.LastNotifiedSequence);
             existing.UpdateRead(cursor.LastReadSequence);
+            existing.UpdateAcknowledged(cursor.LastAcknowledgedSequence);
+            existing.UpdateAccepted(cursor.LastAcceptedSequence);
         }
     }
 

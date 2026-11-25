@@ -157,6 +157,7 @@ public static class DependencyInjection
         services.AddSingleton<ArchiveReaderRegistry>();
         services.AddScoped<ProjectArchiveService>();
         services.AddScoped<OutboxDispatcher>();
+        services.AddScoped<OutboxDeliveryConsumer>();
         services.AddScoped<ResourcePolicyEngine>();
         services.AddScoped<IResourcePolicy>(sp => sp.GetRequiredService<ResourcePolicyEngine>());
         services.AddScoped<IProjectGraphProjection, ProjectGraphProjection>();

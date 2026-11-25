@@ -1,5 +1,4 @@
 using DevWeave.Application.Delivery;
-using DevWeave.Domain.Common;
 
 namespace DevWeave.Workers;
 
@@ -26,7 +25,8 @@ public sealed class OutboxDispatchWorker : BackgroundService
             {
                 using var scope = _scopes.CreateScope();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<OutboxDispatcher>();
-                var delivered = await dispatcher.DispatchAsync(LogDeliveryAsync, stoppingToken);
+                var consumer = scope.ServiceProvider.GetRequiredService<OutboxDeliveryConsumer>();
+                var delivered = await dispatcher.DispatchAsync(consumer.ConsumeAsync, stoppingToken);
                 if (delivered > 0)
                     _logger.LogInformation("Delivered {Count} outbox messages.", delivered);
             }
@@ -41,15 +41,5 @@ public sealed class OutboxDispatchWorker : BackgroundService
 
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
-    }
-
-    private Task LogDeliveryAsync(OutboxMessage message, CancellationToken ct)
-    {
-        _logger.LogInformation(
-            "Outbox {EventType} {MessageId} for tenant {TenantId}.",
-            message.EventType,
-            message.Id,
-            message.TenantId.Value);
-        return Task.CompletedTask;
     }
 }

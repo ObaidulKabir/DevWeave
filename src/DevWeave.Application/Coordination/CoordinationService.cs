@@ -186,12 +186,44 @@ public sealed class CoordinationService :
     public async Task<Page<MessageView>> ReplayAsync(AuthorizedScope scope, Guid channelId, long afterSequence, int limit, CancellationToken ct = default)
     {
         var messages = await _repository.ListMessagesAsync(scope.TenantId, new ChannelId(channelId), afterSequence, limit, ct);
+        if (messages.Count > 0)
+            await AdvanceCursorAsync(scope, channelId, messages[^1].Sequence, cursor => cursor.UpdateRead(messages[^1].Sequence), ct);
         var items = messages.Select(Map).ToList();
         return new Page<MessageView>(items, null);
     }
 
     public async Task AcknowledgeAsync(AuthorizedScope scope, Guid channelId, long processedThroughSequence, CancellationToken ct = default)
     {
+        await RequireMessageSequenceAsync(scope, channelId, processedThroughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, processedThroughSequence, cursor => cursor.UpdateAcknowledged(processedThroughSequence), ct);
+    }
+
+    public async Task NotifyAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateNotified(throughSequence), ct);
+    }
+
+    public async Task AcceptAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateAccepted(throughSequence), ct);
+    }
+
+    public async Task<MessageDeliveryView> DeliveryAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        var cursor = await _repository.GetCursorAsync(scope.TenantId, new ChannelId(channelId), scope.ActorId, ct);
+        var delivery = MessageDelivery.ForSequence(throughSequence, cursor);
+        return new MessageDeliveryView(delivery.Persisted, delivery.Notified, delivery.Read, delivery.Acknowledged, delivery.Accepted);
+    }
+
+    private async Task AdvanceCursorAsync(
+        AuthorizedScope scope, Guid channelId, long sequence, Action<CoordinationCursor> advance, CancellationToken ct)
+    {
+        if (sequence < 1)
+            return;
+
         var cursor = await _repository.GetCursorAsync(scope.TenantId, new ChannelId(channelId), scope.ActorId, ct);
         if (cursor == null)
         {
@@ -199,8 +231,18 @@ public sealed class CoordinationService :
             await _repository.UpsertCursorAsync(cursor, ct);
         }
 
-        cursor.UpdateAcknowledged(processedThroughSequence);
+        advance(cursor);
         await _uow.SaveChangesAsync(ct);
+    }
+
+    private async Task RequireMessageSequenceAsync(AuthorizedScope scope, Guid channelId, long sequence, CancellationToken ct)
+    {
+        if (sequence < 1)
+            throw new ArgumentOutOfRangeException(nameof(sequence), "A delivery sequence starts at 1.");
+
+        var messages = await _repository.ListMessagesAsync(scope.TenantId, new ChannelId(channelId), sequence - 1, 1, ct);
+        if (messages.Count == 0 || messages[0].Sequence != sequence)
+            throw new NotFoundException($"Message sequence {sequence} was not found on channel '{channelId}'.");
     }
 
     // --- ICampaignCoordinator ---

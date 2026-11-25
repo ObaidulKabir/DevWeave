@@ -9,6 +9,9 @@ using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
+using DevWeave.Domain.Schema;
+using DevWeave.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.IntegrationTests;
@@ -145,6 +148,94 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
         Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
     }
 
+    [Fact]
+    public async Task BUS_AC_01_two_client_projects_keep_knowledge_repositories_and_reports_separate()
+    {
+        var tenant = await CreateTenantAsync("Agency");
+        var owner = await CreatePrincipalAsync(tenant.Id, $"lead-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var clientA = await CreatePrincipalAsync(tenant.Id, $"a-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var clientB = await CreatePrincipalAsync(tenant.Id, $"b-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"plan-{Guid.NewGuid():N}", "Plan", "1");
+
+        using (var inviteA = await _client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/members",
+            new InviteMemberRequest(clientA.Id, MembershipRole.Member),
+            JsonOptions))
+            inviteA.EnsureSuccessStatusCode();
+        using (var inviteB = await _client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/members",
+            new InviteMemberRequest(clientB.Id, MembershipRole.Member),
+            JsonOptions))
+            inviteB.EnsureSuccessStatusCode();
+
+        var shop = await CreateProjectAsync(tenant.Id, $"shop-{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        var billing = await CreateProjectAsync(tenant.Id, $"bill-{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        await GrantMembershipAsync(tenant.Id, shop.Id, clientA.Id, ProjectRole.Viewer);
+        await GrantMembershipAsync(tenant.Id, billing.Id, clientB.Id, ProjectRole.Viewer);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            if (!await db.SchemaDefinitions.AnyAsync(schema => schema.Namespace == "doc.note" && schema.Version == "1.0"))
+            {
+                var schema = SchemaDefinition.Create("doc.note", "1.0", "platform", "Note", "{\"type\":\"object\"}");
+                schema.Publish();
+                db.Add(schema);
+                await db.SaveChangesAsync();
+            }
+        }
+
+        using var ownerHttp = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        await AddReferenceAsAsync(ownerHttp, tenant.Id, shop.Id, "acme/shop");
+        await AddReferenceAsAsync(ownerHttp, tenant.Id, billing.Id, "acme/billing");
+        using (var knowledge = await ownerHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{shop.Id}/knowledge",
+            new DevWeave.Contracts.Knowledge.V1.CreateKnowledgeItemRequest(
+                "shop-note", "Shop checkout", DevWeave.Domain.Knowledge.Classification.Internal,
+                DevWeave.Domain.Knowledge.RepresentationKind.Text, "doc.note", "1.0", owner.Id),
+            JsonOptions))
+            knowledge.EnsureSuccessStatusCode();
+        using (var knowledge = await ownerHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{billing.Id}/knowledge",
+            new DevWeave.Contracts.Knowledge.V1.CreateKnowledgeItemRequest(
+                "bill-note", "Billing ledger", DevWeave.Domain.Knowledge.Classification.Internal,
+                DevWeave.Domain.Knowledge.RepresentationKind.Text, "doc.note", "1.0", owner.Id),
+            JsonOptions))
+            knowledge.EnsureSuccessStatusCode();
+
+        using var httpA = _factory.CreateAuthenticatedHumanClient(tenant.Id, clientA.Id);
+        using var httpB = _factory.CreateAuthenticatedHumanClient(tenant.Id, clientB.Id);
+
+        var visibleToA = await ListProjectsAsAsync(httpA, tenant.Id);
+        Assert.Single(visibleToA);
+        Assert.Equal(shop.Id, visibleToA[0].Id);
+        var visibleToB = await ListProjectsAsAsync(httpB, tenant.Id);
+        Assert.Single(visibleToB);
+        Assert.Equal(billing.Id, visibleToB[0].Id);
+        var visibleToLead = await ListProjectsAsAsync(ownerHttp, tenant.Id);
+        Assert.Contains(visibleToLead, project => project.Id == shop.Id);
+        Assert.Contains(visibleToLead, project => project.Id == billing.Id);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await httpA.GetAsync($"/tenants/{tenant.Id}/projects/{billing.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await httpB.GetAsync($"/tenants/{tenant.Id}/projects/{shop.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await httpA.GetAsync($"/tenants/{tenant.Id}/projects/{billing.Id}/metrics")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await httpB.GetAsync($"/tenants/{tenant.Id}/projects/{shop.Id}/metrics")).StatusCode);
+
+        var shopKnowledge = await httpA.GetStringAsync($"/tenants/{tenant.Id}/projects/{shop.Id}/knowledge");
+        var billingKnowledgeForA = await httpA.GetStringAsync($"/tenants/{tenant.Id}/projects/{billing.Id}/knowledge");
+        Assert.Contains("Shop checkout", shopKnowledge, StringComparison.Ordinal);
+        Assert.DoesNotContain("Billing ledger", billingKnowledgeForA, StringComparison.Ordinal);
+        var billingKnowledge = await httpB.GetStringAsync($"/tenants/{tenant.Id}/projects/{billing.Id}/knowledge");
+        Assert.Contains("Billing ledger", billingKnowledge, StringComparison.Ordinal);
+        Assert.DoesNotContain("Shop checkout", billingKnowledge, StringComparison.Ordinal);
+
+        using var crossedReference = await httpA.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{billing.Id}/references",
+            new AddProjectReferenceRequest(ProjectReferenceType.Repository, "acme/stolen", null),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.NotFound, crossedReference.StatusCode);
+    }
+
     private async Task<TenantResponse> CreateTenantAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync("/tenants", new CreateTenantRequest(name), JsonOptions);
@@ -207,6 +298,22 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
 
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<ProjectResponse>(JsonOptions);
+    }
+
+    private static async Task AddReferenceAsAsync(HttpClient client, Guid tenantId, Guid projectId, string externalId)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/references",
+            new AddProjectReferenceRequest(ProjectReferenceType.Repository, externalId, null),
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<List<ProjectResponse>> ListProjectsAsAsync(HttpClient client, Guid tenantId)
+    {
+        using var response = await client.GetAsync($"/tenants/{tenantId}/projects");
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<List<ProjectResponse>>(JsonOptions))!;
     }
 
     private async Task<ProjectReferenceResponse> AddReferenceAsync(Guid tenantId, Guid projectId, ProjectReferenceType type, string externalId, string? url)

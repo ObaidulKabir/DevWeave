@@ -117,6 +117,14 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
         Assert.Equal(1, message!.Sequence);
         Assert.Equal("TaskStarted", message.MessageType);
 
+        var deliveryUrl = $"/tenants/{tenant.Id}/projects/{project.Id}/coordination/channels/{channelId}/delivery?through=1";
+        var persisted = await client.GetFromJsonAsync<MessageDeliveryView>(deliveryUrl, JsonOptions);
+        Assert.True(persisted!.Persisted);
+        Assert.False(persisted.Notified);
+        Assert.False(persisted.Read);
+        Assert.False(persisted.Acknowledged);
+        Assert.False(persisted.Accepted);
+
         // 7. Verify Replay
         using (var scope = _factory.Services.CreateScope())
         {
@@ -128,6 +136,50 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
             Assert.Single(replay.Items);
             Assert.Equal("TaskStarted", replay.Items[0].MessageType);
         }
+
+        var read = await client.GetFromJsonAsync<MessageDeliveryView>(deliveryUrl, JsonOptions);
+        Assert.True(read!.Read);
+        Assert.False(read.Acknowledged);
+        Assert.False(read.Accepted);
+
+        var mark = new CursorDraft(channelId, 1);
+        using (var notify = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/coordination/channels/{channelId}/notify", mark, JsonOptions))
+            notify.EnsureSuccessStatusCode();
+        var notified = await client.GetFromJsonAsync<MessageDeliveryView>(deliveryUrl, JsonOptions);
+        Assert.True(notified!.Notified);
+        Assert.False(notified.Accepted);
+
+        using (var ack = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/coordination/channels/{channelId}/ack", mark, JsonOptions))
+            ack.EnsureSuccessStatusCode();
+        var acknowledged = await client.GetFromJsonAsync<MessageDeliveryView>(deliveryUrl, JsonOptions);
+        Assert.True(acknowledged!.Acknowledged);
+        Assert.False(acknowledged.Accepted);
+
+        using (var accept = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/coordination/channels/{channelId}/accept", mark, JsonOptions))
+            accept.EnsureSuccessStatusCode();
+        var accepted = await client.GetFromJsonAsync<MessageDeliveryView>(deliveryUrl, JsonOptions);
+        Assert.True(accepted!.Accepted);
+        Assert.True(accepted.Persisted);
+
+        var deliveryCall = new JsonRpcRequest("2.0", 4, McpMethods.CallTool, new
+        {
+            name = "get_message_delivery",
+            arguments = new { channelId, through = 1 },
+        });
+        var deliveryResponse = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc", deliveryCall, JsonOptions);
+        deliveryResponse.EnsureSuccessStatusCode();
+        var deliveryResult = (await deliveryResponse.Content.ReadFromJsonAsync<JsonRpcResponse>(JsonOptions))!;
+        Assert.Null(deliveryResult.Error);
+        var toolDelivery = JsonSerializer.Deserialize<MessageDeliveryView>(deliveryResult.Result!.ToString()!, JsonOptions);
+        Assert.True(toolDelivery!.Persisted);
+        Assert.True(toolDelivery.Notified);
+        Assert.True(toolDelivery.Read);
+        Assert.True(toolDelivery.Acknowledged);
+        Assert.True(toolDelivery.Accepted);
     }
 
     private async Task<TenantResponse> CreateTenantAsync(string name)

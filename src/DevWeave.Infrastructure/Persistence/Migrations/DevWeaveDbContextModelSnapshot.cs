@@ -939,7 +939,13 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PrincipalId")
                         .HasColumnType("uuid");
 
+                    b.Property<long>("LastAcceptedSequence")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("LastAcknowledgedSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LastNotifiedSequence")
                         .HasColumnType("bigint");
 
                     b.Property<long>("LastReadSequence")

@@ -26,8 +26,10 @@ public sealed class CoordinationCursorConfiguration : IEntityTypeConfiguration<C
         builder.Property(c => c.PrincipalId)
             .HasConversion(id => id.Value, value => new PrincipalId(value));
 
+        builder.Property(c => c.LastNotifiedSequence);
         builder.Property(c => c.LastReadSequence);
         builder.Property(c => c.LastAcknowledgedSequence);
+        builder.Property(c => c.LastAcceptedSequence);
         builder.Property(c => c.UpdatedAt);
     }
 }

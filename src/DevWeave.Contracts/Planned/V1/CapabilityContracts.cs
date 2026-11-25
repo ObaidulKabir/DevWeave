@@ -91,6 +91,8 @@ public sealed record CursorDraft(Guid ChannelId, long ProcessedThroughSequence);
 public sealed record MessageDraft(Guid ChannelId, string MessageType, string SchemaVersion,
     string AllowedMetadataJson, IReadOnlyList<ResourceRef> References, Guid? ParentMessageId,
     string IdempotencyKey);
+public sealed record MessageDeliveryView(
+    bool Persisted, bool Notified, bool Read, bool Acknowledged, bool Accepted);
 public sealed record MessageView(Guid Id, Guid ChannelId, long Sequence, Guid SenderId,
     Guid RuntimeId, string MessageType, string SchemaVersion, string AllowedMetadataJson,
     DateTimeOffset CreatedAt);

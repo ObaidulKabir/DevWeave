@@ -96,7 +96,7 @@ Rule: no M/MVP row may be marked pass without a named test or approved waiver wi
 | INT-001 | M | pass | The system shall provide an | IntegrationIntegrationTests.INT_001_004_integration_lifecycle_and_event_ingress_works_end_to_end | platform | — |
 | INT-002 | M | pass | The system shall accept inbound | IntegrationIntegrationTests.INT_001_004_integration_lifecycle_and_event_ingress_works_end_to_end | platform | — |
 | INT-003 | S | pass | The system shall deduplicate | IntegrationIntegrationTests.INT_001_004 duplicate provider event id returns Conflict | platform | — |
-| INT-004 | S | pass | The system shall use durable | OutboxReadinessTests.A_due_message_is_delivered_once_and_backoff_hides_it_until_AvailableAt. OutboxDispatchWorker still logs each message | platform | — |
+| INT-004 | S | pass | The system shall use durable | OutboxReadinessTests.A_due_message_is_delivered_once_and_backoff_hides_it_until_AvailableAt; OutboxReadinessTests.INT_004_delivery_records_an_audit_without_copying_the_payload | platform | — |
 | INT-007 | M | pass | The system shall synchronize only | IntegrationIntegrationTests metadata allowlist + ingress quarantine | platform | — |
 | INT-008 | M | pass | The system shall support | Integration disconnect/rotation/revocation suites | platform | — |
 | EXP-001 | M | pass | The system shall export knowledge | ArchiveIntegrationTests DATA/EXP manifest + export lifecycle | platform | — |

@@ -262,9 +262,18 @@ public sealed class McpServer
         NamedTool("list_messages", "Alias of read_messages_after_cursor: list durable messages on a channel after a sequence cursor",
             new { channelId = UuidProp(), afterSequence = new { type = "integer" }, limit = new { type = "integer" } },
             new[] { "channelId" }),
-        NamedTool("acknowledge_messages", "Acknowledge processed channel sequence for reconnect recovery",
+        NamedTool("acknowledge_messages", "Record acknowledgement through a sequence. Does not record read or acceptance.",
             new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
             new[] { "channelId", "processedThroughSequence" }),
+        NamedTool("notify_messages", "Record that a notification was dispatched through a sequence. Does not record read, acknowledgement, or acceptance.",
+            new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
+            new[] { "channelId", "processedThroughSequence" }),
+        NamedTool("accept_messages", "Record recipient acceptance through a sequence. Does not record notification, read, or acknowledgement.",
+            new { channelId = UuidProp(), processedThroughSequence = new { type = "integer" } },
+            new[] { "channelId", "processedThroughSequence" }),
+        NamedTool("get_message_delivery", "Read persistence, notification, read, acknowledgement, and acceptance for one sequence. A saved message stays unread and unaccepted until those cursors move.",
+            new { channelId = UuidProp(), through = new { type = "integer" } },
+            new[] { "channelId", "through" }),
         NamedTool("open_channel", "Open a project coordination channel",
             new { channelType = StringProp(), campaignId = UuidProp(), workPackageId = UuidProp() },
             new[] { "channelType" }),
@@ -535,6 +544,9 @@ public sealed class McpServer
             "send_project_message" or "send_message" => await SendFromArgsAsync(scope, runtimeId, args, ct),
             "read_messages_after_cursor" or "list_messages" => await ReplayFromArgsAsync(scope, args, ct),
             "acknowledge_messages" => await AckFromArgsAsync(scope, args, ct),
+            "notify_messages" => await NotifyFromArgsAsync(scope, args, ct),
+            "accept_messages" => await AcceptFromArgsAsync(scope, args, ct),
+            "get_message_delivery" => await DeliveryFromArgsAsync(scope, args, ct),
             "open_channel" => await OpenChannelFromArgsAsync(scope, args, ct),
             "list_channels" => await ListChannelsAsync(scope, ct),
             "register_runtime" => await RegisterRuntimeFromArgsAsync(scope, args, ct),
@@ -841,6 +853,35 @@ public sealed class McpServer
             args.GetProperty("processedThroughSequence").GetInt64(),
             ct);
         return new { acknowledged = true };
+    }
+
+    private async Task<object> NotifyFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        await _channels.NotifyAsync(
+            scope,
+            args.GetProperty("channelId").GetGuid(),
+            args.GetProperty("processedThroughSequence").GetInt64(),
+            ct);
+        return new { notified = true };
+    }
+
+    private async Task<object> AcceptFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        await _channels.AcceptAsync(
+            scope,
+            args.GetProperty("channelId").GetGuid(),
+            args.GetProperty("processedThroughSequence").GetInt64(),
+            ct);
+        return new { accepted = true };
+    }
+
+    private async Task<object> DeliveryFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)
+    {
+        return await _channels.DeliveryAsync(
+            scope,
+            args.GetProperty("channelId").GetGuid(),
+            args.GetProperty("through").GetInt64(),
+            ct);
     }
 
     private async Task<object> OpenChannelFromArgsAsync(AuthorizedScope scope, JsonElement args, CancellationToken ct)

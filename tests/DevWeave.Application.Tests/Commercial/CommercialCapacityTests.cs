@@ -74,16 +74,23 @@ public sealed class CommercialCapacityTests
     [Fact]
     public void COM_020_export_does_not_consult_a_commercial_plan()
     {
-        var parameters = typeof(DevWeave.Application.Archives.PortableArchive)
-            .GetConstructors()
-            .Single()
-            .GetParameters()
-            .Select(parameter => parameter.ParameterType.Name);
+        foreach (var type in new[]
+        {
+            typeof(DevWeave.Application.Archives.PortableArchive),
+            typeof(DevWeave.Application.Archives.ProjectArchiveService),
+        })
+        {
+            var parameters = type
+                .GetConstructors()
+                .Single()
+                .GetParameters()
+                .Select(parameter => parameter.ParameterType.Name);
 
-        Assert.DoesNotContain(parameters, name =>
-            name.Contains("Commercial", StringComparison.Ordinal) ||
-            name.Contains("Entitlement", StringComparison.Ordinal) ||
-            name.Contains("PlanCatalogue", StringComparison.Ordinal));
+            Assert.DoesNotContain(parameters, name =>
+                name.Contains("Commercial", StringComparison.Ordinal) ||
+                name.Contains("Entitlement", StringComparison.Ordinal) ||
+                name.Contains("PlanCatalogue", StringComparison.Ordinal));
+        }
     }
 
     private sealed class MemoryUnitOfWork : IUnitOfWork

@@ -208,6 +208,178 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
         });
     }
 
+    [Fact]
+    public async Task BUS_AC_06_one_campaign_coordinates_customer_and_recorded_managed_runtimes()
+    {
+        var tenant = await CreateTenantAsync($"Hybrid {Guid.NewGuid():N}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"lead-{Guid.NewGuid():N}@example.test");
+        using var human = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"h{Guid.NewGuid():N}"[..12], "Coord", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"h{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        var basePath = $"/tenants/{tenant.Id}/projects/{project.Id}/coordination";
+
+        var agentA = await CreateAgentAsync(tenant.Id, $"ext-{Guid.NewGuid():N}@example.test");
+        var agentB = await CreateAgentAsync(tenant.Id, $"managed-{Guid.NewGuid():N}@example.test");
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agentA.Id, owner.Id);
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agentB.Id, owner.Id);
+        using var clientA = _factory.CreateAuthenticatedAgentClient(tenant.Id, agentA.Id);
+        using var clientB = _factory.CreateAuthenticatedAgentClient(tenant.Id, agentB.Id);
+
+        await SeedApprovedPlanAsync(tenant.Id, project.Id, owner.Id);
+        var baselineResponse = await human.PostAsJsonAsync($"{basePath}/baselines",
+            new BaselineDraft("Hybrid plan", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "same policy" }, 1), Json);
+        baselineResponse.EnsureSuccessStatusCode();
+        var baselineId = (await baselineResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+
+        var campaignResponse = await human.PostAsJsonAsync($"{basePath}/campaigns",
+            new CampaignDraft(baselineId, Array.Empty<Guid>(), "Mixed campaign", "Mediated", $"camp-{Guid.NewGuid():N}"), Json);
+        campaignResponse.EnsureSuccessStatusCode();
+        var campaignId = (await campaignResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+        var activate = await human.PostAsJsonAsync($"{basePath}/campaigns/{campaignId}/transition",
+            new TransitionCommand("Active", "start", 1, $"activate-{Guid.NewGuid():N}"), Json);
+        activate.EnsureSuccessStatusCode();
+
+        var runtimeAResponse = await clientA.PostAsJsonAsync($"{basePath}/runtimes",
+            new RuntimeRegistration(agentA.Id, "laptop", "1.0", new[] { "code.write" }, "attest-a", "CustomerManaged", "customer"), Json);
+        runtimeAResponse.EnsureSuccessStatusCode();
+        var runtimeA = (await runtimeAResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+        var runtimeBResponse = await clientB.PostAsJsonAsync($"{basePath}/runtimes",
+            new RuntimeRegistration(agentB.Id, "recorded-runner", "1.0", new[] { "code.write" }, "attest-b", "DevWeaveManaged", "devweave", null, "managed.compute"), Json);
+        runtimeBResponse.EnsureSuccessStatusCode();
+        var runtimeB = (await runtimeBResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+
+        async Task<Guid> AcceptOffer(Guid runtimeId)
+        {
+            var offerResponse = await human.PostAsJsonAsync($"{basePath}/offers",
+                new OfferDraft(campaignId, runtimeId, new[] { "code.write" }, DateTimeOffset.UtcNow.AddHours(1)), Json);
+            offerResponse.EnsureSuccessStatusCode();
+            var offerId = (await offerResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+            var decision = await human.PostAsJsonAsync($"{basePath}/offers/{offerId}/decide", new { accept = true }, Json);
+            decision.EnsureSuccessStatusCode();
+            var body = await decision.Content.ReadAsStringAsync();
+            Assert.Contains("Accepted", body, StringComparison.Ordinal);
+            return offerId;
+        }
+
+        await AcceptOffer(runtimeA);
+        await AcceptOffer(runtimeB);
+
+        var packageAResponse = await human.PostAsJsonAsync($"{basePath}/packages",
+            new PackageDraft(campaignId, baselineId, "External slice", Array.Empty<Guid>(), Array.Empty<string>(), Array.Empty<string>(),
+                ExecutionLocation: "CustomerManaged", Provider: "customer"), Json);
+        var packageBResponse = await human.PostAsJsonAsync($"{basePath}/packages",
+            new PackageDraft(campaignId, baselineId, "Recorded managed slice", Array.Empty<Guid>(), Array.Empty<string>(), Array.Empty<string>(),
+                ExecutionLocation: "DevWeaveManaged", Provider: "devweave"), Json);
+        packageAResponse.EnsureSuccessStatusCode();
+        packageBResponse.EnsureSuccessStatusCode();
+        var packageA = (await packageAResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+        var packageB = (await packageBResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+
+        var listed = await human.GetStringAsync($"{basePath}/campaigns/{campaignId}/packages");
+        Assert.Contains(baselineId.ToString(), listed, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CustomerManaged", listed, StringComparison.Ordinal);
+        Assert.Contains("DevWeaveManaged", listed, StringComparison.Ordinal);
+
+        var targetResponse = await human.PostAsJsonAsync($"{basePath}/codebase-targets",
+            new CodebaseTargetDraft("github", "acme/hybrid", "main", "abc1234"), Json);
+        targetResponse.EnsureSuccessStatusCode();
+        var targetId = (await targetResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+
+        async Task<Guid> QueueReference(HttpClient client, Guid packageId, Guid runtimeId, string key)
+        {
+            var leaseResponse = await client.PostAsJsonAsync($"{basePath}/leases",
+                new LeaseRequest(packageId, runtimeId, $"paths:/{key}", DateTimeOffset.UtcNow.AddHours(1), 0, $"lease-{key}"), Json);
+            leaseResponse.EnsureSuccessStatusCode();
+            client.DefaultRequestHeaders.Remove("X-Runtime-Id");
+            client.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeId.ToString());
+            var changeResponse = await client.PostAsJsonAsync($"{basePath}/change-sets",
+                new ChangeSetDraft(packageId, targetId, $"github:pr/{key}", "def5678", new[] { $"{key}/Program.cs" }), Json);
+            changeResponse.EnsureSuccessStatusCode();
+            var changeSetId = (await changeResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+            var queueResponse = await human.PostAsJsonAsync($"{basePath}/integration-queue",
+                new QueueDraft(changeSetId, $"queue-{key}"), Json);
+            queueResponse.EnsureSuccessStatusCode();
+            var queueId = (await queueResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+            var stage = await human.PostAsJsonAsync($"{basePath}/integration-queue/{queueId}/stage",
+                new { stage = "Reviewed", note = "Same integration policy. DevWeave did not merge." }, Json);
+            stage.EnsureSuccessStatusCode();
+            return queueId;
+        }
+
+        await QueueReference(clientA, packageA, runtimeA, "external");
+        await QueueReference(clientB, packageB, runtimeB, "managed");
+
+        var knowledge = await human.GetStringAsync($"/tenants/{tenant.Id}/projects/{project.Id}/knowledge");
+        Assert.DoesNotContain("def5678", knowledge, StringComparison.Ordinal);
+        Assert.DoesNotContain("managed.compute", knowledge, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task COM_023_one_project_cannot_consume_the_other_projects_campaign_slot()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var tenant = await CreateTenantAsync($"Fair {suffix}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"lead-{suffix}@example.test");
+        using var human = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using var platform = _factory.CreatePlatformAdminClient(tenant.Id, owner.Id);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"f{suffix}"[..12], "Fair", "1");
+        var projectA = await CreateProjectAsync(tenant.Id, $"a{suffix}"[..12], profile.Id, owner.Id);
+        var projectB = await CreateProjectAsync(tenant.Id, $"b{suffix}"[..12], profile.Id, owner.Id);
+
+        var published = await platform.PostAsJsonAsync($"/tenants/{tenant.Id}/commercial/plans", new PlanDraft(
+            $"fair-{suffix}",
+            "1.0",
+            DateTimeOffset.UtcNow,
+            [
+                new EntitlementRule("campaigns.concurrent", 2, "count", "Block"),
+                new EntitlementRule("campaigns.concurrent.project", 1, "count", "Block"),
+            ]), Json);
+        published.EnsureSuccessStatusCode();
+        var planId = (await published.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+        var assigned = await platform.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/commercial/assignments",
+            new { planId, effectiveAt = DateTimeOffset.UtcNow }, Json);
+        assigned.EnsureSuccessStatusCode();
+
+        await SeedApprovedPlanAsync(tenant.Id, projectA.Id, owner.Id);
+        await SeedApprovedPlanAsync(tenant.Id, projectB.Id, owner.Id);
+        var baselineA = await LockBaselineAsync(human, tenant.Id, projectA.Id, "Project A plan");
+        var baselineB = await LockBaselineAsync(human, tenant.Id, projectB.Id, "Project B plan");
+
+        var first = await human.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{projectA.Id}/coordination/campaigns",
+            new CampaignDraft(baselineA, Array.Empty<Guid>(), "A first", "Mediated", $"a1-{suffix}"), Json);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        var second = await human.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{projectA.Id}/coordination/campaigns",
+            new CampaignDraft(baselineA, Array.Empty<Guid>(), "A second", "Mediated", $"a2-{suffix}"), Json);
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Contains("campaigns.concurrent.project", await second.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        var other = await human.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{projectB.Id}/coordination/campaigns",
+            new CampaignDraft(baselineB, Array.Empty<Guid>(), "B first", "Mediated", $"b1-{suffix}"), Json);
+        Assert.Equal(HttpStatusCode.Created, other.StatusCode);
+
+        var from = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O"));
+        var to = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"));
+        var decisionsResponse = await human.GetAsync($"/tenants/{tenant.Id}/commercial/decisions?from={from}&to={to}");
+        decisionsResponse.EnsureSuccessStatusCode();
+        var decisions = await decisionsResponse.Content.ReadAsStringAsync();
+        Assert.Contains("campaigns.concurrent.project", decisions, StringComparison.Ordinal);
+        Assert.Contains("Blocked", decisions, StringComparison.Ordinal);
+    }
+
+    private async Task<Guid> LockBaselineAsync(HttpClient human, Guid tenantId, Guid projectId, string label)
+    {
+        var response = await human.PostAsJsonAsync(
+            $"/tenants/{tenantId}/projects/{projectId}/coordination/baselines",
+            new BaselineDraft(label, Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "same policy" }, 1), Json);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
+    }
+
     private sealed record IdResponse(Guid Id);
 
     private async Task SeedApprovedPlanAsync(Guid tenantId, Guid projectId, Guid actorId)

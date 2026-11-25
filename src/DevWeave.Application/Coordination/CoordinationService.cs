@@ -1059,6 +1059,15 @@ public sealed class CoordinationService :
 
     public async Task<Guid> OfferAsync(AuthorizedScope scope, OfferDraft offer, CancellationToken ct = default)
     {
+        var campaign = await _repository.GetCampaignByIdAsync(scope.TenantId, new CampaignId(offer.CampaignId), ct)
+            ?? throw new NotFoundException("Campaign not found.");
+        if (campaign.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Campaign was not found within this project.");
+        var runtime = await _repository.GetRuntimeByIdAsync(scope.TenantId, new RuntimeId(offer.RuntimeId), ct)
+            ?? throw new NotFoundException("Runtime not found.");
+        if (runtime.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Runtime was not found within this project.");
+
         var participationOffer = ParticipationOffer.Create(
             scope.TenantId,
             scope.ProjectId!,

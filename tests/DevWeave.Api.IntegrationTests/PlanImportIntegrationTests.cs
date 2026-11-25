@@ -901,6 +901,89 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
     }
 
     [Fact]
+    public async Task A_done_status_on_import_stays_unstarted_until_a_later_report()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = McpUrl(seed);
+        var builtKey = $"B-{Guid.NewGuid():N}"[..12];
+        var openKey = $"O-{Guid.NewGuid():N}"[..12];
+        var bundle = Core($"mix-{Guid.NewGuid():N}", new[] { Note("root") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } },
+            workItems: new object[]
+            {
+                new
+                {
+                    @ref = "built",
+                    key = builtKey,
+                    title = "Checkout already in git",
+                    description = "Existing slice",
+                    milestoneRef = (string?)null,
+                    priority = "Normal",
+                    dependsOnRefs = Array.Empty<string>(),
+                    status = "Done",
+                },
+                new
+                {
+                    @ref = "open",
+                    key = openKey,
+                    title = "Billing still to build",
+                    description = "Unstarted slice",
+                    milestoneRef = (string?)null,
+                    priority = "Normal",
+                    dependsOnRefs = Array.Empty<string>(),
+                },
+            });
+        using var proposed = await CallToolAsync(agent, url, 1, new { name = "propose_initial_plan", arguments = bundle });
+        await ApproveImportAsync(seed, McpJson.Payload(proposed.RootElement).GetProperty("id").GetGuid());
+
+        using var listed = await CallToolAsync(agent, url, 2, new { name = "list_work_items", arguments = new { } });
+        var items = McpJson.Payload(listed.RootElement).GetProperty("workItems").EnumerateArray().ToList();
+        Assert.Equal(2, items.Count);
+        foreach (var item in items)
+        {
+            Assert.Equal("Planned", item.GetProperty("plannedState").GetString());
+            Assert.Equal("NotStarted", item.GetProperty("reportedState").GetString());
+            Assert.Equal("Unverified", item.GetProperty("verificationState").GetString());
+            Assert.Equal("Pending", item.GetProperty("approvalState").GetString());
+        }
+
+        var built = items.Single(item => item.GetProperty("key").GetString() == builtKey);
+        using var reported = await CallToolAsync(agent, url, 3, new
+        {
+            name = "report_work_item",
+            arguments = new
+            {
+                key = builtKey,
+                state = "done",
+                reason = "That slice is already in git",
+                expectedVersion = built.GetProperty("version").GetInt32(),
+            },
+        });
+        Assert.Equal("Completed", McpJson.Payload(reported.RootElement).GetProperty("item").GetProperty("reportedState").GetString());
+        Assert.Equal("Unverified", McpJson.Payload(reported.RootElement).GetProperty("item").GetProperty("verificationState").GetString());
+
+        using var metricsCall = await CallToolAsync(agent, url, 4, new { name = "get_project_metrics", arguments = new { } });
+        var metrics = McpJson.Payload(metricsCall.RootElement).GetProperty("metrics");
+        JsonElement Metric(string key) => metrics.EnumerateArray().Single(row => row.GetProperty("key").GetString() == key);
+
+        var estimate = Metric("work.completion_estimate");
+        Assert.Equal(0.5m, estimate.GetProperty("value").GetDecimal());
+        Assert.True(estimate.GetProperty("isEstimate").GetBoolean());
+        Assert.Equal(1m, Metric("work.reported_completed_count").GetProperty("value").GetDecimal());
+
+        var backed = Metric("closedloop.evidence_backed_completion");
+        Assert.Equal(0m, backed.GetProperty("value").GetDecimal());
+        Assert.False(backed.GetProperty("isEstimate").GetBoolean());
+        Assert.Contains("Numerator 0, denominator 1", backed.GetProperty("includedPopulation").GetString(), StringComparison.Ordinal);
+
+        using var after = await CallToolAsync(agent, url, 5, new { name = "list_work_items", arguments = new { } });
+        var remaining = McpJson.Payload(after.RootElement).GetProperty("workItems").EnumerateArray()
+            .Single(item => item.GetProperty("key").GetString() == openKey);
+        Assert.Equal("NotStarted", remaining.GetProperty("reportedState").GetString());
+    }
+
+    [Fact]
     public async Task Agent_proposer_cannot_approve_plan_import()
     {
         var seed = await SeedAsync(planning: true, execution: false);

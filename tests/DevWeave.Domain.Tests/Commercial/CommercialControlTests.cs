@@ -37,6 +37,13 @@ public sealed class CommercialControlTests
         Assert.Equal("devweave", activity.Provider);
         Assert.Throws<ArgumentException>(() => AgentRuntimeInstance.Register(
             tenant, project, actor, "session-2", "cursor", "1.0", "hosted"));
+
+        var external = AgentRuntimeInstance.Register(
+            tenant, project, actor, "session-external", "cursor", "1.0");
+        Assert.Equal(ExecutionLocation.CustomerManaged, external.ExecutionLocation);
+        Assert.Equal(ExecutionFacts.CustomerProvider, external.Provider);
+        Assert.Null(external.BillingMeter);
+        Assert.Null(external.WorkspaceProvider);
     }
 
     [Fact]

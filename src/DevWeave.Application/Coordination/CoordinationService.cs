@@ -52,6 +52,7 @@ public sealed class CoordinationService :
     private readonly IPlanRebaseDecisionRepository _rebaseDecisions;
     private readonly IContextPackageRepository _contexts;
     private readonly ISemanticConflictRepository _semanticConflicts;
+    private readonly IEntitlementEvaluator? _entitlements;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -73,7 +74,8 @@ public sealed class CoordinationService :
         ILifecycleProfileRepository lifecycleProfiles,
         IPlanRebaseDecisionRepository rebaseDecisions,
         IContextPackageRepository contexts,
-        ISemanticConflictRepository semanticConflicts)
+        ISemanticConflictRepository semanticConflicts,
+        IEntitlementEvaluator? entitlements = null)
     {
         _repository = repository;
         _uow = uow;
@@ -95,6 +97,7 @@ public sealed class CoordinationService :
         _rebaseDecisions = rebaseDecisions;
         _contexts = contexts;
         _semanticConflicts = semanticConflicts;
+        _entitlements = entitlements;
     }
 
     // --- IRuntimeRegistry ---
@@ -107,7 +110,11 @@ public sealed class CoordinationService :
             new PrincipalId(registration.AgentPrincipalId),
             registration.AttestationRef, // Using AttestationRef as session key for now
             registration.RuntimeClass,
-            registration.ProtocolVersion);
+            registration.ProtocolVersion,
+            registration.ExecutionLocation,
+            registration.Provider,
+            registration.WorkspaceProvider,
+            registration.BillingMeter);
 
         await _repository.AddRuntimeAsync(runtime, ct);
         await _uow.SaveChangesAsync(ct);
@@ -201,6 +208,7 @@ public sealed class CoordinationService :
     public async Task<Guid> CreateAsync(AuthorizedScope scope, CampaignDraft draft, CancellationToken ct = default)
     {
         var baseline = await RequireProjectBaselineAsync(scope, draft.BaselineId, ct);
+        await EnsureCampaignCapacityAsync(scope, ct);
 
         var campaign = ExecutionCampaign.Create(
             scope.TenantId,
@@ -212,6 +220,24 @@ public sealed class CoordinationService :
         await _repository.AddCampaignAsync(campaign, ct);
         await _uow.SaveChangesAsync(ct);
         return campaign.Id.Value;
+    }
+
+    private async Task EnsureCampaignCapacityAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        if (_entitlements is null || scope.ProjectId is null)
+            return;
+
+        var tenantOpen = await _repository.CountOpenCampaignsAsync(scope.TenantId, null, ct);
+        var tenantDecision = await _entitlements.EvaluateCapacityAsync(
+            scope, "campaigns.concurrent", tenantOpen, 1, ct);
+        if (tenantDecision.Outcome == "Blocked")
+            throw new ConflictException(tenantDecision.Reason);
+
+        var projectOpen = await _repository.CountOpenCampaignsAsync(scope.TenantId, scope.ProjectId, ct);
+        var projectDecision = await _entitlements.EvaluateCapacityAsync(
+            scope, "campaigns.concurrent.project", projectOpen, 1, ct);
+        if (projectDecision.Outcome == "Blocked")
+            throw new ConflictException(projectDecision.Reason);
     }
 
     public async Task<Decision> TransitionAsync(AuthorizedScope scope, Guid campaignId, TransitionCommand command, CancellationToken ct = default)
@@ -1034,7 +1060,9 @@ public sealed class CoordinationService :
             draft.Objective,
             revisions,
             workItems,
-            topics);
+            topics,
+            draft.ExecutionLocation,
+            draft.Provider);
 
         await _repository.AddWorkPackageAsync(package, ct);
         await _uow.SaveChangesAsync(ct);
@@ -1288,7 +1316,9 @@ public sealed class CoordinationService :
             package.ScopeWorkItemIds,
             package.ScopeSpecTopics,
             package.IsUnscoped,
-            latest is null ? null : MapWorkthrough(latest));
+            latest is null ? null : MapWorkthrough(latest),
+            package.ExecutionLocation.ToString(),
+            package.Provider);
     }
 
     private async Task<bool> ActorHeldLeaseAsync(AuthorizedScope scope, WorkPackageId packageId, CancellationToken ct)

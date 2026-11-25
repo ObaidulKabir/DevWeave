@@ -86,4 +86,26 @@ public sealed class CommercialRepository : ICommercialRepository
         return await _context.UsageObservations
             .FirstOrDefaultAsync(o => o.TenantId == tenantId && o.IdempotencyKey == idempotencyKey, ct);
     }
+
+    public async Task AddEntitlementDecisionAsync(EntitlementDecision decision, CancellationToken ct = default)
+    {
+        await _context.EntitlementDecisions.AddAsync(decision, ct);
+    }
+
+    public async Task<IReadOnlyList<EntitlementDecision>> ListEntitlementDecisionsAsync(
+        TenantId tenantId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default)
+    {
+        return await _context.EntitlementDecisions
+            .Where(d => d.TenantId == tenantId && d.DecidedAt >= from && d.DecidedAt <= to)
+            .OrderBy(d => d.DecidedAt)
+            .ToListAsync(ct);
+    }
+
+    public Task<TenantTrainingPolicy?> GetTrainingPolicyAsync(TenantId tenantId, CancellationToken ct = default) =>
+        _context.TenantTrainingPolicies.FirstOrDefaultAsync(p => p.TenantId == tenantId, ct);
+
+    public async Task AddTrainingPolicyAsync(TenantTrainingPolicy policy, CancellationToken ct = default)
+    {
+        await _context.TenantTrainingPolicies.AddAsync(policy, ct);
+    }
 }

@@ -66,7 +66,9 @@ public sealed record CodebaseTargetView(
 public sealed record CampaignDraft(Guid BaselineId, IReadOnlyList<Guid> CodebaseTargetIds,
     string Objective, string ExecutionMode, string IdempotencyKey);
 public sealed record RuntimeRegistration(Guid AgentPrincipalId, string RuntimeClass,
-    string ProtocolVersion, IReadOnlyList<string> Capabilities, string AttestationRef);
+    string ProtocolVersion, IReadOnlyList<string> Capabilities, string AttestationRef,
+    string? ExecutionLocation = null, string Provider = "customer",
+    string? WorkspaceProvider = null, string? BillingMeter = null);
 public sealed record OfferDraft(Guid CampaignId, Guid RuntimeId, IReadOnlyList<string> Capabilities,
     DateTimeOffset AvailableUntil);
 public sealed record PackageDraft(Guid CampaignId, Guid BaselineId, string Objective,
@@ -74,7 +76,8 @@ public sealed record PackageDraft(Guid CampaignId, Guid BaselineId, string Objec
     IReadOnlyList<string> AcceptanceCriteria,
     IReadOnlyList<Guid>? ImplementsRevisionIds = null,
     IReadOnlyList<Guid>? WorkItemIds = null,
-    IReadOnlyList<string>? SpecTopics = null);
+    IReadOnlyList<string>? SpecTopics = null,
+    string? ExecutionLocation = null, string Provider = "customer");
 public sealed record LeaseRequest(Guid WorkPackageId, Guid RuntimeId, string ResourceScope,
     DateTimeOffset ExpiresAt, long ExpectedFence, string IdempotencyKey);
 public sealed record LeaseView(Guid Id, Guid WorkPackageId, Guid RuntimeId, string ResourceScope,
@@ -106,6 +109,11 @@ public sealed record UsageObservation(Guid? ProjectId, Guid? CampaignId, Guid? R
     DateTimeOffset StartedAt, DateTimeOffset EndedAt, string IdempotencyKey);
 public sealed record UsageView(string Meter, decimal Consumed, string ResourceClass,
     DateTimeOffset WindowStart, DateTimeOffset WindowEnd);
+public sealed record EntitlementDecisionView(
+    Guid Id, Guid? PlanId, string? PlanVersion, string Meter, decimal Requested, decimal Observed,
+    string Outcome, string Reason, string PolicyVersion, DateTimeOffset DecidedAt);
+public sealed record TrainingUseView(string Use, Guid? ActorId, DateTimeOffset? ChangedAt, string? Reason);
+public sealed record TrainingOptInRequest(string Reason);
 public sealed record ManagedRunnerRequest(Guid CampaignId, Guid WorkPackageId,
     string ComputeClass, string CredentialRef, DateTimeOffset ExpiresAt);
 public sealed record BillingWindow(DateTimeOffset From, DateTimeOffset To, string IdempotencyKey);

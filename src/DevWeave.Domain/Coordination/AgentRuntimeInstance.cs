@@ -1,3 +1,4 @@
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 
@@ -22,6 +23,10 @@ public sealed class AgentRuntimeInstance
     public RuntimeStatus Status { get; private set; }
     public DateTimeOffset? LastHeartbeatAt { get; private set; }
     public DateTimeOffset CreatedAt { get; }
+    public ExecutionLocation ExecutionLocation { get; }
+    public string Provider { get; }
+    public string? WorkspaceProvider { get; }
+    public string? BillingMeter { get; }
 
     private AgentRuntimeInstance(
         RuntimeId id,
@@ -33,7 +38,11 @@ public sealed class AgentRuntimeInstance
         string protocolVersion,
         RuntimeStatus status,
         DateTimeOffset? lastHeartbeatAt,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        ExecutionLocation executionLocation,
+        string provider,
+        string? workspaceProvider,
+        string? billingMeter)
     {
         Id = id;
         TenantId = tenantId;
@@ -45,6 +54,10 @@ public sealed class AgentRuntimeInstance
         Status = status;
         LastHeartbeatAt = lastHeartbeatAt;
         CreatedAt = createdAt;
+        ExecutionLocation = executionLocation;
+        Provider = provider;
+        WorkspaceProvider = workspaceProvider;
+        BillingMeter = billingMeter;
     }
 
     public static AgentRuntimeInstance Register(
@@ -53,7 +66,11 @@ public sealed class AgentRuntimeInstance
         PrincipalId principalId,
         string sessionKey,
         string runtimeClass,
-        string protocolVersion)
+        string protocolVersion,
+        string? executionLocation = null,
+        string provider = ExecutionFacts.CustomerProvider,
+        string? workspaceProvider = null,
+        string? billingMeter = null)
     {
         return new AgentRuntimeInstance(
             RuntimeId.New(),
@@ -65,7 +82,11 @@ public sealed class AgentRuntimeInstance
             protocolVersion,
             RuntimeStatus.Connected,
             null,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            ExecutionFacts.ParseLocation(executionLocation),
+            ExecutionFacts.RequireProvider(provider),
+            string.IsNullOrWhiteSpace(workspaceProvider) ? null : workspaceProvider.Trim(),
+            string.IsNullOrWhiteSpace(billingMeter) ? null : billingMeter.Trim());
     }
 
     public void Heartbeat(DateTimeOffset observedAt)

@@ -179,6 +179,7 @@ public static class DependencyInjection
         services.AddScoped<IPlanCatalogue>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<IEntitlementEvaluator>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<IUsageMeter>(sp => sp.GetRequiredService<CommercialService>());
+        services.AddScoped<ITenantTrainingPolicy>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<CommercialService>();
 
         return services;

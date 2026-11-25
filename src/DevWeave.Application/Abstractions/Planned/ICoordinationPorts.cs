@@ -200,7 +200,9 @@ public sealed record WorkPackageStatusView(
     IReadOnlyList<Guid> WorkItemIds,
     IReadOnlyList<string> SpecTopics,
     bool Unscoped,
-    WorkthroughView? LatestWorkthrough = null);
+    WorkthroughView? LatestWorkthrough = null,
+    string ExecutionLocation = "CustomerManaged",
+    string Provider = "customer");
 
 public sealed record WorkthroughView(
     Guid Id,

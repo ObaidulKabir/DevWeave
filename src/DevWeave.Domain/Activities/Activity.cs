@@ -1,3 +1,4 @@
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -35,6 +36,8 @@ public sealed class Activity
     /// this is <see langword="null"/>.
     /// </summary>
     public KnowledgeRevisionId? Reference { get; }
+    public ExecutionLocation ExecutionLocation { get; }
+    public string Provider { get; }
 
     /// <summary>Revision-pinned inputs consumed by this activity (PRO-003), in stable position order.</summary>
     public IReadOnlyList<ActivityInput> Inputs => _inputs;
@@ -54,7 +57,9 @@ public sealed class Activity
         DateTimeOffset? endedAt,
         string? correlationId,
         string? reason,
-        KnowledgeRevisionId? reference)
+        KnowledgeRevisionId? reference,
+        ExecutionLocation executionLocation,
+        string provider)
     {
         Id = id;
         TenantId = tenantId;
@@ -68,6 +73,8 @@ public sealed class Activity
         CorrelationId = correlationId;
         Reason = reason;
         Reference = reference;
+        ExecutionLocation = executionLocation;
+        Provider = provider;
         _inputs = new List<ActivityInput>();
         _outputs = new List<ActivityOutput>();
     }
@@ -85,7 +92,9 @@ public sealed class Activity
         string? reason,
         KnowledgeRevisionId? reference,
         IReadOnlyList<ActivityInput> inputs,
-        IReadOnlyList<ActivityOutput> outputs)
+        IReadOnlyList<ActivityOutput> outputs,
+        string? executionLocation = null,
+        string provider = ExecutionFacts.CustomerProvider)
     {
         if (string.IsNullOrWhiteSpace(purpose))
             throw new ArgumentException("Activity purpose is required.", nameof(purpose));
@@ -110,7 +119,9 @@ public sealed class Activity
             endedAt,
             correlationId,
             reason,
-            reference);
+            reference,
+            ExecutionFacts.ParseLocation(executionLocation),
+            ExecutionFacts.RequireProvider(provider));
 
         activity._inputs.AddRange(inputs ?? Array.Empty<ActivityInput>());
         activity._outputs.AddRange(outputs ?? Array.Empty<ActivityOutput>());

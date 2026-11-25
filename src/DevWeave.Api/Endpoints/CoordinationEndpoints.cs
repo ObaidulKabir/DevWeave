@@ -321,6 +321,8 @@ public static class CoordinationEndpoints
         workItemIds = p.WorkItemIds,
         specTopics = p.SpecTopics,
         unscoped = p.Unscoped,
+        executionLocation = p.ExecutionLocation,
+        provider = p.Provider,
         latestWorkthrough = p.LatestWorkthrough is null ? null : new
         {
             id = p.LatestWorkthrough.Id,
@@ -347,6 +349,10 @@ public static class CoordinationEndpoints
             principalId = r.PrincipalId.Value,
             runtimeClass = r.RuntimeClass,
             protocolVersion = r.ProtocolVersion,
+            executionLocation = r.ExecutionLocation.ToString(),
+            provider = r.Provider,
+            workspaceProvider = r.WorkspaceProvider,
+            billingMeter = r.BillingMeter,
             status = r.Status.ToString(),
             lastHeartbeatAt = r.LastHeartbeatAt,
             createdAt = r.CreatedAt,

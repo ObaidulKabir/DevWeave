@@ -1,3 +1,4 @@
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
@@ -45,6 +46,19 @@ public sealed class AgentRuntimeInstanceConfiguration : IEntityTypeConfiguration
 
         builder.Property(r => r.LastHeartbeatAt);
         builder.Property(r => r.CreatedAt);
+        builder.Property(r => r.ExecutionLocation)
+            .HasConversion<string>()
+            .HasMaxLength(40)
+            .HasDefaultValue(ExecutionLocation.CustomerManaged)
+            .IsRequired();
+        builder.Property(r => r.Provider)
+            .HasMaxLength(120)
+            .HasDefaultValue(ExecutionFacts.CustomerProvider)
+            .IsRequired();
+        builder.Property(r => r.WorkspaceProvider)
+            .HasMaxLength(120);
+        builder.Property(r => r.BillingMeter)
+            .HasMaxLength(60);
 
         builder.HasIndex(r => r.SessionKey).IsUnique();
     }

@@ -71,5 +71,29 @@ public sealed class CommercialIntegrationTests : IClassFixture<IdentityTestFacto
         var decision = (await evalResponse.Content.ReadFromJsonAsync<Decision>(_jsonOptions))!;
         
         Assert.Equal("Allowed", decision.Outcome);
+
+        var from = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var to = DateTimeOffset.UtcNow.AddMinutes(5);
+        var decisionsResponse = await adminClient.GetAsync(
+            $"/tenants/{tenant.Id}/commercial/decisions?from={Uri.EscapeDataString(from.ToString("O"))}&to={Uri.EscapeDataString(to.ToString("O"))}");
+        decisionsResponse.EnsureSuccessStatusCode();
+        var decisions = (await decisionsResponse.Content.ReadFromJsonAsync<List<EntitlementDecisionView>>(_jsonOptions))!;
+        Assert.Contains(decisions, row => row.Meter == "coordination.sessions" && row.Outcome == "Allowed" && row.PlanVersion == "1.0");
+
+        var trainingResponse = await adminClient.GetAsync($"/tenants/{tenant.Id}/commercial/training");
+        trainingResponse.EnsureSuccessStatusCode();
+        var training = (await trainingResponse.Content.ReadFromJsonAsync<TrainingUseView>(_jsonOptions))!;
+        Assert.Equal("Excluded", training.Use);
+
+        var optIn = await adminClient.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/commercial/training/opt-in",
+            new TrainingOptInRequest("customer contract 14"),
+            _jsonOptions);
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, optIn.StatusCode);
+
+        var opted = (await (await adminClient.GetAsync($"/tenants/{tenant.Id}/commercial/training"))
+            .Content.ReadFromJsonAsync<TrainingUseView>(_jsonOptions))!;
+        Assert.Equal("OptedIn", opted.Use);
+        Assert.Equal("customer contract 14", opted.Reason);
     }
 }

@@ -270,8 +270,17 @@ public sealed class McpServer
             new[] { "channelType" }),
         NamedTool("list_channels", "List coordination channels in this project so execution clients can discover channel ids",
             new { }, Array.Empty<string>()),
-        NamedTool("register_runtime", "Register this agent runtime instance for the project",
-            new { runtimeClass = StringProp(), protocolVersion = StringProp(), capabilities = new { type = "array", items = new { type = "string" } }, attestationRef = StringProp() },
+        NamedTool("register_runtime", "Register this agent runtime instance for the project. executionLocation is CustomerManaged or DevWeaveManaged.",
+            new
+            {
+                runtimeClass = StringProp(), protocolVersion = StringProp(),
+                capabilities = new { type = "array", items = new { type = "string" } },
+                attestationRef = StringProp(),
+                executionLocation = StringProp("CustomerManaged or DevWeaveManaged. Defaults to CustomerManaged."),
+                provider = StringProp("Runtime or model provider. Defaults to customer."),
+                workspaceProvider = StringProp(),
+                billingMeter = StringProp(),
+            },
             new[] { "runtimeClass", "protocolVersion", "attestationRef" }),
         NamedTool("heartbeat_lease", "Renew an exclusive work-package lease fencing token",
             new { leaseId = UuidProp(), expectedFence = new { type = "integer" }, expiresAt = StringProp() },
@@ -857,7 +866,11 @@ public sealed class McpServer
             args.GetProperty("runtimeClass").GetString()!,
             args.GetProperty("protocolVersion").GetString()!,
             capabilities,
-            args.GetProperty("attestationRef").GetString()!);
+            args.GetProperty("attestationRef").GetString()!,
+            OptionalString(args, "executionLocation"),
+            OptionalString(args, "provider") ?? "customer",
+            OptionalString(args, "workspaceProvider"),
+            OptionalString(args, "billingMeter"));
         var id = await _runtimeRegistry.RegisterAsync(scope, registration, ct);
         return new { id };
     }

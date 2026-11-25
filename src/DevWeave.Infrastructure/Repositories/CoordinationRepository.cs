@@ -93,6 +93,16 @@ public sealed class CoordinationRepository : ICoordinationRepository
             .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == id, ct);
     }
 
+    public async Task<int> CountOpenCampaignsAsync(TenantId tenantId, ProjectId? projectId, CancellationToken ct = default)
+    {
+        var query = _context.ExecutionCampaigns.Where(c =>
+            c.TenantId == tenantId &&
+            (c.Status == CampaignStatus.Proposed || c.Status == CampaignStatus.Active || c.Status == CampaignStatus.Suspended));
+        if (projectId is not null)
+            query = query.Where(c => c.ProjectId == projectId);
+        return await query.CountAsync(ct);
+    }
+
     public async Task<List<ExecutionCampaign>> ListCampaignsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default)
     {
         return await _context.ExecutionCampaigns

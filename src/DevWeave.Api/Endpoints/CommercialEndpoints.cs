@@ -17,6 +17,9 @@ public static class CommercialEndpoints
         group.MapPost("/usage", RecordUsageAsync).RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/usage", ListUsageAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/evaluate", EvaluateEntitlementAsync).RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        group.MapGet("/decisions", ListDecisionsAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/training", GetTrainingAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapPost("/training/opt-in", OptInTrainingAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
 
         return endpoints;
     }
@@ -54,6 +57,32 @@ public static class CommercialEndpoints
         var scope = CreateScope(tenantId, http, "Evaluate entitlement");
         var decision = await useCase.EvaluateAsync(scope, request.EntitlementKey, request.Requested, ct);
         return Results.Ok(decision);
+    }
+
+    private static async Task<IResult> ListDecisionsAsync(Guid tenantId, DateTimeOffset from, DateTimeOffset to, HttpContext http, IEntitlementEvaluator useCase, CancellationToken ct)
+    {
+        var scope = CreateScope(tenantId, http, "List entitlement decisions");
+        return Results.Ok(await useCase.ListDecisionsAsync(scope, from, to, ct));
+    }
+
+    private static async Task<IResult> GetTrainingAsync(Guid tenantId, HttpContext http, ITenantTrainingPolicy useCase, CancellationToken ct)
+    {
+        var scope = CreateScope(tenantId, http, "Read training policy");
+        return Results.Ok(await useCase.GetAsync(scope, ct));
+    }
+
+    private static async Task<IResult> OptInTrainingAsync(Guid tenantId, TrainingOptInRequest request, HttpContext http, ITenantTrainingPolicy useCase, CancellationToken ct)
+    {
+        var scope = CreateScope(tenantId, http, "Opt in to training use");
+        try
+        {
+            await useCase.OptInAsync(scope, request.Reason, ct);
+            return Results.NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static AuthorizedScope CreateScope(Guid tenantId, HttpContext http, string purpose) =>

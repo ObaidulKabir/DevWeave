@@ -56,9 +56,10 @@ public sealed class CommercialIntegrationTests : IClassFixture<IdentityTestFacto
         var agent = await _factory.CreateAgentAsync(tenant.Id, Guid.NewGuid());
         var agentClient = _factory.CreateAuthenticatedAgentClient(tenant.Id, agent.Id);
 
+        var projectId = Guid.NewGuid();
         var usageDraft = new UsageObservation(
-            null, null, null,
-            "Managed", "Standard", "coordination.sessions",
+            projectId, null, null,
+            "CustomerManaged", "Standard", "coordination.sessions",
             1, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow,
             Guid.NewGuid().ToString());
 
@@ -95,5 +96,22 @@ public sealed class CommercialIntegrationTests : IClassFixture<IdentityTestFacto
             .Content.ReadFromJsonAsync<TrainingUseView>(_jsonOptions))!;
         Assert.Equal("OptedIn", opted.Use);
         Assert.Equal("customer contract 14", opted.Reason);
+
+        var usageList = await adminClient.GetAsync(
+            $"/tenants/{tenant.Id}/commercial/usage?from={Uri.EscapeDataString(from.ToString("O"))}&to={Uri.EscapeDataString(to.ToString("O"))}");
+        usageList.EnsureSuccessStatusCode();
+        var usage = (await usageList.Content.ReadFromJsonAsync<List<UsageView>>(_jsonOptions))!;
+        Assert.Contains(usage, row =>
+            row.Meter == "coordination.sessions" &&
+            row.ProjectId == projectId &&
+            row.ExecutionMode == "CustomerManaged");
+
+        var planResponse = await adminClient.GetAsync($"/tenants/{tenant.Id}/commercial/plan");
+        planResponse.EnsureSuccessStatusCode();
+        var active = (await planResponse.Content.ReadFromJsonAsync<ActivePlanView>(_jsonOptions))!;
+        Assert.Equal("standard-2026", active.Key);
+        Assert.Equal("1.0", active.Version);
+        Assert.Contains(active.Entitlements, rule => rule.Key == "coordination.sessions" && rule.Action == "Block");
+        Assert.Contains(active.Entitlements, rule => rule.Key == "storage.bytes" && rule.Action == "Warn");
     }
 }

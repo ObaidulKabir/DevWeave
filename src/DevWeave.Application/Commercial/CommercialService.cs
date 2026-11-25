@@ -71,6 +71,27 @@ public sealed class CommercialService :
         return assignment.Id.Value;
     }
 
+    public async Task<ActivePlanView?> DescribeActiveAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        var assignment = await _repository.GetActiveAssignmentAsync(scope.TenantId, DateTimeOffset.UtcNow, ct);
+        if (assignment is null)
+            return null;
+
+        var plan = await _repository.GetPlanByIdAsync(assignment.PlanId, ct);
+        if (plan is null)
+            return null;
+
+        var rules = await _repository.GetRulesByPlanIdAsync(assignment.PlanId, ct);
+        return new ActivePlanView(
+            plan.Id.Value,
+            plan.Key,
+            plan.Version,
+            plan.Currency,
+            plan.Price,
+            rules.Select(rule => new EntitlementRuleView(
+                rule.Key, rule.Limit, rule.Unit, rule.Action.ToString(), rule.OverageRate)).ToList());
+    }
+
     // --- IEntitlementEvaluator ---
 
     public async Task<Decision> EvaluateAsync(AuthorizedScope scope, string entitlementKey, decimal requested, CancellationToken ct = default)
@@ -237,13 +258,15 @@ public sealed class CommercialService :
         var observations = await _repository.ListUsageAsync(scope.TenantId, from, to, ct);
         
         return observations
-            .GroupBy(o => new { o.Meter, o.ResourceClass })
+            .GroupBy(o => new { o.Meter, o.ResourceClass, ProjectId = o.ProjectId?.Value, o.ExecutionMode })
             .Select(g => new UsageView(
                 g.Key.Meter,
                 g.Sum(o => o.Quantity),
                 g.Key.ResourceClass,
                 from,
-                to))
+                to,
+                g.Key.ProjectId,
+                g.Key.ExecutionMode))
             .ToList();
     }
 }

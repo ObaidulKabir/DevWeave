@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using DevWeave.Application.Abstractions;
 using DevWeave.Application.Abstractions.Planned;
+using DevWeave.Application.Security;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Application.Planning;
 using DevWeave.Application.Specifications;
@@ -53,6 +54,7 @@ public sealed class CoordinationService :
     private readonly IContextPackageRepository _contexts;
     private readonly ISemanticConflictRepository _semanticConflicts;
     private readonly IEntitlementEvaluator? _entitlements;
+    private readonly IMembershipRepository? _tenantMemberships;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -75,7 +77,8 @@ public sealed class CoordinationService :
         IPlanRebaseDecisionRepository rebaseDecisions,
         IContextPackageRepository contexts,
         ISemanticConflictRepository semanticConflicts,
-        IEntitlementEvaluator? entitlements = null)
+        IEntitlementEvaluator? entitlements = null,
+        IMembershipRepository? tenantMemberships = null)
     {
         _repository = repository;
         _uow = uow;
@@ -98,6 +101,7 @@ public sealed class CoordinationService :
         _contexts = contexts;
         _semanticConflicts = semanticConflicts;
         _entitlements = entitlements;
+        _tenantMemberships = tenantMemberships;
     }
 
     // --- IRuntimeRegistry ---
@@ -143,6 +147,7 @@ public sealed class CoordinationService :
 
     public async Task<Guid> OpenAsync(AuthorizedScope scope, string channelType, Guid? campaignId, Guid? workPackageId, CancellationToken ct = default)
     {
+        await RequireProjectParticipantAsync(scope, scope.ProjectId!, ct);
         var channel = CoordinationChannel.Open(
             scope.TenantId,
             scope.ProjectId!,
@@ -158,8 +163,7 @@ public sealed class CoordinationService :
 
     public async Task<MessageView> SendAsync(AuthorizedScope scope, Guid runtimeId, MessageDraft draft, CancellationToken ct = default)
     {
-        var channel = await _repository.GetChannelByIdAsync(scope.TenantId, new ChannelId(draft.ChannelId), ct)
-            ?? throw new NotFoundException("Channel not found.");
+        var channel = await RequireParticipantChannelAsync(scope, draft.ChannelId, ct);
 
         // Idempotency check
         var existing = await _repository.GetMessageByIdempotencyKeyAsync(scope.TenantId, draft.IdempotencyKey, ct);
@@ -185,6 +189,7 @@ public sealed class CoordinationService :
 
     public async Task<Page<MessageView>> ReplayAsync(AuthorizedScope scope, Guid channelId, long afterSequence, int limit, CancellationToken ct = default)
     {
+        await RequireParticipantChannelAsync(scope, channelId, ct);
         var messages = await _repository.ListMessagesAsync(scope.TenantId, new ChannelId(channelId), afterSequence, limit, ct);
         if (messages.Count > 0)
             await AdvanceCursorAsync(scope, channelId, messages[^1].Sequence, cursor => cursor.UpdateRead(messages[^1].Sequence), ct);
@@ -194,28 +199,50 @@ public sealed class CoordinationService :
 
     public async Task AcknowledgeAsync(AuthorizedScope scope, Guid channelId, long processedThroughSequence, CancellationToken ct = default)
     {
+        await RequireParticipantChannelAsync(scope, channelId, ct);
         await RequireMessageSequenceAsync(scope, channelId, processedThroughSequence, ct);
         await AdvanceCursorAsync(scope, channelId, processedThroughSequence, cursor => cursor.UpdateAcknowledged(processedThroughSequence), ct);
     }
 
     public async Task NotifyAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
     {
+        await RequireParticipantChannelAsync(scope, channelId, ct);
         await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
         await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateNotified(throughSequence), ct);
     }
 
     public async Task AcceptAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
     {
+        await RequireParticipantChannelAsync(scope, channelId, ct);
         await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
         await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateAccepted(throughSequence), ct);
     }
 
     public async Task<MessageDeliveryView> DeliveryAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
     {
+        await RequireParticipantChannelAsync(scope, channelId, ct);
         await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
         var cursor = await _repository.GetCursorAsync(scope.TenantId, new ChannelId(channelId), scope.ActorId, ct);
         var delivery = MessageDelivery.ForSequence(throughSequence, cursor);
         return new MessageDeliveryView(delivery.Persisted, delivery.Notified, delivery.Read, delivery.Acknowledged, delivery.Accepted);
+    }
+
+    private async Task<CoordinationChannel> RequireParticipantChannelAsync(AuthorizedScope scope, Guid channelId, CancellationToken ct)
+    {
+        var channel = await _repository.GetChannelByIdAsync(scope.TenantId, new ChannelId(channelId), ct)
+            ?? throw new NotFoundException("Channel not found.");
+        if (scope.ProjectId is not null && scope.ProjectId != channel.ProjectId)
+            throw new NotFoundException("Channel not found.");
+        await RequireProjectParticipantAsync(scope, channel.ProjectId, ct);
+        return channel;
+    }
+
+    private async Task RequireProjectParticipantAsync(AuthorizedScope scope, ProjectId projectId, CancellationToken ct)
+    {
+        var role = await TenantProjectAccess.ResolveProjectRoleAsync(
+            _memberships, scope.TenantId, projectId, scope.ActorId, ct, _tenantMemberships);
+        if (role is null || role == ProjectRole.Viewer)
+            throw new NotFoundException("Channel not found.");
     }
 
     private async Task AdvanceCursorAsync(

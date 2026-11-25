@@ -36,6 +36,28 @@ public sealed class CommercialCapacityTests
     }
 
     [Fact]
+    public async Task BUS_AC_04_warn_and_allow_overage_are_stored_without_blocking()
+    {
+        var tenant = TenantId.New();
+        var store = new MemoryCommercial();
+        var plan = CommercialPlan.Create("standard", "1.0", DateTimeOffset.UtcNow, 0, "USD");
+        store.Plans.Add(plan);
+        store.Rules.Add(DomainRule.Create(plan.Id, "storage.bytes", 1, "bytes", EntitlementAction.Warn));
+        store.Rules.Add(DomainRule.Create(plan.Id, "notes.optional", 1, "count", EntitlementAction.Allow, 0.5m));
+        store.Assignments.Add(TenantPlanAssignment.Assign(tenant, plan.Id, DateTimeOffset.UtcNow.AddMinutes(-1)));
+        var service = new CommercialService(store, new MemoryUnitOfWork());
+        var scope = new AuthorizedScope(tenant, PrincipalId.New(), ProjectId.New(), "Evaluate", "trace");
+
+        var warned = await service.EvaluateAsync(scope, "storage.bytes", 5);
+        var allowed = await service.EvaluateAsync(scope, "notes.optional", 5);
+
+        Assert.Equal("Warned", warned.Outcome);
+        Assert.Equal("Allowed", allowed.Outcome);
+        Assert.Contains(store.Decisions, decision => decision.Meter == "storage.bytes" && decision.Outcome == "Warned" && decision.PlanId == plan.Id);
+        Assert.Contains(store.Decisions, decision => decision.Meter == "notes.optional" && decision.Outcome == "Allowed" && decision.PlanVersion == "1.0");
+    }
+
+    [Fact]
     public async Task COM_023_a_missing_capacity_rule_leaves_the_campaign_allowed()
     {
         var tenant = TenantId.New();

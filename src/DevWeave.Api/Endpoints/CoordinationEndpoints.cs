@@ -75,6 +75,8 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/integration-queue", EnqueueIntegrationAsync);
+        group.MapPost("/integration-queue/{queueItemId:guid}/stage", RecordIntegrationStageAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/integration-queue/{queueItemId:guid}/decide", DecideIntegrationAsync);
 
         group.MapGet("/mcp", GetMcpDirectoryAsync);
@@ -200,7 +202,7 @@ public static class CoordinationEndpoints
                     grant.CoversProject(project) &&
                     grant.Capability is AgentCapability.ReadKnowledge or AgentCapability.ExecuteWorkflow);
             if (!allowed)
-                return Results.Forbid();
+                return Results.Json(new { error = "This agent is not allowed to read codebase targets." }, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var targets = await registry.ListAsync(Scope(tenantId, projectId, http, "List codebase targets"), ct);
@@ -481,7 +483,7 @@ public static class CoordinationEndpoints
                     grant.CoversProject(project) &&
                     grant.Capability == AgentCapability.ExecuteWorkflow);
             if (!allowed)
-                return Results.Forbid();
+                return Results.Json(new { error = "This agent is not allowed to read these channels." }, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var channels = await repository.ListChannelsByProjectAsync(
@@ -515,34 +517,40 @@ public static class CoordinationEndpoints
 
     private static async Task<IResult> RenewLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] RenewLeaseRequest request,
-        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
+        [FromHeader(Name = "X-Runtime-Id")] Guid? runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             var lease = await leases.RenewAsync(
-                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, runtimeId, ct);
+                Scope(tenantId, projectId, http, "Renew lease"), leaseId, request.ExpectedFence, request.ExpiresAt, runtimeId ?? Guid.Empty, ct);
             return Results.Ok(lease);
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
-        catch (UnauthorizedTenantException) { return Results.Forbid(); }
+        catch (UnauthorizedTenantException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
     }
 
     private static async Task<IResult> ReleaseLeaseAsync(
         Guid tenantId, Guid projectId, Guid leaseId, [FromBody] ReleaseLeaseRequest request,
-        [FromHeader(Name = "X-Runtime-Id")] Guid runtimeId,
+        [FromHeader(Name = "X-Runtime-Id")] Guid? runtimeId,
         ILeaseAuthority leases, HttpContext http, CancellationToken ct)
     {
         try
         {
             await leases.ReleaseAsync(
-                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, runtimeId, ct);
+                Scope(tenantId, projectId, http, "Release lease"), leaseId, request.ExpectedFence, runtimeId ?? Guid.Empty, ct);
             return Results.NoContent();
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
-        catch (UnauthorizedTenantException) { return Results.Forbid(); }
+        catch (UnauthorizedTenantException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
     }
 
     private static async Task<IResult> OpenChannelAsync(
@@ -626,6 +634,22 @@ public static class CoordinationEndpoints
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
+    private static async Task<IResult> RecordIntegrationStageAsync(
+        Guid tenantId, Guid projectId, Guid queueItemId, [FromBody] IntegrationStageRequest request,
+        IIntegrationQueue queue, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var decision = await queue.RecordStageAsync(
+                Scope(tenantId, projectId, http, "Record integration stage"),
+                queueItemId, request.Stage, request.Note, ct);
+            return Results.Ok(decision);
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    }
+
     private static async Task<IResult> DecideIntegrationAsync(
         Guid tenantId, Guid projectId, Guid queueItemId, [FromBody] DecideIntegrationRequest request,
         IIntegrationQueue queue, HttpContext http, CancellationToken ct)
@@ -669,6 +693,7 @@ public static class CoordinationEndpoints
     private sealed record RenewLeaseRequest(long ExpectedFence, DateTimeOffset ExpiresAt);
     private sealed record ReleaseLeaseRequest(long ExpectedFence);
     private sealed record DecideIntegrationRequest(long ExpectedFence);
+    private sealed record IntegrationStageRequest(string Stage, string Note);
 }
 
 public sealed record PlanLockItemResponse(

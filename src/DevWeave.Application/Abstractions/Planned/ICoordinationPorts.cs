@@ -99,6 +99,8 @@ public interface IIntegrationQueue
         CancellationToken ct = default);
     Task<Decision> DecideAsync(AuthorizedScope scope, Guid queueItemId, long expectedFence,
         CancellationToken ct = default);
+    Task<Decision> RecordStageAsync(AuthorizedScope scope, Guid queueItemId, string stage, string note,
+        CancellationToken ct = default);
 }
 
 public interface IProjectMcpDirectory

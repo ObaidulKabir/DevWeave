@@ -17,6 +17,12 @@ public enum KillSwitchTargetType
 /// </summary>
 public sealed class CoordinationKillSwitch
 {
+    /// <summary>
+    /// In-process bound for MCP-034. A killed runtime's next tool call is refused inside this span.
+    /// This is not a measured network RTT.
+    /// </summary>
+    public static readonly TimeSpan RevocationTarget = TimeSpan.FromSeconds(2);
+
     public Guid Id { get; }
     public TenantId TenantId { get; }
     public ProjectId? ProjectId { get; }

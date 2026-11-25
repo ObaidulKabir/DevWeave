@@ -73,6 +73,7 @@ public static class PlanImportEndpoints
         catch (DbUpdateConcurrencyException) { return Results.Conflict(new { error = "Plan import proposal changed during review." }); }
         catch (DbUpdateException) { return Results.Conflict(new { error = "Plan import conflicts with existing project data." }); }
         catch (ProhibitedContentException) { return Results.UnprocessableEntity(new { error = "Plan import rejected by content policy." }); }
+        catch (PayloadValidationException ex) { return Results.UnprocessableEntity(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
         catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }

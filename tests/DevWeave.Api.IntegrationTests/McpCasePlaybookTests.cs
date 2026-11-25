@@ -5,6 +5,7 @@ using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Agents;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
@@ -44,11 +45,24 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
         Assert.NotNull(instructions);
         Assert.Contains("Pick one case", instructions, StringComparison.Ordinal);
         Assert.Contains("C0 connect", instructions, StringComparison.Ordinal);
+        Assert.Contains("C1 brainstorm", instructions, StringComparison.Ordinal);
+        Assert.Contains("C2 specifications", instructions, StringComparison.Ordinal);
         Assert.Contains("C3 empty plan", instructions, StringComparison.Ordinal);
+        Assert.Contains("C3 existing build", instructions, StringComparison.Ordinal);
+        Assert.Contains("work.completion_estimate", instructions, StringComparison.Ordinal);
+        Assert.Contains("there is no Done", instructions, StringComparison.Ordinal);
+        Assert.Contains("one outline root", instructions, StringComparison.Ordinal);
+        Assert.Contains("previous revision", instructions, StringComparison.Ordinal);
+        Assert.Contains("stale version is -32009", instructions, StringComparison.Ordinal);
+        Assert.Contains("C4 later design", instructions, StringComparison.Ordinal);
         Assert.Contains("C5 plan moved", instructions, StringComparison.Ordinal);
         Assert.Contains("C6 code", instructions, StringComparison.Ordinal);
+        Assert.Contains("C7 test", instructions, StringComparison.Ordinal);
+        Assert.Contains("C8 quality", instructions, StringComparison.Ordinal);
         Assert.Contains("C9 handoff", instructions, StringComparison.Ordinal);
+        Assert.Contains("C10 integrate", instructions, StringComparison.Ordinal);
         Assert.Contains("C11 production", instructions, StringComparison.Ordinal);
+        Assert.Contains("C12 refused", instructions, StringComparison.Ordinal);
         Assert.Contains("there is no deploy tool", instructions, StringComparison.Ordinal);
         Assert.Contains("you cannot verify or approve", instructions, StringComparison.Ordinal);
 
@@ -67,6 +81,60 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
         Assert.DoesNotContain("request_assignment", planningTools);
         Assert.DoesNotContain("submit_change_set", planningTools);
         Assert.DoesNotContain(planningTools, name => name.Contains("deploy", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("get_project_metrics", planningTools);
+    }
+
+    [Fact]
+    public async Task Planner_reads_closed_loop_metrics()
+    {
+        var seed = await SeedAsync();
+        using var planner = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+
+        var payload = McpJson.Payload(await CallAsync(planner, url, 1, McpMethods.CallTool, new
+        {
+            name = "get_project_metrics",
+            arguments = new { },
+        }));
+        var metrics = payload.GetProperty("metrics").EnumerateArray().ToList();
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.traceability_coverage");
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.freshness");
+        Assert.Contains(metrics, metric => metric.GetProperty("key").GetString() == "closedloop.actionability");
+        var coverage = Assert.Single(metrics, metric =>
+            metric.GetProperty("key").GetString() == "closedloop.requirement_verification_coverage");
+        Assert.Equal("closed-loop.1.0", coverage.GetProperty("definitionVersion").GetString());
+    }
+
+    [Fact]
+    public async Task Metrics_are_refused_without_ReadKnowledge()
+    {
+        var seed = await SeedAsync();
+        PrincipalId courierId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var courier = Principal.Create(seed.Tenant.Id, $"courier-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+            db.Add(courier);
+            db.Add(ProjectMembership.Grant(seed.Tenant.Id, seed.Project.Id, courier.Id, ProjectRole.Member));
+            db.Add(AgentCredential.Issue(seed.Tenant.Id, courier.Id, "test", "hashed-courier", null));
+            db.Add(Approved(seed.Tenant.Id, seed.Project.Id, courier.Id, seed.Owner.Id, AgentCapability.ExecuteWorkflow));
+            await db.SaveChangesAsync();
+            courierId = courier.Id;
+        }
+
+        using var courierClient = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, courierId.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var tools = await ToolNamesAsync(courierClient, url, 1);
+        Assert.DoesNotContain("get_project_metrics", tools);
+
+        var refused = await CallAsync(courierClient, url, 2, McpMethods.CallTool, new
+        {
+            name = "get_project_metrics",
+            arguments = new { },
+        });
+        var error = refused.GetProperty("error");
+        Assert.Equal(-32003, error.GetProperty("code").GetInt32());
+        Assert.Equal("forbidden", error.GetProperty("data").GetProperty("kind").GetString());
     }
 
     [Fact]
@@ -110,13 +178,13 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
         var runtimeA = McpJson.Payload(await Tool(deviceA, "register_runtime", new
         {
             runtimeClass = "laptop-a", protocolVersion = McpServer.ProtocolVersion,
-            capabilities = new[] { "code.write" }, attestationRef = "attest-a",
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-a-{Guid.NewGuid():N}",
         })).GetProperty("id").GetGuid();
         deviceA.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeA.ToString());
         var runtimeB = McpJson.Payload(await Tool(deviceB, "register_runtime", new
         {
             runtimeClass = "laptop-b", protocolVersion = McpServer.ProtocolVersion,
-            capabilities = new[] { "code.write" }, attestationRef = "attest-b",
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-b-{Guid.NewGuid():N}",
         })).GetProperty("id").GetGuid();
         deviceB.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeB.ToString());
 
@@ -200,7 +268,7 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
                 new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part3"));
             runtimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
-                new RuntimeRegistration(seed.Executor.Id.Value, "laptop", "1.0", ["code.write"], "attest"));
+                new RuntimeRegistration(seed.Executor.Id.Value, "laptop", "1.0", ["code.write"], $"attest-{Guid.NewGuid():N}"));
             packageId = await services.GetRequiredService<IParticipationScheduler>().CreatePackageAsync(owner,
                 new PackageDraft(campaignId, baselineId, "Implement", [], [], [], [seed.RootRevision.Id.Value]));
             var lease = await services.GetRequiredService<ILeaseAuthority>().AcquireAsync(owner,
@@ -265,6 +333,185 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
     }
 
     [Fact]
+    public async Task Part5_rest_renew_and_release_require_the_holding_runtime()
+    {
+        var seed = await SeedAsync();
+        var owner = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "lock", "part5");
+        Guid leaseId, runtimeId, otherRuntimeId;
+        long fence;
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var services = setup.ServiceProvider;
+            var baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part5"));
+            runtimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
+                new RuntimeRegistration(seed.Executor.Id.Value, "laptop", "1.0", ["code.write"], $"attest-{Guid.NewGuid():N}"));
+            otherRuntimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
+                new RuntimeRegistration(seed.ExecutorB.Id.Value, "other-laptop", "1.0", ["code.write"], $"attest-b-{Guid.NewGuid():N}"));
+            var packageId = await services.GetRequiredService<IParticipationScheduler>().CreatePackageAsync(owner,
+                new PackageDraft(campaignId, baselineId, "Implement", [], [], [], [seed.RootRevision.Id.Value]));
+            var lease = await services.GetRequiredService<ILeaseAuthority>().AcquireAsync(owner,
+                new LeaseRequest(packageId, runtimeId, "paths:/api", DateTimeOffset.UtcNow.AddMinutes(20), 0, "lease-part5"));
+            leaseId = lease.Id;
+            fence = lease.Fence;
+        }
+
+        using var holder = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var other = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.ExecutorB.Id.Value);
+        using var bare = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        var renewUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination/leases/{leaseId}/renew";
+        var releaseUrl = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/coordination/leases/{leaseId}/release";
+        var renewBody = new { expectedFence = fence, expiresAt = DateTimeOffset.UtcNow.AddMinutes(40) };
+        var releaseBody = new { expectedFence = fence };
+
+        using (var missing = await bare.PostAsJsonAsync(renewUrl, renewBody))
+            Assert.Equal(HttpStatusCode.Forbidden, missing.StatusCode);
+
+        other.DefaultRequestHeaders.Add("X-Runtime-Id", otherRuntimeId.ToString());
+        using (var wrong = await other.PostAsJsonAsync(renewUrl, renewBody))
+            Assert.Equal(HttpStatusCode.Forbidden, wrong.StatusCode);
+
+        holder.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeId.ToString());
+        using (var renewed = await holder.PostAsJsonAsync(renewUrl, renewBody))
+        {
+            Assert.Equal(HttpStatusCode.OK, renewed.StatusCode);
+            using var doc = await renewed.Content.ReadFromJsonAsync<JsonDocument>();
+            Assert.Equal("Active", doc!.RootElement.GetProperty("state").GetString());
+            Assert.Equal(runtimeId, doc.RootElement.GetProperty("runtimeId").GetGuid());
+        }
+
+        using (var missingRelease = await bare.PostAsJsonAsync(releaseUrl, releaseBody))
+            Assert.Equal(HttpStatusCode.Forbidden, missingRelease.StatusCode);
+        using (var wrongRelease = await other.PostAsJsonAsync(releaseUrl, releaseBody))
+            Assert.Equal(HttpStatusCode.Forbidden, wrongRelease.StatusCode);
+        using (var released = await holder.PostAsJsonAsync(releaseUrl, releaseBody))
+            Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+    }
+
+    [Fact]
+    public async Task Part6_holding_runtime_can_heartbeat_while_the_plan_is_open()
+    {
+        var seed = await SeedAsync();
+        var owner = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "lock", "part6");
+        Guid baselineId, campaignId;
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var services = setup.ServiceProvider;
+            baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part6"));
+        }
+
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var id = 0;
+        Task<JsonElement> Tool(string name, object arguments) =>
+            CallAsync(agent, url, ++id, McpMethods.CallTool, new { name, arguments });
+
+        var runtimeId = McpJson.Payload(await Tool("register_runtime", new
+        {
+            runtimeClass = "laptop", protocolVersion = McpServer.ProtocolVersion,
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-part6-{Guid.NewGuid():N}",
+        })).GetProperty("id").GetGuid();
+        agent.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeId.ToString());
+
+        var packageId = McpJson.Payload(await Tool("create_work_package", new
+        {
+            campaignId, baselineId, objective = "Open plan",
+            implementsRevisionIds = new[] { seed.RootRevision.Id.Value },
+        })).GetProperty("id").GetGuid();
+        var lease = McpJson.Payload(await Tool("request_assignment", new
+        {
+            workPackageId = packageId, resourceScope = "paths:/open",
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"), idempotencyKey = "lease-part6",
+        }));
+        var renewedUntil = DateTimeOffset.UtcNow.AddMinutes(40);
+        var heartbeat = McpJson.Payload(await Tool("heartbeat_lease", new
+        {
+            leaseId = lease.GetProperty("id").GetGuid(),
+            expectedFence = lease.GetProperty("fence").GetInt64(),
+            expiresAt = renewedUntil.ToString("O"),
+        }));
+
+        Assert.Equal("Active", heartbeat.GetProperty("state").GetString());
+        Assert.Equal(runtimeId, heartbeat.GetProperty("runtimeId").GetGuid());
+        Assert.True(heartbeat.GetProperty("expiresAt").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMinutes(30));
+    }
+
+    [Fact]
+    public async Task Part7_expired_active_lease_frees_its_scope()
+    {
+        var seed = await SeedAsync();
+        var owner = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "lock", "part7");
+        Guid baselineId, campaignId;
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var services = setup.ServiceProvider;
+            baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part7"));
+        }
+
+        using var holder = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
+        using var other = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.ExecutorB.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var id = 0;
+        Task<JsonElement> Tool(HttpClient client, string name, object arguments) =>
+            CallAsync(client, url, ++id, McpMethods.CallTool, new { name, arguments });
+
+        var runtimeA = McpJson.Payload(await Tool(holder, "register_runtime", new
+        {
+            runtimeClass = "laptop-a", protocolVersion = McpServer.ProtocolVersion,
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-a-{Guid.NewGuid():N}",
+        })).GetProperty("id").GetGuid();
+        holder.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeA.ToString());
+        var runtimeB = McpJson.Payload(await Tool(other, "register_runtime", new
+        {
+            runtimeClass = "laptop-b", protocolVersion = McpServer.ProtocolVersion,
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-b-{Guid.NewGuid():N}",
+        })).GetProperty("id").GetGuid();
+        other.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeB.ToString());
+
+        var packageId = McpJson.Payload(await Tool(holder, "create_work_package", new
+        {
+            campaignId, baselineId, objective = "Expiry",
+            implementsRevisionIds = new[] { seed.RootRevision.Id.Value },
+        })).GetProperty("id").GetGuid();
+        var firstId = McpJson.Payload(await Tool(holder, "request_assignment", new
+        {
+            workPackageId = packageId, resourceScope = "paths:/billing",
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(20).ToString("O"), idempotencyKey = "lease-expiring",
+        })).GetProperty("id").GetGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var row = await db.TaskLeases.SingleAsync(lease => lease.Id == new LeaseId(firstId));
+            db.Entry(row).Property(nameof(TaskLease.ExpiresAt)).CurrentValue = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        var taken = McpJson.Payload(await Tool(other, "request_assignment", new
+        {
+            workPackageId = packageId, resourceScope = "paths:/billing",
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(20).ToString("O"), idempotencyKey = "lease-after-expiry",
+        }));
+        Assert.NotEqual(firstId, taken.GetProperty("id").GetGuid());
+        Assert.Equal(runtimeB, taken.GetProperty("runtimeId").GetGuid());
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            var expired = await db.TaskLeases.SingleAsync(lease => lease.Id == new LeaseId(firstId));
+            Assert.Equal(LeaseStatus.Expired, expired.Status);
+        }
+    }
+
+    [Fact]
     public async Task Part4_channel_message_does_not_become_a_plan()
     {
         var seed = await SeedAsync();
@@ -288,7 +535,7 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
                 arguments = new
                 {
                     runtimeClass = "laptop", protocolVersion = McpServer.ProtocolVersion,
-                    capabilities = new[] { "code.write" }, attestationRef = "attest-part4",
+                    capabilities = new[] { "code.write" }, attestationRef = $"attest-part4-{Guid.NewGuid():N}",
                 },
             })).GetProperty("id").GetGuid();
         agent.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeId.ToString());

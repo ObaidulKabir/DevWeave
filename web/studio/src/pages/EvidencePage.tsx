@@ -30,7 +30,7 @@ export function EvidencePage() {
 
   return (
     <>
-      <Panel title="Evidence review" subtitle="Reported evidence is not verification until accepted (PRO-005, UI-03).">
+        <Panel title="Evidence review" subtitle="Accepted evidence verifies a claim only while its criterion pin matches that item's current revision. A newer revision makes the pin stale (PRO-005, UI-03).">
         {evidence.length === 0 ? (
           <EmptyState label="No evidence records loaded." />
         ) : (

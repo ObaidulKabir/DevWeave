@@ -9,6 +9,7 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<QuarantineCleanupWorker>();
+builder.Services.AddHostedService<OutboxDispatchWorker>();
 
 var host = builder.Build();
 host.Run();

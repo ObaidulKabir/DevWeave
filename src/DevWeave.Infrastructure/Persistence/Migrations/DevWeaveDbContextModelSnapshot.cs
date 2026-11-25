@@ -265,6 +265,57 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("context_packages", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Archives.ArchiveJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Checksum")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FormatVersion")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("IdentityMapJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ProjectId", "Kind", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("archive_jobs", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Artifacts.Artifact", b =>
                 {
                     b.Property<Guid>("Id")
@@ -544,6 +595,12 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ActorId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("AvailableAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("CorrelationId")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -559,12 +616,19 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
 
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<DateTimeOffset>("OccurredAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PayloadJson")
                         .IsRequired()
                         .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset?>("PoisonedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone");

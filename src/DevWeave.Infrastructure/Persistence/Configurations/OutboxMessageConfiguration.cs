@@ -48,7 +48,18 @@ internal sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outb
         builder.Property(m => m.OccurredAt)
             .IsRequired();
 
+        builder.Property(m => m.AvailableAt)
+            .IsRequired();
+
+        builder.Property(m => m.AttemptCount)
+            .IsRequired();
+
         builder.Property(m => m.ProcessedAt);
+
+        builder.Property(m => m.PoisonedAt);
+
+        builder.Property(m => m.LastError)
+            .HasMaxLength(500);
 
         builder.HasIndex(m => new { m.TenantId, m.EventKey })
             .IsUnique();

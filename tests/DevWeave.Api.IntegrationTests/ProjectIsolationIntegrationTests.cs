@@ -119,6 +119,32 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
         Assert.Null(await profiles.GetByIdAsync(new TenantId(alpha.Id), new LifecycleProfileId(profileB.Id)));
     }
 
+    [Fact]
+    public async Task COM_016_a_client_member_cannot_read_another_project_in_the_same_tenant()
+    {
+        var tenant = await CreateTenantAsync("Agency");
+        var owner = await CreatePrincipalAsync(tenant.Id, $"owner-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var client = await CreatePrincipalAsync(tenant.Id, $"client-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"plan-{Guid.NewGuid():N}", "Plan", "1");
+
+        using (var invite = await _client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/members",
+            new InviteMemberRequest(client.Id, MembershipRole.Member),
+            JsonOptions))
+            invite.EnsureSuccessStatusCode();
+
+        var shop = await CreateProjectAsync(tenant.Id, $"shop-{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        var billing = await CreateProjectAsync(tenant.Id, $"bill-{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        await GrantMembershipAsync(tenant.Id, shop.Id, client.Id, ProjectRole.Viewer);
+
+        using var clientHttp = _factory.CreateAuthenticatedHumanClient(tenant.Id, client.Id);
+        using var own = await clientHttp.GetAsync($"/tenants/{tenant.Id}/projects/{shop.Id}");
+        using var other = await clientHttp.GetAsync($"/tenants/{tenant.Id}/projects/{billing.Id}");
+
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
+    }
+
     private async Task<TenantResponse> CreateTenantAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync("/tenants", new CreateTenantRequest(name), JsonOptions);

@@ -355,6 +355,7 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task AddLeaseAsync(TaskLease lease, CancellationToken ct = default) => Unsupported();
         public Task<TaskLease?> GetLeaseByIdAsync(TenantId tenantId, LeaseId id, CancellationToken ct = default) => Unsupported<TaskLease?>();
         public Task<TaskLease?> GetActiveLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default) => Unsupported<TaskLease?>();
+        public Task<TaskLease?> GetOccupyingLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default) => Unsupported<TaskLease?>();
         public Task<List<TaskLease>> ListLeasesByWorkPackageAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default) => Unsupported<List<TaskLease>>();
         public Task<List<TaskLease>> ListActiveLeasesByRuntimeAsync(TenantId tenantId, RuntimeId runtimeId, CancellationToken ct = default) => Unsupported<List<TaskLease>>();
         public Task<List<TaskLease>> ListActiveLeasesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<TaskLease>>();

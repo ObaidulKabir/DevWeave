@@ -79,6 +79,8 @@ public static class DependencyInjection
         services.AddScoped<IIntegrationRepository, IntegrationRepository>();
         services.AddScoped<IInboundEventRepository, InboundEventRepository>();
         services.AddScoped<ITransactionalOutbox, TransactionalOutbox>();
+        services.AddScoped<IOutboxStore, EfOutboxStore>();
+        services.AddScoped<IArchiveJobRepository, ArchiveJobRepository>();
         services.AddScoped<ISecretHasher, Pbkdf2SecretHasher>();
 
         // Access tokens are stateless and validated on every authenticated request, so the service is a

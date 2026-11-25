@@ -10,10 +10,12 @@ using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Contracts.Schema.V1;
 using DevWeave.Domain.Activities;
+using DevWeave.Domain.Agents;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
 using DevWeave.Domain.Schema;
+using DevWeave.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DevWeave.Api.IntegrationTests.Activities;
@@ -288,6 +290,53 @@ public sealed class ActivityIntegrationTests : IClassFixture<IdentityTestFactory
         Assert.Equal(item.Id, generated.ItemId);
         Assert.Equal(revision.Id, generated.RevisionId);
         Assert.Empty(record.Used);
+    }
+
+    [Fact]
+    public async Task PRO_008_provenance_export_includes_agent_execution_metadata()
+    {
+        var tenant = await CreateTenantAsync("Alpha Corp");
+        var principal = await CreatePrincipalAsync(tenant.Id, "a@alphacorp.com", PrincipalType.Human);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, "agile", "Agile", "1.0");
+        var project = await CreateProjectAsync(tenant.Id, "shop-api", profile.Id, principal.Id);
+
+        var item = await CreateKnowledgeItemAsync(tenant.Id, project.Id, "architecture", principal.Id);
+        var revision = await AddRevisionAsync(tenant.Id, item.Id, principal.Id, 0, "{\"v\":1}");
+        var activity = await RecordActivityAsync(
+            tenant.Id,
+            project.Id,
+            principal.Id,
+            ActivityType.Generated,
+            "generate first revision",
+            DateTimeOffset.UtcNow,
+            outputs: new[] { new ActivityOutputRequest(item.Id, revision.Id, 0) });
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            db.AgentExecutionMetadata.Add(AgentExecutionMetadata.Create(
+                new ActivityId(activity.Id),
+                new TenantId(tenant.Id),
+                "openai",
+                "gpt-test",
+                modelVersion: "2024-01",
+                configurationFingerprint: "cfg-1",
+                toolFingerprint: "tool-1",
+                externalRunReference: "run-9",
+                authorizationContext: "grant-read"));
+            await db.SaveChangesAsync();
+        }
+
+        var record = Assert.Single(await GetProvenanceAsync(tenant.Id, project.Id));
+        var execution = record.AgentExecution;
+        Assert.NotNull(execution);
+        Assert.Equal("openai", execution.Provider);
+        Assert.Equal("gpt-test", execution.Model);
+        Assert.Equal("2024-01", execution.ModelVersion);
+        Assert.Equal("cfg-1", execution.ConfigurationFingerprint);
+        Assert.Equal("tool-1", execution.ToolFingerprint);
+        Assert.Equal("run-9", execution.ExternalRunReference);
+        Assert.Equal("grant-read", execution.AuthorizationContext);
     }
 
     [Fact]

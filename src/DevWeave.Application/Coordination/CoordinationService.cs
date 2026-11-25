@@ -244,13 +244,22 @@ public sealed class CoordinationService :
             await _repository.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.AgentPrincipal, scope.ActorId.Value, ct))
             throw new ConflictException("This runtime or agent has been stopped by a kill switch and cannot take new work.");
 
-        var existing = await _repository.GetActiveLeaseAsync(scope.TenantId, new WorkPackageId(request.WorkPackageId), request.ResourceScope, ct);
+        var existing = await _repository.GetOccupyingLeaseAsync(scope.TenantId, new WorkPackageId(request.WorkPackageId), request.ResourceScope, ct);
         if (existing != null)
         {
-            if (existing.RuntimeId.Value == request.RuntimeId)
+            if (existing.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                existing.Expire();
+                await _uow.SaveChangesAsync(ct);
+            }
+            else if (existing.RuntimeId.Value == request.RuntimeId)
+            {
                 return Map(existing);
-            
-            throw new ConflictException("Resource is already leased by another runtime.");
+            }
+            else
+            {
+                throw new ConflictException("Resource is already leased by another runtime.");
+            }
         }
 
         var lease = TaskLease.Acquire(
@@ -1091,7 +1100,30 @@ public sealed class CoordinationService :
             expiresAt);
 
         await _repository.AddKillSwitchAsync(killSwitch, ct);
+        if (type == KillSwitchTargetType.Runtime)
+        {
+            foreach (var lease in await _repository.ListActiveLeasesByRuntimeAsync(
+                         scope.TenantId, new RuntimeId(targetId), ct))
+                lease.Expire();
+        }
+
         await _uow.SaveChangesAsync(ct);
+    }
+
+    public async Task<Decision> RecordStageAsync(
+        AuthorizedScope scope, Guid queueItemId, string stage, string note, CancellationToken ct = default)
+    {
+        if (!Enum.TryParse<IntegrationStatus>(stage, ignoreCase: true, out var parsed))
+            throw new ArgumentException($"Unknown integration stage '{stage}'.");
+
+        var item = await _repository.GetQueueItemByIdAsync(scope.TenantId, new IntegrationQueueItemId(queueItemId), ct)
+            ?? throw new NotFoundException("Queue item not found.");
+        if (item.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Queue item not found.");
+
+        item.RecordStage(parsed, note);
+        await _uow.SaveChangesAsync(ct);
+        return new Decision(item.Status.ToString(), item.Outcome!, "1.0");
     }
 
     public async Task DeactivateAsync(AuthorizedScope scope, Guid killSwitchId, CancellationToken ct = default)

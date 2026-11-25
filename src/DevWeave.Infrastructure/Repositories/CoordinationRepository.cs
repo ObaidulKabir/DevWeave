@@ -175,6 +175,15 @@ public sealed class CoordinationRepository : ICoordinationRepository
                                      l.ExpiresAt > DateTimeOffset.UtcNow, ct);
     }
 
+    public async Task<TaskLease?> GetOccupyingLeaseAsync(TenantId tenantId, WorkPackageId workPackageId, string resourceScope, CancellationToken ct = default)
+    {
+        return await _context.TaskLeases
+            .FirstOrDefaultAsync(l => l.TenantId == tenantId &&
+                                     l.WorkPackageId == workPackageId &&
+                                     l.ResourceScope == resourceScope &&
+                                     l.Status == LeaseStatus.Active, ct);
+    }
+
     public async Task<List<TaskLease>> ListLeasesByWorkPackageAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default)
     {
         return await _context.TaskLeases

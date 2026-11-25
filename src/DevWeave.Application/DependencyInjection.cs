@@ -157,6 +157,7 @@ public static class DependencyInjection
         services.AddSingleton<ArchiveReaderRegistry>();
         services.AddScoped<ProjectArchiveService>();
         services.AddScoped<OutboxDispatcher>();
+        services.AddScoped<OutboxDeliveryConsumer>();
         services.AddScoped<ResourcePolicyEngine>();
         services.AddScoped<IResourcePolicy>(sp => sp.GetRequiredService<ResourcePolicyEngine>());
         services.AddScoped<IProjectGraphProjection, ProjectGraphProjection>();
@@ -179,6 +180,7 @@ public static class DependencyInjection
         services.AddScoped<IPlanCatalogue>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<IEntitlementEvaluator>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<IUsageMeter>(sp => sp.GetRequiredService<CommercialService>());
+        services.AddScoped<ITenantTrainingPolicy>(sp => sp.GetRequiredService<CommercialService>());
         services.AddScoped<CommercialService>();
 
         return services;

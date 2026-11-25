@@ -23,4 +23,10 @@ public interface ICommercialRepository
     Task<decimal> GetUsageTotalAsync(TenantId tenantId, string meter, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
     Task<IReadOnlyList<UsageObservation>> ListUsageAsync(TenantId tenantId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
     Task<UsageObservation?> GetUsageByIdempotencyKeyAsync(TenantId tenantId, string idempotencyKey, CancellationToken ct = default);
+
+    Task AddEntitlementDecisionAsync(EntitlementDecision decision, CancellationToken ct = default);
+    Task<IReadOnlyList<EntitlementDecision>> ListEntitlementDecisionsAsync(TenantId tenantId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
+
+    Task<TenantTrainingPolicy?> GetTrainingPolicyAsync(TenantId tenantId, CancellationToken ct = default);
+    Task AddTrainingPolicyAsync(TenantTrainingPolicy policy, CancellationToken ct = default);
 }

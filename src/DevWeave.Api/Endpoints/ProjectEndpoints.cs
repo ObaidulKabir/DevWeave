@@ -151,13 +151,18 @@ public static class ProjectEndpoints
         }
     }
 
-    private static async Task<IResult> AddProjectReferenceAsync(Guid tenantId, Guid projectId, AddProjectReferenceRequest request, AddProjectReference useCase, CancellationToken ct)
+    private static async Task<IResult> AddProjectReferenceAsync(
+        Guid tenantId, Guid projectId, AddProjectReferenceRequest request, HttpContext http, AddProjectReference useCase, CancellationToken ct)
     {
         try
         {
-            var reference = await useCase.ExecuteAsync(
+            var platformAdmin = string.Equals(
+                http.User.FindFirst("platform_admin")?.Value, "true", StringComparison.Ordinal);
+            var reference = await useCase.ExecuteForActorAsync(
                 new TenantId(tenantId),
                 new ProjectId(projectId),
+                AuthenticatedPrincipal.GetId(http),
+                platformAdmin,
                 request.Type,
                 request.ExternalId,
                 request.Url,

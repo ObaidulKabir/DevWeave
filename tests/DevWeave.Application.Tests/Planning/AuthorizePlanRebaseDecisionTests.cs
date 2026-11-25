@@ -387,6 +387,11 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task<WorkPackageWorkthrough?> GetLatestWorkthroughAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default) => Unsupported<WorkPackageWorkthrough?>();
         public Task<List<WorkPackageWorkthrough>> ListWorkthroughsAsync(TenantId tenantId, WorkPackageId workPackageId, CancellationToken ct = default) => Unsupported<List<WorkPackageWorkthrough>>();
         public Task<List<AgentRuntimeInstance>> ListRuntimesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<AgentRuntimeInstance>>();
+        public Task<int> CountOpenCampaignsAsync(TenantId tenantId, ProjectId? projectId, CancellationToken ct = default) =>
+            Task.FromResult(Campaigns.Count(campaign =>
+                campaign.TenantId == tenantId &&
+                (projectId is null || campaign.ProjectId == projectId) &&
+                campaign.Status is CampaignStatus.Proposed or CampaignStatus.Active or CampaignStatus.Suspended));
 
         private static Task Unsupported() => throw new NotSupportedException();
         private static Task<T> Unsupported<T>() => throw new NotSupportedException();

@@ -52,6 +52,7 @@ public sealed class CoordinationService :
     private readonly IPlanRebaseDecisionRepository _rebaseDecisions;
     private readonly IContextPackageRepository _contexts;
     private readonly ISemanticConflictRepository _semanticConflicts;
+    private readonly IEntitlementEvaluator? _entitlements;
 
     public CoordinationService(
         ICoordinationRepository repository,
@@ -73,7 +74,8 @@ public sealed class CoordinationService :
         ILifecycleProfileRepository lifecycleProfiles,
         IPlanRebaseDecisionRepository rebaseDecisions,
         IContextPackageRepository contexts,
-        ISemanticConflictRepository semanticConflicts)
+        ISemanticConflictRepository semanticConflicts,
+        IEntitlementEvaluator? entitlements = null)
     {
         _repository = repository;
         _uow = uow;
@@ -95,6 +97,7 @@ public sealed class CoordinationService :
         _rebaseDecisions = rebaseDecisions;
         _contexts = contexts;
         _semanticConflicts = semanticConflicts;
+        _entitlements = entitlements;
     }
 
     // --- IRuntimeRegistry ---
@@ -107,7 +110,11 @@ public sealed class CoordinationService :
             new PrincipalId(registration.AgentPrincipalId),
             registration.AttestationRef, // Using AttestationRef as session key for now
             registration.RuntimeClass,
-            registration.ProtocolVersion);
+            registration.ProtocolVersion,
+            registration.ExecutionLocation,
+            registration.Provider,
+            registration.WorkspaceProvider,
+            registration.BillingMeter);
 
         await _repository.AddRuntimeAsync(runtime, ct);
         await _uow.SaveChangesAsync(ct);
@@ -179,12 +186,44 @@ public sealed class CoordinationService :
     public async Task<Page<MessageView>> ReplayAsync(AuthorizedScope scope, Guid channelId, long afterSequence, int limit, CancellationToken ct = default)
     {
         var messages = await _repository.ListMessagesAsync(scope.TenantId, new ChannelId(channelId), afterSequence, limit, ct);
+        if (messages.Count > 0)
+            await AdvanceCursorAsync(scope, channelId, messages[^1].Sequence, cursor => cursor.UpdateRead(messages[^1].Sequence), ct);
         var items = messages.Select(Map).ToList();
         return new Page<MessageView>(items, null);
     }
 
     public async Task AcknowledgeAsync(AuthorizedScope scope, Guid channelId, long processedThroughSequence, CancellationToken ct = default)
     {
+        await RequireMessageSequenceAsync(scope, channelId, processedThroughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, processedThroughSequence, cursor => cursor.UpdateAcknowledged(processedThroughSequence), ct);
+    }
+
+    public async Task NotifyAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateNotified(throughSequence), ct);
+    }
+
+    public async Task AcceptAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        await AdvanceCursorAsync(scope, channelId, throughSequence, cursor => cursor.UpdateAccepted(throughSequence), ct);
+    }
+
+    public async Task<MessageDeliveryView> DeliveryAsync(AuthorizedScope scope, Guid channelId, long throughSequence, CancellationToken ct = default)
+    {
+        await RequireMessageSequenceAsync(scope, channelId, throughSequence, ct);
+        var cursor = await _repository.GetCursorAsync(scope.TenantId, new ChannelId(channelId), scope.ActorId, ct);
+        var delivery = MessageDelivery.ForSequence(throughSequence, cursor);
+        return new MessageDeliveryView(delivery.Persisted, delivery.Notified, delivery.Read, delivery.Acknowledged, delivery.Accepted);
+    }
+
+    private async Task AdvanceCursorAsync(
+        AuthorizedScope scope, Guid channelId, long sequence, Action<CoordinationCursor> advance, CancellationToken ct)
+    {
+        if (sequence < 1)
+            return;
+
         var cursor = await _repository.GetCursorAsync(scope.TenantId, new ChannelId(channelId), scope.ActorId, ct);
         if (cursor == null)
         {
@@ -192,8 +231,18 @@ public sealed class CoordinationService :
             await _repository.UpsertCursorAsync(cursor, ct);
         }
 
-        cursor.UpdateAcknowledged(processedThroughSequence);
+        advance(cursor);
         await _uow.SaveChangesAsync(ct);
+    }
+
+    private async Task RequireMessageSequenceAsync(AuthorizedScope scope, Guid channelId, long sequence, CancellationToken ct)
+    {
+        if (sequence < 1)
+            throw new ArgumentOutOfRangeException(nameof(sequence), "A delivery sequence starts at 1.");
+
+        var messages = await _repository.ListMessagesAsync(scope.TenantId, new ChannelId(channelId), sequence - 1, 1, ct);
+        if (messages.Count == 0 || messages[0].Sequence != sequence)
+            throw new NotFoundException($"Message sequence {sequence} was not found on channel '{channelId}'.");
     }
 
     // --- ICampaignCoordinator ---
@@ -201,6 +250,7 @@ public sealed class CoordinationService :
     public async Task<Guid> CreateAsync(AuthorizedScope scope, CampaignDraft draft, CancellationToken ct = default)
     {
         var baseline = await RequireProjectBaselineAsync(scope, draft.BaselineId, ct);
+        await EnsureCampaignCapacityAsync(scope, ct);
 
         var campaign = ExecutionCampaign.Create(
             scope.TenantId,
@@ -212,6 +262,24 @@ public sealed class CoordinationService :
         await _repository.AddCampaignAsync(campaign, ct);
         await _uow.SaveChangesAsync(ct);
         return campaign.Id.Value;
+    }
+
+    private async Task EnsureCampaignCapacityAsync(AuthorizedScope scope, CancellationToken ct)
+    {
+        if (_entitlements is null || scope.ProjectId is null)
+            return;
+
+        var tenantOpen = await _repository.CountOpenCampaignsAsync(scope.TenantId, null, ct);
+        var tenantDecision = await _entitlements.EvaluateCapacityAsync(
+            scope, "campaigns.concurrent", tenantOpen, 1, ct);
+        if (tenantDecision.Outcome == "Blocked")
+            throw new ConflictException(tenantDecision.Reason);
+
+        var projectOpen = await _repository.CountOpenCampaignsAsync(scope.TenantId, scope.ProjectId, ct);
+        var projectDecision = await _entitlements.EvaluateCapacityAsync(
+            scope, "campaigns.concurrent.project", projectOpen, 1, ct);
+        if (projectDecision.Outcome == "Blocked")
+            throw new ConflictException(projectDecision.Reason);
     }
 
     public async Task<Decision> TransitionAsync(AuthorizedScope scope, Guid campaignId, TransitionCommand command, CancellationToken ct = default)
@@ -1034,7 +1102,9 @@ public sealed class CoordinationService :
             draft.Objective,
             revisions,
             workItems,
-            topics);
+            topics,
+            draft.ExecutionLocation,
+            draft.Provider);
 
         await _repository.AddWorkPackageAsync(package, ct);
         await _uow.SaveChangesAsync(ct);
@@ -1288,7 +1358,9 @@ public sealed class CoordinationService :
             package.ScopeWorkItemIds,
             package.ScopeSpecTopics,
             package.IsUnscoped,
-            latest is null ? null : MapWorkthrough(latest));
+            latest is null ? null : MapWorkthrough(latest),
+            package.ExecutionLocation.ToString(),
+            package.Provider);
     }
 
     private async Task<bool> ActorHeldLeaseAsync(AuthorizedScope scope, WorkPackageId packageId, CancellationToken ct)

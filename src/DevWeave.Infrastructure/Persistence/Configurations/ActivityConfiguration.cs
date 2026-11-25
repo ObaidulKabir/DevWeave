@@ -1,4 +1,5 @@
 using DevWeave.Domain.Activities;
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Projects;
@@ -63,6 +64,17 @@ internal sealed class ActivityConfiguration : IEntityTypeConfiguration<Activity>
 
         builder.Property(a => a.Reason)
             .HasMaxLength(1000);
+
+        builder.Property(a => a.ExecutionLocation)
+            .HasConversion<string>()
+            .HasMaxLength(40)
+            .HasDefaultValue(ExecutionLocation.CustomerManaged)
+            .IsRequired();
+
+        builder.Property(a => a.Provider)
+            .HasMaxLength(120)
+            .HasDefaultValue(ExecutionFacts.CustomerProvider)
+            .IsRequired();
 
         // A logical pointer to the referenced (superseded/corrected/retracted) revision (REV-008),
         // not a foreign key.

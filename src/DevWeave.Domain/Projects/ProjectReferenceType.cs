@@ -10,4 +10,9 @@ public enum ProjectReferenceType
     Database = 2,
     DeploymentEnvironment = 3,
     Service = 4,
+    Commit = 5,
+    PullRequest = 6,
+    Pipeline = 7,
+    TestRun = 8,
+    Release = 9,
 }

@@ -48,6 +48,30 @@ public sealed class ProjectReferenceTests
     }
 
     [Fact]
+    public void ART_005_external_references_cover_commit_pull_request_pipeline_test_run_and_release()
+    {
+        var tenant = Tenant.Create("Alpha Corp");
+        var project = CreateProject(tenant.Id);
+        var kinds = new[]
+        {
+            ProjectReferenceType.Commit,
+            ProjectReferenceType.PullRequest,
+            ProjectReferenceType.Pipeline,
+            ProjectReferenceType.TestRun,
+            ProjectReferenceType.Release,
+            ProjectReferenceType.Repository,
+            ProjectReferenceType.DeploymentEnvironment,
+        };
+
+        foreach (var kind in kinds)
+        {
+            var reference = ProjectReference.Create(tenant.Id, project.Id, kind, kind.ToString(), null);
+            Assert.Equal(kind, reference.Type);
+            Assert.Equal(kind.ToString(), reference.ExternalId);
+        }
+    }
+
+    [Fact]
     public void PRJ_006_external_identifier_is_required()
     {
         var tenant = Tenant.Create("Alpha Corp");

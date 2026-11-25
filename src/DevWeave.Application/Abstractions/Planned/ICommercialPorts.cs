@@ -15,6 +15,21 @@ public interface IEntitlementEvaluator
 {
     Task<Decision> EvaluateAsync(AuthorizedScope scope, string entitlementKey, decimal requested,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Compares a live count with the plan rule. No plan or no rule leaves the action allowed (SRS COM-023).
+    /// </summary>
+    Task<Decision> EvaluateCapacityAsync(AuthorizedScope scope, string entitlementKey, decimal observed,
+        decimal requested, CancellationToken ct = default);
+
+    Task<IReadOnlyList<EntitlementDecisionView>> ListDecisionsAsync(AuthorizedScope scope,
+        DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default);
+}
+
+public interface ITenantTrainingPolicy
+{
+    Task<TrainingUseView> GetAsync(AuthorizedScope scope, CancellationToken ct = default);
+    Task OptInAsync(AuthorizedScope scope, string reason, CancellationToken ct = default);
 }
 
 public interface IUsageMeter

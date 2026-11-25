@@ -73,6 +73,12 @@ public static class CoordinationEndpoints
         group.MapGet("/channels/{channelId:guid}/messages", ReplayMessagesAsync);
         group.MapPost("/channels/{channelId:guid}/ack", AcknowledgeAsync)
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        group.MapPost("/channels/{channelId:guid}/notify", NotifyChannelAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        group.MapPost("/channels/{channelId:guid}/accept", AcceptChannelAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Agent);
+        group.MapGet("/channels/{channelId:guid}/delivery", DeliveryAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/integration-queue", EnqueueIntegrationAsync);
         group.MapPost("/integration-queue/{queueItemId:guid}/stage", RecordIntegrationStageAsync)
@@ -321,6 +327,8 @@ public static class CoordinationEndpoints
         workItemIds = p.WorkItemIds,
         specTopics = p.SpecTopics,
         unscoped = p.Unscoped,
+        executionLocation = p.ExecutionLocation,
+        provider = p.Provider,
         latestWorkthrough = p.LatestWorkthrough is null ? null : new
         {
             id = p.LatestWorkthrough.Id,
@@ -347,6 +355,10 @@ public static class CoordinationEndpoints
             principalId = r.PrincipalId.Value,
             runtimeClass = r.RuntimeClass,
             protocolVersion = r.ProtocolVersion,
+            executionLocation = r.ExecutionLocation.ToString(),
+            provider = r.Provider,
+            workspaceProvider = r.WorkspaceProvider,
+            billingMeter = r.BillingMeter,
             status = r.Status.ToString(),
             lastHeartbeatAt = r.LastHeartbeatAt,
             createdAt = r.CreatedAt,
@@ -617,6 +629,52 @@ public static class CoordinationEndpoints
             return Results.NoContent();
         }
         catch (NotFoundException) { return Results.NotFound(); }
+        catch (ArgumentOutOfRangeException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> NotifyChannelAsync(
+        Guid tenantId, Guid projectId, Guid channelId, [FromBody] CursorDraft draft,
+        ICoordinationChannels channels, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            await channels.NotifyAsync(
+                Scope(tenantId, projectId, http, "Notify coordination message"),
+                channelId, draft.ProcessedThroughSequence, ct);
+            return Results.NoContent();
+        }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (ArgumentOutOfRangeException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> AcceptChannelAsync(
+        Guid tenantId, Guid projectId, Guid channelId, [FromBody] CursorDraft draft,
+        ICoordinationChannels channels, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            await channels.AcceptAsync(
+                Scope(tenantId, projectId, http, "Accept coordination message"),
+                channelId, draft.ProcessedThroughSequence, ct);
+            return Results.NoContent();
+        }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (ArgumentOutOfRangeException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> DeliveryAsync(
+        Guid tenantId, Guid projectId, Guid channelId, [FromQuery] long through,
+        ICoordinationChannels channels, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var delivery = await channels.DeliveryAsync(
+                Scope(tenantId, projectId, http, "Read coordination delivery"),
+                channelId, through, ct);
+            return Results.Ok(delivery);
+        }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (ArgumentOutOfRangeException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
     private static async Task<IResult> EnqueueIntegrationAsync(

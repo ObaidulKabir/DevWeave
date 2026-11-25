@@ -1,3 +1,4 @@
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
@@ -51,6 +52,15 @@ public sealed class WorkPackageConfiguration : IEntityTypeConfiguration<WorkPack
         builder.Property(w => w.Version);
         builder.Property(w => w.CreatedAt);
         builder.Property(w => w.UpdatedAt);
+        builder.Property(w => w.ExecutionLocation)
+            .HasConversion<string>()
+            .HasMaxLength(40)
+            .HasDefaultValue(ExecutionLocation.CustomerManaged)
+            .IsRequired();
+        builder.Property(w => w.Provider)
+            .HasMaxLength(120)
+            .HasDefaultValue(ExecutionFacts.CustomerProvider)
+            .IsRequired();
 
         builder.HasIndex(w => new { w.CampaignId, w.Key }).IsUnique();
         builder.HasIndex(w => new { w.TenantId, w.PredecessorWorkPackageId });

@@ -99,7 +99,7 @@ a person approved it, tests passed, git merged, or production changed.
 2. Execution: `register_runtime`, then send `X-Runtime-Id` on every later call.
 3. `list_codebase_targets`. Clone or pull **that** provider, repository, and branch from the git host. If the list is empty, a planning agent must register the pointer before anyone codes.
 4. Planning: `read_plan_outline` and `get_effective_spec`. Execution: `get_plan_status`, then `list_channels` and `read_messages_after_cursor` so you catch up after a disconnect.
-5. `acknowledge_messages` through the sequence you have applied.
+5. `acknowledge_messages` through the sequence you have applied. Acknowledgement is only that cursor. Replay records read. Neither one records acceptance.
 
 **Do not:** invent a second repository, trust `clientInfo` for tenant or project, or continue a lease you did not create on this runtime.
 
@@ -351,8 +351,10 @@ planning clients should use the MCP tool or their own agent-capability endpoint.
 ### Coordination channels
 
 `list_channels`, `open_channel`, `send_project_message`, `read_messages_after_cursor` (alias
-`list_messages`), `acknowledge_messages`: discover and exchange durable messages between runtimes and humans.
-Acknowledge what you processed so you can resume after a reconnect. These are execution tools and require
+`list_messages`), `notify_messages`, `acknowledge_messages`, `accept_messages`, `get_message_delivery`:
+discover and exchange durable messages between runtimes and humans. A successful send means the message
+is stored. Replay records read. `notify_messages`, `acknowledge_messages`, and `accept_messages` each move
+only their own cursor. `get_message_delivery` reports the five states. These are execution tools and require
 `ExecuteWorkflow`. Channel payloads never materialize plan records; inspect them in Studio under
 Coordination and Live operations.
 

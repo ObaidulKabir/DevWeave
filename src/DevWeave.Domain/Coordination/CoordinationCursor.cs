@@ -12,8 +12,10 @@ public sealed class CoordinationCursor
     public ProjectId ProjectId { get; }
     public ChannelId ChannelId { get; }
     public PrincipalId PrincipalId { get; }
+    public long LastNotifiedSequence { get; private set; }
     public long LastReadSequence { get; private set; }
     public long LastAcknowledgedSequence { get; private set; }
+    public long LastAcceptedSequence { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
 
     private CoordinationCursor(
@@ -21,16 +23,20 @@ public sealed class CoordinationCursor
         ProjectId projectId,
         ChannelId channelId,
         PrincipalId principalId,
+        long lastNotifiedSequence,
         long lastReadSequence,
         long lastAcknowledgedSequence,
+        long lastAcceptedSequence,
         DateTimeOffset updatedAt)
     {
         TenantId = tenantId;
         ProjectId = projectId;
         ChannelId = channelId;
         PrincipalId = principalId;
+        LastNotifiedSequence = lastNotifiedSequence;
         LastReadSequence = lastReadSequence;
         LastAcknowledgedSequence = lastAcknowledgedSequence;
+        LastAcceptedSequence = lastAcceptedSequence;
         UpdatedAt = updatedAt;
     }
 
@@ -47,25 +53,24 @@ public sealed class CoordinationCursor
             principalId,
             0,
             0,
+            0,
+            0,
             DateTimeOffset.UtcNow);
     }
 
-    public void UpdateRead(long sequence)
-    {
-        if (sequence > LastReadSequence)
-        {
-            LastReadSequence = sequence;
-            UpdatedAt = DateTimeOffset.UtcNow;
-        }
-    }
+    public void UpdateNotified(long sequence) => Advance(sequence, LastNotifiedSequence, value => LastNotifiedSequence = value);
 
-    public void UpdateAcknowledged(long sequence)
+    public void UpdateRead(long sequence) => Advance(sequence, LastReadSequence, value => LastReadSequence = value);
+
+    public void UpdateAcknowledged(long sequence) => Advance(sequence, LastAcknowledgedSequence, value => LastAcknowledgedSequence = value);
+
+    public void UpdateAccepted(long sequence) => Advance(sequence, LastAcceptedSequence, value => LastAcceptedSequence = value);
+
+    private void Advance(long sequence, long current, Action<long> assign)
     {
-        if (sequence > LastAcknowledgedSequence)
-        {
-            LastAcknowledgedSequence = sequence;
-            UpdateRead(sequence);
-            UpdatedAt = DateTimeOffset.UtcNow;
-        }
+        if (sequence < 1 || sequence <= current)
+            return;
+        assign(sequence);
+        UpdatedAt = DateTimeOffset.UtcNow;
     }
 }

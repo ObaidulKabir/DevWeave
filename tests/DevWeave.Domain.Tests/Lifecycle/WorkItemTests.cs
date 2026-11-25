@@ -144,6 +144,22 @@ public sealed class WorkItemTests
     }
 
     [Fact]
+    public void LFC_006_a_transition_records_actor_time_and_reason()
+    {
+        var actor = PrincipalId.New();
+        var item = Create();
+        var before = DateTimeOffset.UtcNow;
+
+        var transition = item.ChangePlannedState(PlannedWorkState.Ready, actor, "ready for work", 1);
+
+        Assert.Equal(actor, transition.ActorId);
+        Assert.Equal("ready for work", transition.Reason);
+        Assert.InRange(transition.RecordedAt, before, DateTimeOffset.UtcNow.AddSeconds(1));
+        Assert.Throws<ArgumentException>(() =>
+            item.ChangePlannedState(PlannedWorkState.InProgress, actor, " ", item.Version));
+    }
+
+    [Fact]
     public void LFC_005_dependency_cannot_reference_the_same_work_item()
     {
         var itemId = WorkItemId.New();

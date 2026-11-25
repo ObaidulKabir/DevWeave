@@ -19,3 +19,8 @@ public record TenantPlanAssignmentId(Guid Value)
 {
     public static TenantPlanAssignmentId New() => new(Guid.NewGuid());
 }
+
+public record EntitlementDecisionId(Guid Value)
+{
+    public static EntitlementDecisionId New() => new(Guid.NewGuid());
+}

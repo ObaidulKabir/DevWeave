@@ -129,6 +129,12 @@ public interface ICoordinationChannels
         int limit, CancellationToken ct = default);
     Task AcknowledgeAsync(AuthorizedScope scope, Guid channelId, long processedThroughSequence,
         CancellationToken ct = default);
+    Task NotifyAsync(AuthorizedScope scope, Guid channelId, long throughSequence,
+        CancellationToken ct = default);
+    Task AcceptAsync(AuthorizedScope scope, Guid channelId, long throughSequence,
+        CancellationToken ct = default);
+    Task<MessageDeliveryView> DeliveryAsync(AuthorizedScope scope, Guid channelId, long throughSequence,
+        CancellationToken ct = default);
 }
 
 public interface IAgentHandoffs
@@ -200,7 +206,9 @@ public sealed record WorkPackageStatusView(
     IReadOnlyList<Guid> WorkItemIds,
     IReadOnlyList<string> SpecTopics,
     bool Unscoped,
-    WorkthroughView? LatestWorkthrough = null);
+    WorkthroughView? LatestWorkthrough = null,
+    string ExecutionLocation = "CustomerManaged",
+    string Provider = "customer");
 
 public sealed record WorkthroughView(
     Guid Id,

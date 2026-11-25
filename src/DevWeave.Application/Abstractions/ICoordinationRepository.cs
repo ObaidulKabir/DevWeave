@@ -98,4 +98,7 @@ public interface ICoordinationRepository : IWorkPackageImpactSource
 
     // Runtimes by project
     Task<List<AgentRuntimeInstance>> ListRuntimesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
+
+    /// <summary>Open campaigns are Proposed, Active, or Suspended. A null project counts the whole tenant.</summary>
+    Task<int> CountOpenCampaignsAsync(TenantId tenantId, ProjectId? projectId, CancellationToken ct = default);
 }

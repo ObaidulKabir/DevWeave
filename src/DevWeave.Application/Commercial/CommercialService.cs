@@ -12,7 +12,8 @@ namespace DevWeave.Application.Commercial;
 public sealed class CommercialService : 
     IPlanCatalogue, 
     IEntitlementEvaluator, 
-    IUsageMeter
+    IUsageMeter,
+    ITenantTrainingPolicy
 {
     private readonly ICommercialRepository _repository;
     private readonly IUnitOfWork _uow;
@@ -74,34 +75,135 @@ public sealed class CommercialService :
 
     public async Task<Decision> EvaluateAsync(AuthorizedScope scope, string entitlementKey, decimal requested, CancellationToken ct = default)
     {
-        var assignment = await _repository.GetActiveAssignmentAsync(scope.TenantId, DateTimeOffset.UtcNow, ct);
+        var now = DateTimeOffset.UtcNow;
+        var assignment = await _repository.GetActiveAssignmentAsync(scope.TenantId, now, ct);
         if (assignment == null)
         {
-            return new Decision("Blocked", "No active commercial plan assigned to tenant.", "1.0");
+            return await RecordDecisionAsync(scope, null, null, entitlementKey, requested, 0,
+                "Blocked", "No active commercial plan assigned to tenant.", ct);
         }
 
+        var plan = await _repository.GetPlanByIdAsync(assignment.PlanId, ct);
         var rules = await _repository.GetRulesByPlanIdAsync(assignment.PlanId, ct);
         var rule = rules.FirstOrDefault(r => r.Key == entitlementKey);
         
         if (rule == null)
         {
-            return new Decision("Allowed", "No limit defined for this entitlement.", "1.0");
+            return await RecordDecisionAsync(scope, assignment.PlanId, plan?.Version, entitlementKey, requested, 0,
+                "Allowed", "No limit defined for this entitlement.", ct);
         }
 
         // COM-002: Enforcement
-        var currentUsage = await _repository.GetUsageTotalAsync(scope.TenantId, rule.Key, DateTimeOffset.UtcNow.AddMonths(-1), DateTimeOffset.UtcNow, ct);
+        var currentUsage = await _repository.GetUsageTotalAsync(scope.TenantId, rule.Key, now.AddMonths(-1), now, ct);
         
         if (currentUsage + requested > rule.Limit)
         {
-            return rule.Action switch
+            var (outcome, reason) = rule.Action switch
             {
-                EntitlementAction.Block => new Decision("Blocked", $"Entitlement limit exceeded: {rule.Key}", "1.0"),
-                EntitlementAction.Warn => new Decision("Warned", $"Entitlement limit approaching: {rule.Key}", "1.0"),
-                _ => new Decision("Allowed", "Entitlement allowed despite limit.", "1.0")
+                EntitlementAction.Block => ("Blocked", $"Entitlement limit exceeded: {rule.Key}"),
+                EntitlementAction.Warn => ("Warned", $"Entitlement limit approaching: {rule.Key}"),
+                _ => ("Allowed", "Entitlement allowed despite limit.")
             };
+            return await RecordDecisionAsync(scope, assignment.PlanId, plan?.Version, entitlementKey, requested, currentUsage, outcome, reason, ct);
         }
 
-        return new Decision("Allowed", "Entitlement within limits.", "1.0");
+        return await RecordDecisionAsync(scope, assignment.PlanId, plan?.Version, entitlementKey, requested, currentUsage,
+            "Allowed", "Entitlement within limits.", ct);
+    }
+
+    public async Task<Decision> EvaluateCapacityAsync(AuthorizedScope scope, string entitlementKey, decimal observed, decimal requested, CancellationToken ct = default)
+    {
+        var assignment = await _repository.GetActiveAssignmentAsync(scope.TenantId, DateTimeOffset.UtcNow, ct);
+        if (assignment == null)
+            return new Decision("Allowed", "No commercial plan; capacity rule is not in force.", "1.0");
+
+        var plan = await _repository.GetPlanByIdAsync(assignment.PlanId, ct);
+        var rules = await _repository.GetRulesByPlanIdAsync(assignment.PlanId, ct);
+        var rule = rules.FirstOrDefault(r => r.Key == entitlementKey);
+        if (rule == null)
+            return new Decision("Allowed", "No capacity rule for this key.", "1.0");
+
+        if (observed + requested > rule.Limit)
+        {
+            var (outcome, reason) = rule.Action switch
+            {
+                EntitlementAction.Block => ("Blocked", $"Concurrent capacity exceeded: {rule.Key}"),
+                EntitlementAction.Warn => ("Warned", $"Concurrent capacity approaching: {rule.Key}"),
+                _ => ("Allowed", "Capacity allowed despite limit.")
+            };
+            return await RecordDecisionAsync(scope, assignment.PlanId, plan?.Version, entitlementKey, requested, observed, outcome, reason, ct);
+        }
+
+        return await RecordDecisionAsync(scope, assignment.PlanId, plan?.Version, entitlementKey, requested, observed,
+            "Allowed", "Capacity within limits.", ct);
+    }
+
+    public async Task<IReadOnlyList<EntitlementDecisionView>> ListDecisionsAsync(AuthorizedScope scope, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default)
+    {
+        var rows = await _repository.ListEntitlementDecisionsAsync(scope.TenantId, from, to, ct);
+        return rows.Select(row => new EntitlementDecisionView(
+            row.Id.Value,
+            row.PlanId?.Value,
+            row.PlanVersion,
+            row.Meter,
+            row.Requested,
+            row.Observed,
+            row.Outcome,
+            row.Reason,
+            row.PolicyVersion,
+            row.DecidedAt)).ToList();
+    }
+
+    public async Task<TrainingUseView> GetAsync(AuthorizedScope scope, CancellationToken ct = default)
+    {
+        var policy = await _repository.GetTrainingPolicyAsync(scope.TenantId, ct)
+            ?? TenantTrainingPolicy.Excluded(scope.TenantId);
+        return new TrainingUseView(policy.Use, policy.ActorId?.Value, policy.ChangedAt, policy.Reason);
+    }
+
+    public async Task OptInAsync(AuthorizedScope scope, string reason, CancellationToken ct = default)
+    {
+        var policy = await _repository.GetTrainingPolicyAsync(scope.TenantId, ct);
+        if (policy is null)
+        {
+            policy = TenantTrainingPolicy.Excluded(scope.TenantId);
+            policy.OptIn(scope.ActorId, reason, DateTimeOffset.UtcNow);
+            await _repository.AddTrainingPolicyAsync(policy, ct);
+        }
+        else
+        {
+            policy.OptIn(scope.ActorId, reason, DateTimeOffset.UtcNow);
+        }
+
+        await _uow.SaveChangesAsync(ct);
+    }
+
+    private async Task<Decision> RecordDecisionAsync(
+        AuthorizedScope scope,
+        CommercialPlanId? planId,
+        string? planVersion,
+        string meter,
+        decimal requested,
+        decimal observed,
+        string outcome,
+        string reason,
+        CancellationToken ct)
+    {
+        var decision = EntitlementDecision.Record(
+            scope.TenantId,
+            scope.ActorId,
+            planId,
+            planVersion,
+            meter,
+            requested,
+            observed,
+            outcome,
+            reason,
+            "1.0",
+            DateTimeOffset.UtcNow);
+        await _repository.AddEntitlementDecisionAsync(decision, ct);
+        await _uow.SaveChangesAsync(ct);
+        return new Decision(outcome, reason, "1.0");
     }
 
     // --- IUsageMeter ---

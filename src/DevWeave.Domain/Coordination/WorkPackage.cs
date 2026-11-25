@@ -1,3 +1,4 @@
+using DevWeave.Domain.Commercial;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Projects;
 
@@ -43,6 +44,8 @@ public sealed class WorkPackage
     public long Version { get; private set; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public ExecutionLocation ExecutionLocation { get; }
+    public string Provider { get; }
 
     private WorkPackage(
         WorkPackageId id,
@@ -56,7 +59,9 @@ public sealed class WorkPackage
         long version,
         DateTimeOffset createdAt,
         DateTimeOffset updatedAt,
-        WorkPackageId? predecessorWorkPackageId = null)
+        WorkPackageId? predecessorWorkPackageId = null,
+        ExecutionLocation executionLocation = ExecutionLocation.CustomerManaged,
+        string provider = ExecutionFacts.CustomerProvider)
     {
         Id = id;
         TenantId = tenantId;
@@ -70,6 +75,8 @@ public sealed class WorkPackage
         CreatedAt = createdAt;
         UpdatedAt = updatedAt;
         PredecessorWorkPackageId = predecessorWorkPackageId;
+        ExecutionLocation = executionLocation;
+        Provider = ExecutionFacts.RequireProvider(provider);
     }
 
     /// <summary>True when nothing is declared, so a plan change cannot be traced to this package.</summary>
@@ -88,7 +95,9 @@ public sealed class WorkPackage
         string objective,
         IReadOnlyList<Guid>? scopeRevisionIds = null,
         IReadOnlyList<Guid>? scopeWorkItemIds = null,
-        IReadOnlyList<string>? scopeSpecTopics = null)
+        IReadOnlyList<string>? scopeSpecTopics = null,
+        string? executionLocation = null,
+        string provider = ExecutionFacts.CustomerProvider)
     {
         var revisions = (scopeRevisionIds ?? Array.Empty<Guid>()).ToArray();
         var workItems = (scopeWorkItemIds ?? Array.Empty<Guid>()).ToArray();
@@ -112,7 +121,9 @@ public sealed class WorkPackage
             WorkPackageStatus.Proposed,
             1,
             now,
-            now);
+            now,
+            executionLocation: ExecutionFacts.ParseLocation(executionLocation),
+            provider: provider);
         package.ScopeRevisionIds = revisions;
         package.ScopeWorkItemIds = workItems;
         package.ScopeSpecTopics = topics;
@@ -173,7 +184,9 @@ public sealed class WorkPackage
             1,
             now,
             now,
-            predecessor.Id);
+            predecessor.Id,
+            predecessor.ExecutionLocation,
+            predecessor.Provider);
         package.ScopeRevisionIds = predecessor.ScopeRevisionIds.ToArray();
         package.ScopeWorkItemIds = predecessor.ScopeWorkItemIds.ToArray();
         package.ScopeSpecTopics = predecessor.ScopeSpecTopics.ToArray();

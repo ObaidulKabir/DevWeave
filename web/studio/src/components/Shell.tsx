@@ -23,6 +23,7 @@ const NAV = [
   ['/live', 'Live'],
   ['/coordination', 'Coordination'],
   ['/reports', 'Reports'],
+  ['/commercial', 'Usage'],
   ['/settings', 'Settings'],
 ] as const;
 

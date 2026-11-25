@@ -8,6 +8,7 @@ using DevWeave.Application.Specifications;
 using DevWeave.Contracts.Planning.V1;
 using DevWeave.Domain.Specifications;
 using DevWeave.Contracts.Planned.V1;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Lifecycle;
@@ -105,6 +106,9 @@ public sealed class McpServer
     {
         try
         {
+            if (request.Method is McpMethods.CallTool or McpMethods.SendMessage or McpMethods.ReplayMessages)
+                await RefuseIfKilledAsync(scope, runtimeId, ct);
+
             object? result = request.Method switch
             {
                 McpMethods.Initialize => HandleInitialize(),
@@ -131,6 +135,16 @@ public sealed class McpServer
             _logger.LogError(ex, "Error handling MCP request {Method}", request.Method);
             return new JsonRpcResponse("2.0", request.Id, null, new JsonRpcError(-32603, ex.Message, null));
         }
+    }
+
+    private async Task RefuseIfKilledAsync(AuthorizedScope scope, Guid runtimeId, CancellationToken ct)
+    {
+        if (runtimeId != Guid.Empty &&
+            await _coordination.IsTargetKilledAsync(scope.TenantId, KillSwitchTargetType.Runtime, runtimeId, ct))
+            throw new ConflictException("This runtime has been stopped by a kill switch.");
+        if (await _coordination.IsTargetKilledAsync(
+                scope.TenantId, KillSwitchTargetType.AgentPrincipal, scope.ActorId.Value, ct))
+            throw new ConflictException("This agent has been stopped by a kill switch.");
     }
 
     private static object HandleInitialize() => new

@@ -92,9 +92,17 @@ public static class ProjectEndpoints
         return Results.Ok(projects.Select(Map).ToList());
     }
 
-    private static async Task<IResult> GetProjectAsync(Guid tenantId, Guid projectId, GetProject useCase, CancellationToken ct)
+    private static async Task<IResult> GetProjectAsync(
+        Guid tenantId, Guid projectId, HttpContext http, GetProject useCase, CancellationToken ct)
     {
-        var project = await useCase.ExecuteAsync(new TenantId(tenantId), new ProjectId(projectId), ct);
+        var platformAdmin = string.Equals(
+            http.User.FindFirst("platform_admin")?.Value, "true", StringComparison.Ordinal);
+        var project = await useCase.ExecuteForActorAsync(
+            new TenantId(tenantId),
+            new ProjectId(projectId),
+            AuthenticatedPrincipal.GetId(http),
+            platformAdmin,
+            ct);
 
         return project is null
             ? Results.NotFound()

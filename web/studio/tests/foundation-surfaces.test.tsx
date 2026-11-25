@@ -7,6 +7,7 @@ import { KnowledgePage } from '../src/pages/KnowledgePage';
 import { EvidencePage } from '../src/pages/EvidencePage';
 import { RelationsPage } from '../src/pages/RelationsPage';
 import { ReportsPage } from '../src/pages/ReportsPage';
+import { CommercialPage } from '../src/pages/CommercialPage';
 
 const apiFetch = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
 
@@ -134,6 +135,21 @@ describe('foundation surfaces', () => {
     screen.getByText('New knowledge item').click();
     const type = await screen.findByLabelText('Type');
     expect((type as HTMLSelectElement).value).toBe('requirements.functional@1.0');
+  });
+
+  it('shows tenant usage without treating it as a bill', async () => {
+    apiFetch.mockResolvedValueOnce([
+      {
+        meter: 'coordination.sessions',
+        consumed: 3,
+        resourceClass: 'count',
+        windowStart: '2026-11-01T00:00:00Z',
+        windowEnd: '2026-11-25T00:00:00Z',
+      },
+    ]);
+    renderPage(<CommercialPage />);
+    expect(await screen.findByText('coordination.sessions')).toBeTruthy();
+    expect(screen.getByText(/does not bill/i)).toBeTruthy();
   });
 
   it('explains separate closed-loop ratios on Reports', () => {

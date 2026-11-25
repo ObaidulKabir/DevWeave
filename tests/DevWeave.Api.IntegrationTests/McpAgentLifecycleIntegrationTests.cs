@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -5,6 +6,7 @@ using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Application.Planning;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Domain.Agents;
+using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
@@ -177,6 +179,73 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
         using var decide = _factory.Services.CreateScope();
         var decision = await decide.ServiceProvider.GetRequiredService<IIntegrationQueue>().DecideAsync(owner, queueItemId, fence);
         Assert.Equal("Rejected", decision.Outcome);
+    }
+
+    [Fact]
+    public async Task MCP_034_kill_switch_expires_the_lease_and_refuses_the_next_tool_call()
+    {
+        var seed = await SeedAsync();
+        var owner = new AuthorizedScope(seed.Tenant.Id, seed.Owner.Id, seed.Project.Id, "test", "corr");
+        Guid baselineId, campaignId;
+        using (var setup = _factory.Services.CreateScope())
+        {
+            var services = setup.ServiceProvider;
+            baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
+                new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", $"camp-{Guid.NewGuid():N}"));
+        }
+
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Agent.Id.Value);
+        var url = $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/mcp/rpc";
+        var id = 0;
+        async Task<JsonElement> Tool(string name, object arguments)
+        {
+            using var response = await agent.PostAsJsonAsync(url, new JsonRpcRequest("2.0", ++id, McpMethods.CallTool, new { name, arguments }));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            return doc!.RootElement.Clone();
+        }
+
+        var runtimeId = McpJson.Payload(await Tool("register_runtime", new
+        {
+            runtimeClass = "test-runtime", protocolVersion = McpServer.ProtocolVersion,
+            capabilities = new[] { "code.write" }, attestationRef = $"attest-{Guid.NewGuid():N}",
+        })).GetProperty("id").GetGuid();
+        agent.DefaultRequestHeaders.Add("X-Runtime-Id", runtimeId.ToString());
+
+        var packageId = McpJson.Payload(await Tool("create_work_package", new
+        {
+            campaignId, baselineId, objective = "Implement the idea",
+            implementsRevisionIds = new[] { seed.RootRevision.Id.Value },
+            specTopics = new[] { "backend.language" },
+        })).GetProperty("id").GetGuid();
+        var leaseId = McpJson.Payload(await Tool("request_assignment", new
+        {
+            workPackageId = packageId, resourceScope = $"src/{Guid.NewGuid():N}",
+            expiresAt = DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"),
+            idempotencyKey = $"lease-{Guid.NewGuid():N}",
+        })).GetProperty("id").GetGuid();
+
+        var watch = Stopwatch.StartNew();
+        using (var kill = _factory.Services.CreateScope())
+        {
+            await kill.ServiceProvider.GetRequiredService<IKillSwitchAuthority>().ActivateAsync(
+                owner, KillSwitchTargetType.Runtime, runtimeId, "Stop this runtime");
+        }
+
+        var refused = await Tool("get_plan_status", new { });
+        watch.Stop();
+        var error = refused.GetProperty("error");
+        Assert.Equal(-32009, error.GetProperty("code").GetInt32());
+        Assert.Equal("conflict", error.GetProperty("data").GetProperty("kind").GetString());
+        Assert.Contains("kill switch", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.True(watch.Elapsed < CoordinationKillSwitch.RevocationTarget);
+
+        using var verify = _factory.Services.CreateScope();
+        var db = verify.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        var lease = await db.TaskLeases.SingleAsync(row => row.Id == new LeaseId(leaseId));
+        Assert.Equal(LeaseStatus.Expired, lease.Status);
     }
 
     private async Task<Seed> SeedAsync()

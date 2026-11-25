@@ -75,6 +75,8 @@ public static class CoordinationEndpoints
             .RequireAuthorization(ApiAuthorizationPolicies.Agent);
 
         group.MapPost("/integration-queue", EnqueueIntegrationAsync);
+        group.MapPost("/integration-queue/{queueItemId:guid}/stage", RecordIntegrationStageAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/integration-queue/{queueItemId:guid}/decide", DecideIntegrationAsync);
 
         group.MapGet("/mcp", GetMcpDirectoryAsync);
@@ -632,6 +634,22 @@ public static class CoordinationEndpoints
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
+    private static async Task<IResult> RecordIntegrationStageAsync(
+        Guid tenantId, Guid projectId, Guid queueItemId, [FromBody] IntegrationStageRequest request,
+        IIntegrationQueue queue, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var decision = await queue.RecordStageAsync(
+                Scope(tenantId, projectId, http, "Record integration stage"),
+                queueItemId, request.Stage, request.Note, ct);
+            return Results.Ok(decision);
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
+    }
+
     private static async Task<IResult> DecideIntegrationAsync(
         Guid tenantId, Guid projectId, Guid queueItemId, [FromBody] DecideIntegrationRequest request,
         IIntegrationQueue queue, HttpContext http, CancellationToken ct)
@@ -675,6 +693,7 @@ public static class CoordinationEndpoints
     private sealed record RenewLeaseRequest(long ExpectedFence, DateTimeOffset ExpiresAt);
     private sealed record ReleaseLeaseRequest(long ExpectedFence);
     private sealed record DecideIntegrationRequest(long ExpectedFence);
+    private sealed record IntegrationStageRequest(string Stage, string Note);
 }
 
 public sealed record PlanLockItemResponse(

@@ -6,6 +6,7 @@ import { Shell } from './components/Shell';
 import { AccessPage } from './pages/AccessPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { CatalogPage } from './pages/CatalogPage';
+import { CommercialPage } from './pages/CommercialPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { CoordinationPage } from './pages/CoordinationPage';
 import { DocumentsPage } from './pages/DocumentsPage';
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="live" element={<LiveOperationsPage />} />
               <Route path="coordination" element={<CoordinationPage />} />
               <Route path="reports" element={<ReportsPage />} />
+              <Route path="commercial" element={<CommercialPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/apps" replace />} />
             </Route>

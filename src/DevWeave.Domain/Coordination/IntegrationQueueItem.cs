@@ -7,6 +7,10 @@ public enum IntegrationStatus
 {
     Queued,
     Processing,
+    Reviewed,
+    Tested,
+    Merged,
+    Verified,
     Accepted,
     Rejected,
     Failed
@@ -62,9 +66,23 @@ public sealed class IntegrationQueueItem
             DateTimeOffset.UtcNow);
     }
 
+    public void RecordStage(IntegrationStatus stage, string note)
+    {
+        if (stage is not (IntegrationStatus.Reviewed or IntegrationStatus.Tested
+            or IntegrationStatus.Merged or IntegrationStatus.Verified))
+            throw new ArgumentException("Integration stage must be Reviewed, Tested, Merged, or Verified.");
+        if (string.IsNullOrWhiteSpace(note))
+            throw new ArgumentException("An integration stage requires a note.");
+        if (Status is IntegrationStatus.Accepted or IntegrationStatus.Rejected or IntegrationStatus.Failed)
+            throw new InvalidOperationException("Item already decided.");
+
+        Status = stage;
+        Outcome = note.Trim();
+    }
+
     public void Decide(bool accepted, string outcome, long fence)
     {
-        if (Status != IntegrationStatus.Queued && Status != IntegrationStatus.Processing)
+        if (Status is IntegrationStatus.Accepted or IntegrationStatus.Rejected or IntegrationStatus.Failed)
             throw new InvalidOperationException("Item already decided.");
 
         Status = accepted ? IntegrationStatus.Accepted : IntegrationStatus.Rejected;

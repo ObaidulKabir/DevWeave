@@ -27,6 +27,7 @@ public sealed class AgentRuntimeInstance
     public string Provider { get; }
     public string? WorkspaceProvider { get; }
     public string? BillingMeter { get; }
+    public IReadOnlyList<string> Capabilities { get; }
 
     private AgentRuntimeInstance(
         RuntimeId id,
@@ -42,7 +43,8 @@ public sealed class AgentRuntimeInstance
         ExecutionLocation executionLocation,
         string provider,
         string? workspaceProvider,
-        string? billingMeter)
+        string? billingMeter,
+        IReadOnlyList<string> capabilities)
     {
         Id = id;
         TenantId = tenantId;
@@ -58,6 +60,7 @@ public sealed class AgentRuntimeInstance
         Provider = provider;
         WorkspaceProvider = workspaceProvider;
         BillingMeter = billingMeter;
+        Capabilities = capabilities;
     }
 
     public static AgentRuntimeInstance Register(
@@ -70,7 +73,8 @@ public sealed class AgentRuntimeInstance
         string? executionLocation = null,
         string provider = ExecutionFacts.CustomerProvider,
         string? workspaceProvider = null,
-        string? billingMeter = null)
+        string? billingMeter = null,
+        IReadOnlyList<string>? capabilities = null)
     {
         return new AgentRuntimeInstance(
             RuntimeId.New(),
@@ -86,7 +90,30 @@ public sealed class AgentRuntimeInstance
             ExecutionFacts.ParseLocation(executionLocation),
             ExecutionFacts.RequireProvider(provider),
             string.IsNullOrWhiteSpace(workspaceProvider) ? null : workspaceProvider.Trim(),
-            string.IsNullOrWhiteSpace(billingMeter) ? null : billingMeter.Trim());
+            string.IsNullOrWhiteSpace(billingMeter) ? null : billingMeter.Trim(),
+            NormalizeCapabilities(capabilities));
+    }
+
+    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string>? capabilities)
+    {
+        if (capabilities is null || capabilities.Count == 0)
+            return Array.Empty<string>();
+        if (capabilities.Count > 32)
+            throw new ArgumentException("A runtime declares at most 32 capabilities.");
+
+        var values = new List<string>(capabilities.Count);
+        foreach (var capability in capabilities)
+        {
+            if (string.IsNullOrWhiteSpace(capability))
+                continue;
+            var trimmed = capability.Trim();
+            if (trimmed.Length > 80)
+                throw new ArgumentException("A runtime capability is at most 80 characters.");
+            if (!values.Contains(trimmed, StringComparer.Ordinal))
+                values.Add(trimmed);
+        }
+
+        return values;
     }
 
     public void Heartbeat(DateTimeOffset observedAt)

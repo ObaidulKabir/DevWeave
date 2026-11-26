@@ -37,6 +37,43 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
     }
 
     [Fact]
+    public async Task MCP_033_initialize_accepts_only_the_advertised_protocol_version()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var tenant = await CreateTenantAsync($"Protocol {suffix}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"owner-{suffix}@example.test");
+        var agent = await CreateAgentAsync(tenant.Id, $"agent-{suffix}@example.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"p{suffix}"[..12], "Protocol", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"p{suffix}"[..12], profile.Id, owner.Id);
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agent.Id, owner.Id);
+        using var client = _factory.CreateAuthenticatedAgentClient(tenant.Id, agent.Id);
+        var url = $"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc";
+
+        using var accepted = await client.PostAsJsonAsync(url,
+            new JsonRpcRequest("2.0", 1, McpMethods.Initialize, new { protocolVersion = McpServer.ProtocolVersion }),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        using var acceptedDoc = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
+        Assert.False(acceptedDoc.RootElement.TryGetProperty("error", out var acceptedError) &&
+                     acceptedError.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined);
+        var result = acceptedDoc.RootElement.GetProperty("result");
+        Assert.Equal(McpServer.ProtocolVersion, result.GetProperty("protocolVersion").GetString());
+        Assert.Equal(McpServer.ProtocolVersion, result.GetProperty("supportedProtocolVersions")[0].GetString());
+
+        using var refused = await client.PostAsJsonAsync(url,
+            new JsonRpcRequest("2.0", 2, McpMethods.Initialize, new { protocolVersion = "1999-01-01" }),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, refused.StatusCode);
+        using var refusedDoc = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+        var error = refusedDoc.RootElement.GetProperty("error");
+        Assert.Equal(-32602, error.GetProperty("code").GetInt32());
+        Assert.Equal("invalid", error.GetProperty("data").GetProperty("kind").GetString());
+        var message = error.GetProperty("message").GetString();
+        Assert.Contains("1999-01-01", message, StringComparison.Ordinal);
+        Assert.Contains(McpServer.ProtocolVersion, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MCP_001_035_agent_coordination_lifecycle_works()
     {
         // 1. Setup Tenant and Agent

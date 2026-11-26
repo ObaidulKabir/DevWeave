@@ -59,6 +59,9 @@ public sealed class AgentRuntimeInstanceConfiguration : IEntityTypeConfiguration
             .HasMaxLength(120);
         builder.Property(r => r.BillingMeter)
             .HasMaxLength(60);
+        builder.Property(r => r.Capabilities)
+            .HasColumnType("text[]")
+            .IsRequired();
 
         builder.HasIndex(r => r.SessionKey).IsUnique();
     }

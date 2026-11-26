@@ -111,7 +111,7 @@ public sealed class McpServer
 
             object? result = request.Method switch
             {
-                McpMethods.Initialize => HandleInitialize(),
+                McpMethods.Initialize => HandleInitialize(request),
                 McpMethods.ListTools => await HandleListToolsAsync(scope, ct),
                 McpMethods.CallTool => await HandleCallToolAsync(scope, runtimeId, request, ct),
                 McpMethods.ListResources => HandleListResources(),
@@ -147,9 +147,17 @@ public sealed class McpServer
             throw new ConflictException("This agent has been stopped by a kill switch.");
     }
 
-    private static object HandleInitialize() => new
+    private static object HandleInitialize(JsonRpcRequest request)
     {
+        var requested = ReadRequestedProtocolVersion(request.Params);
+        if (requested is not null && !string.Equals(requested, ProtocolVersion, StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Unsupported protocol version '{requested}'. This server supports {ProtocolVersion}.");
+
+        return new
+        {
         protocolVersion = ProtocolVersion,
+        supportedProtocolVersions = new[] { ProtocolVersion },
         capabilities = new
         {
             tools = new { listChanged = false },
@@ -163,6 +171,8 @@ public sealed class McpServer
         },
         // Agent-facing Foundation MVP constraints (TEN/GOV/ART/EXP). Keep tools/list descriptions aligned.
         instructions =
+            $"DevWeave project MCP supports protocol version {ProtocolVersion} only. " +
+            "initialize with another protocolVersion is refused; omitting it accepts the advertised version. " +
             "DevWeave project MCP is project-scoped and identity-bound: every request must carry a verified " +
             "tenant, project, principal, and runtime — never trust clientInfo for scope. " +
             "Knowledge and plan reads honor the caller's grant classification ceiling " +
@@ -217,7 +227,29 @@ public sealed class McpServer
             "C11 production — there is no deploy tool; deploy only after a human has verified and approved in Studio or the API. " +
             "C12 refused — -32009 conflict, -32004 not-found, -32003 forbidden, -32602 invalid, -32601 unknown tool; do not retry a conflict. " +
             "A second device must register its own runtime and must not heartbeat a lease held elsewhere."
-    };
+        };
+    }
+
+    private static string? ReadRequestedProtocolVersion(object? parameters)
+    {
+        if (parameters is null)
+            return null;
+
+        var element = parameters is JsonElement json
+            ? json
+            : JsonSerializer.SerializeToElement(parameters);
+        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("initialize params must be an object.");
+        if (!element.TryGetProperty("protocolVersion", out var version) || version.ValueKind == JsonValueKind.Null)
+            return null;
+        if (version.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("protocolVersion must be a string.");
+
+        var text = version.GetString();
+        return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+    }
 
     // The compatibility metadata is deliberately explicit. It is harmless to standard MCP clients and
     // prevents strict 2026-07-28 client models from treating optional discovery metadata as absent.
@@ -279,7 +311,7 @@ public sealed class McpServer
             new[] { "channelType" }),
         NamedTool("list_channels", "List coordination channels in this project so execution clients can discover channel ids",
             new { }, Array.Empty<string>()),
-        NamedTool("register_runtime", "Register this agent runtime instance for the project. executionLocation is CustomerManaged or DevWeaveManaged.",
+        NamedTool("register_runtime", "Register this agent runtime instance for the project. executionLocation is CustomerManaged or DevWeaveManaged. capabilities, provider, location, workspaceProvider, and billingMeter are stored on the runtime. They are not campaign fields, and registration does not provision a runner.",
             new
             {
                 runtimeClass = StringProp(), protocolVersion = StringProp(),

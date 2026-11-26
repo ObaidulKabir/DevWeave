@@ -359,6 +359,7 @@ public static class CoordinationEndpoints
             provider = r.Provider,
             workspaceProvider = r.WorkspaceProvider,
             billingMeter = r.BillingMeter,
+            capabilities = r.Capabilities,
             status = r.Status.ToString(),
             lastHeartbeatAt = r.LastHeartbeatAt,
             createdAt = r.CreatedAt,

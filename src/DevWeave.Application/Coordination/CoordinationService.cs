@@ -118,7 +118,8 @@ public sealed class CoordinationService :
             registration.ExecutionLocation,
             registration.Provider,
             registration.WorkspaceProvider,
-            registration.BillingMeter);
+            registration.BillingMeter,
+            registration.Capabilities);
 
         await _repository.AddRuntimeAsync(runtime, ct);
         await _uow.SaveChangesAsync(ct);

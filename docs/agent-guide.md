@@ -95,8 +95,8 @@ a person approved it, tests passed, git merged, or production changed.
 
 **Agent:** either.
 
-1. `initialize`, then `tools/list`. The list is your grant. A missing tool means you are the wrong agent for that case.
-2. Execution: `register_runtime`, then send `X-Runtime-Id` on every later call.
+1. `initialize` with protocol version `2026-07-28`, then `tools/list`. Another version is refused. Omitting the version accepts the advertised one. The list is your grant. A missing tool means you are the wrong agent for that case.
+2. Execution: `register_runtime`, then send `X-Runtime-Id` on every later call. Capability, provider, location, workspace, and billing stay on that runtime. They are not campaign fields, and registration does not provision a runner.
 3. `list_codebase_targets`. Clone or pull **that** provider, repository, and branch from the git host. If the list is empty, a planning agent must register the pointer before anyone codes.
 4. Planning: `read_plan_outline` and `get_effective_spec`. Execution: `get_plan_status`, then `list_channels` and `read_messages_after_cursor` so you catch up after a disconnect.
 5. `acknowledge_messages` through the sequence you have applied. Acknowledgement is only that cursor. Replay records read. Neither one records acceptance.

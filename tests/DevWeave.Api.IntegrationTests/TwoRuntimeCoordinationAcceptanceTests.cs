@@ -371,6 +371,55 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
         Assert.Contains("Blocked", decisions, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task COM_022_a_runtime_records_adapter_facts_without_changing_the_campaign()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var tenant = await CreateTenantAsync($"Adapter {suffix}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"lead-{suffix}@example.test");
+        using var human = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"r{suffix}"[..12], "Adapter", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"r{suffix}"[..12], profile.Id, owner.Id);
+        var basePath = $"/tenants/{tenant.Id}/projects/{project.Id}/coordination";
+        var agentA = await CreateAgentAsync(tenant.Id, $"a-{suffix}@example.test");
+        var agentB = await CreateAgentAsync(tenant.Id, $"b-{suffix}@example.test");
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agentA.Id, owner.Id);
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agentB.Id, owner.Id);
+        using var clientA = _factory.CreateAuthenticatedAgentClient(tenant.Id, agentA.Id);
+        using var clientB = _factory.CreateAuthenticatedAgentClient(tenant.Id, agentB.Id);
+
+        await SeedApprovedPlanAsync(tenant.Id, project.Id, owner.Id);
+        var baselineId = await LockBaselineAsync(human, tenant.Id, project.Id, "Adapter plan");
+        var campaign = await human.PostAsJsonAsync($"{basePath}/campaigns",
+            new CampaignDraft(baselineId, Array.Empty<Guid>(), "Shared campaign", "Mediated", $"camp-{suffix}"), Json);
+        campaign.EnsureSuccessStatusCode();
+
+        var registeredA = await clientA.PostAsJsonAsync($"{basePath}/runtimes",
+            new RuntimeRegistration(agentA.Id, "laptop", "1.0", new[] { "code.write" }, $"attest-a-{suffix}",
+                "CustomerManaged", "customer", "github"), Json);
+        registeredA.EnsureSuccessStatusCode();
+        var registeredB = await clientB.PostAsJsonAsync($"{basePath}/runtimes",
+            new RuntimeRegistration(agentB.Id, "recorded-runner", "1.0", new[] { "code.review" }, $"attest-b-{suffix}",
+                "DevWeaveManaged", "devweave", "customer-disk", "managed.compute"), Json);
+        registeredB.EnsureSuccessStatusCode();
+
+        var runtimes = await human.GetStringAsync($"{basePath}/runtimes");
+        Assert.Contains("code.write", runtimes, StringComparison.Ordinal);
+        Assert.Contains("code.review", runtimes, StringComparison.Ordinal);
+        Assert.Contains("github", runtimes, StringComparison.Ordinal);
+        Assert.Contains("customer-disk", runtimes, StringComparison.Ordinal);
+        Assert.Contains("managed.compute", runtimes, StringComparison.Ordinal);
+        Assert.Contains("CustomerManaged", runtimes, StringComparison.Ordinal);
+        Assert.Contains("DevWeaveManaged", runtimes, StringComparison.Ordinal);
+
+        var campaigns = await human.GetStringAsync($"{basePath}/campaigns");
+        Assert.Contains("Shared campaign", campaigns, StringComparison.Ordinal);
+        Assert.DoesNotContain("code.write", campaigns, StringComparison.Ordinal);
+        Assert.DoesNotContain("code.review", campaigns, StringComparison.Ordinal);
+        Assert.DoesNotContain("customer-disk", campaigns, StringComparison.Ordinal);
+        Assert.DoesNotContain("managed.compute", campaigns, StringComparison.Ordinal);
+    }
+
     private async Task<Guid> LockBaselineAsync(HttpClient human, Guid tenantId, Guid projectId, string label)
     {
         var response = await human.PostAsJsonAsync(

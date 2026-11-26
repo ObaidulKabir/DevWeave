@@ -85,14 +85,16 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
             new TransitionCommand("Active", "start", 1, "activate-1"), Json);
         Assert.Equal(HttpStatusCode.OK, activate.StatusCode);
 
-        // Register two remote runtimes.
+        // Register two remote runtimes. Attestation is stored as the runtime session key,
+        // which is unique across the database, so each test needs its own values.
+        var runtimeSuffix = Guid.NewGuid().ToString("N");
         var runtimeAResponse = await clientA.PostAsJsonAsync($"{basePath}/runtimes",
-            new RuntimeRegistration(agentA.Id, "laptop-a", "1.0", new[] { "code.write" }, "attest-a"), Json);
+            new RuntimeRegistration(agentA.Id, "laptop-a", "1.0", new[] { "code.write" }, $"attest-a-{runtimeSuffix}"), Json);
         Assert.Equal(HttpStatusCode.Created, runtimeAResponse.StatusCode);
         var runtimeA = (await runtimeAResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
 
         var runtimeBResponse = await clientB.PostAsJsonAsync($"{basePath}/runtimes",
-            new RuntimeRegistration(agentB.Id, "laptop-b", "1.0", new[] { "code.write" }, "attest-b"), Json);
+            new RuntimeRegistration(agentB.Id, "laptop-b", "1.0", new[] { "code.write" }, $"attest-b-{runtimeSuffix}"), Json);
         Assert.Equal(HttpStatusCode.Created, runtimeBResponse.StatusCode);
         var runtimeB = (await runtimeBResponse.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
 
@@ -517,7 +519,7 @@ public sealed class TwoRuntimeCoordinationAcceptanceTests : IClassFixture<Identi
     private async Task<Guid> RegisterRuntimeAsync(HttpClient client, string basePath, Guid agentId, string runtimeClass, IReadOnlyList<string> capabilities)
     {
         var response = await client.PostAsJsonAsync($"{basePath}/runtimes",
-            new RuntimeRegistration(agentId, runtimeClass, "1.0", capabilities, $"attest-{runtimeClass}"), Json);
+            new RuntimeRegistration(agentId, runtimeClass, "1.0", capabilities, $"attest-{runtimeClass}-{Guid.NewGuid():N}"), Json);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<IdResponse>(Json))!.Id;
     }

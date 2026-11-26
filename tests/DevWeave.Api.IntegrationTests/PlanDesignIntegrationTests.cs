@@ -459,10 +459,12 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
         using (var scope = _factory.Services.CreateScope())
         {
             var services = scope.ServiceProvider;
+            var registry = services.GetRequiredService<ICodebaseRegistry>();
+            targetId = await registry.RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             var baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", "camp-v1"));
+                new CampaignDraft(baselineId, [targetId], "Build version 1", "Mediated", "camp-v1"));
             var scheduler = services.GetRequiredService<IParticipationScheduler>();
 
             // Scope must be content of this plan version, real work items and known specification topics.
@@ -485,8 +487,6 @@ public sealed class PlanDesignIntegrationTests : IClassFixture<IdentityTestFacto
             leaseId = lease.Id;
             fence = lease.Fence;
 
-            var registry = services.GetRequiredService<ICodebaseRegistry>();
-            targetId = await registry.RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             var changeSetId = await registry.RecordChangeSetAsync(owner,
                 new ChangeSetDraft(packageId, targetId, "github:pr/1", "def5678", ["src/app/Program.cs"]));
             queueItemId = await services.GetRequiredService<IIntegrationQueue>()

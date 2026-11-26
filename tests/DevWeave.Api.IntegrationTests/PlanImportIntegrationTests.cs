@@ -10,6 +10,7 @@ using DevWeave.Domain.Coordination;
 using DevWeave.Domain.Identity;
 using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
+using DevWeave.Domain.Planning;
 using DevWeave.Domain.Projects;
 using DevWeave.Domain.Relations;
 using DevWeave.Domain.Schema;
@@ -146,6 +147,7 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         Assert.Contains("there is no Done", description, StringComparison.Ordinal);
         Assert.Contains("work.completion_estimate", description, StringComparison.Ordinal);
         Assert.Contains("requireEmptyProject", description, StringComparison.Ordinal);
+        Assert.Contains("existing knowledge key", description, StringComparison.Ordinal);
         Assert.Contains("one outline root", description, StringComparison.Ordinal);
         Assert.Contains("previous revision", description, StringComparison.Ordinal);
 
@@ -810,6 +812,31 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
     }
 
     [Fact]
+    public async Task An_existing_knowledge_key_blocks_import_while_the_outline_stays_empty()
+    {
+        var seed = await SeedAsync(planning: true, execution: false);
+        using var owner = _factory.CreateAuthenticatedHumanClient(seed.Tenant.Id.Value, seed.Owner.Id.Value);
+        using var created = await owner.PostAsJsonAsync(
+            $"/tenants/{seed.Tenant.Id.Value}/projects/{seed.Project.Id.Value}/knowledge",
+            new CreateKnowledgeItemRequest("nextshop.overview", "Overview", Classification.Internal, RepresentationKind.Text, "doc.note", "1.0", seed.Owner.Id.Value),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Planner.Id.Value);
+        var bundle = Core(
+            $"orphan-{Guid.NewGuid():N}",
+            new[] { Note("root", key: "nextshop.overview") },
+            new object[] { new { itemRef = "root", parentRef = (string?)null, position = 0 } });
+        await AssertRefusedAsync(agent, McpUrl(seed), 1, bundle, -32009, "conflict", "nextshop.overview");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+        Assert.Equal(0, await db.PlanOutlineNodes.CountAsync(node => node.ProjectId == seed.Project.Id));
+        Assert.Equal(1, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+        Assert.Equal(0, await db.InitialPlanProposals.CountAsync(row => row.ProjectId == seed.Project.Id));
+    }
+
+    [Fact]
     public async Task A_second_import_cannot_add_another_outline_root()
     {
         var seed = await SeedAsync(planning: true, execution: false);
@@ -839,6 +866,9 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
         Assert.Equal(1, await db.PlanOutlineNodes.CountAsync(node => node.ProjectId == seed.Project.Id));
+        Assert.Equal(1, await db.KnowledgeItems.CountAsync(item => item.ProjectId == seed.Project.Id));
+        var decided = await db.InitialPlanProposals.SingleAsync(row => row.Id == new InitialPlanProposalId(proposalId));
+        Assert.Equal(InitialPlanProposalStatus.Proposed, decided.Status);
         var original = Assert.Single(await db.KnowledgeRevisions.Where(row => row.TenantId == seed.Tenant.Id && row.RevisionNumber == 1).ToListAsync(),
             row => row.Content.Contains("Checkout", StringComparison.Ordinal));
         Assert.Contains("Checkout", original.Content, StringComparison.Ordinal);
@@ -1159,10 +1189,11 @@ public sealed class PlanImportIntegrationTests : IClassFixture<IdentityTestFacto
         string schemaVersion = "1.0",
         string content = """{"summary":"Checkout"}""",
         string classification = "Internal",
-        string representationKind = "Text") => new
+        string representationKind = "Text",
+        string? key = null) => new
     {
         @ref,
-        key = $"k-{Guid.NewGuid():N}"[..16],
+        key = key ?? $"k-{Guid.NewGuid():N}"[..16],
         title = "Checkout",
         typeId,
         schemaVersion,

@@ -300,6 +300,14 @@ export interface WhoAmI {
   principalType?: string;
 }
 
+export interface CampaignCodebasePin {
+  codebaseTargetId: string;
+  provider: string;
+  repositoryId: string;
+  targetBranch: string;
+  baseCommitSha: string;
+}
+
 export interface Campaign {
   id: string;
   objective: string;
@@ -307,6 +315,7 @@ export interface Campaign {
   status: string;
   baselineId: string;
   createdAt: string;
+  pins?: CampaignCodebasePin[];
 }
 
 export interface PlanStatusCampaign {

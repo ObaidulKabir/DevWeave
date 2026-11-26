@@ -72,6 +72,7 @@ public static class DependencyInjection
         services.AddScoped<ISemanticConflictRepository, SemanticConflictRepository>();
         services.AddScoped<IPayloadValidator, JsonSchemaPayloadValidator>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<ITransactionRunner>(sp => (ITransactionRunner)sp.GetRequiredService<IUnitOfWork>());
         services.AddScoped<IAgentGrantRepository, AgentGrantRepository>();
         services.AddScoped<IAgentCredentialRepository, AgentCredentialRepository>();
         services.AddScoped<IAgentExecutionMetadataRepository, AgentExecutionMetadataRepository>();

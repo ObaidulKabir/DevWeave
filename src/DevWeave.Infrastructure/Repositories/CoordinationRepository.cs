@@ -89,6 +89,28 @@ public sealed class CoordinationRepository : ICoordinationRepository
         await _context.ExecutionCampaigns.AddAsync(campaign, ct);
     }
 
+    public async Task AddCampaignPinsAsync(IReadOnlyList<CampaignCodebasePin> pins, CancellationToken ct = default)
+    {
+        if (pins.Count == 0)
+            return;
+
+        await _context.CampaignCodebasePins.AddRangeAsync(pins, ct);
+    }
+
+    public async Task<List<CampaignCodebasePin>> ListPinsByCampaignsAsync(
+        TenantId tenantId, IReadOnlyCollection<CampaignId> campaignIds, CancellationToken ct = default)
+    {
+        if (campaignIds.Count == 0)
+            return [];
+
+        var ids = campaignIds.ToArray();
+        return await _context.CampaignCodebasePins
+            .Where(pin => pin.TenantId == tenantId && ids.Contains(pin.CampaignId))
+            .OrderBy(pin => pin.RepositoryId)
+            .ThenBy(pin => pin.BaseCommitSha)
+            .ToListAsync(ct);
+    }
+
     public async Task<ExecutionCampaign?> GetCampaignByIdAsync(TenantId tenantId, CampaignId id, CancellationToken ct = default)
     {
         return await _context.ExecutionCampaigns
@@ -115,6 +137,46 @@ public sealed class CoordinationRepository : ICoordinationRepository
     public async Task AddWorkPackageAsync(WorkPackage workPackage, CancellationToken ct = default)
     {
         await _context.WorkPackages.AddAsync(workPackage, ct);
+    }
+
+    public async Task AddWorkPackageDependenciesAsync(IReadOnlyList<WorkPackageDependency> dependencies, CancellationToken ct = default)
+    {
+        if (dependencies.Count == 0)
+            return;
+        await _context.WorkPackageDependencies.AddRangeAsync(dependencies, ct);
+    }
+
+    public async Task<List<WorkPackageDependency>> ListDependenciesByPackageAsync(
+        TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default)
+    {
+        return await _context.WorkPackageDependencies
+            .Where(dependency => dependency.TenantId == tenantId && dependency.PackageId == packageId)
+            .OrderBy(dependency => dependency.DependsOnPackageId)
+            .ToListAsync(ct);
+    }
+
+    public async Task AddWorkPackageAssignmentAsync(WorkPackageAssignment assignment, CancellationToken ct = default)
+    {
+        await _context.WorkPackageAssignments.AddAsync(assignment, ct);
+    }
+
+    public async Task<WorkPackageAssignment?> GetAssignmentByPackageAsync(
+        TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default)
+    {
+        return await _context.WorkPackageAssignments
+            .FirstOrDefaultAsync(assignment => assignment.TenantId == tenantId && assignment.PackageId == packageId, ct);
+    }
+
+    public async Task<ParticipationOffer?> FindAcceptedOfferAsync(
+        TenantId tenantId, CampaignId campaignId, RuntimeId runtimeId, CancellationToken ct = default)
+    {
+        return await _context.ParticipationOffers
+            .Where(offer => offer.TenantId == tenantId
+                && offer.CampaignId == campaignId
+                && offer.RuntimeId == runtimeId
+                && offer.Status == ParticipationOfferStatus.Accepted)
+            .OrderByDescending(offer => offer.DecidedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<WorkPackage?> GetWorkPackageByIdAsync(TenantId tenantId, WorkPackageId id, CancellationToken ct = default)

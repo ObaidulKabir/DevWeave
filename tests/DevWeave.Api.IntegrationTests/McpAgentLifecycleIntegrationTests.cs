@@ -45,10 +45,10 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
-            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", "camp-mcp"));
             targetId = await services.GetRequiredService<ICodebaseRegistry>()
                 .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, [targetId], "Build version 1", "Mediated", "camp-mcp"));
         }
 
         using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Agent.Id.Value);
@@ -192,8 +192,10 @@ public sealed class McpAgentLifecycleIntegrationTests : IClassFixture<IdentityTe
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", $"camp-{Guid.NewGuid():N}"));
+                new CampaignDraft(baselineId, [pinned], "Build version 1", "Mediated", $"camp-{Guid.NewGuid():N}"));
         }
 
         using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Agent.Id.Value);

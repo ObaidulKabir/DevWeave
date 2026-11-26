@@ -59,10 +59,13 @@ public sealed class ParticipationAndQueueIntegrationTests : IClassFixture<Identi
             await repo.AddBaselineAsync(baseline);
             await uow.SaveChangesAsync();
 
+            var actor = new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(user.Id), new ProjectId(project.Id), "Create", "trace");
+            var pinned = await scope.ServiceProvider.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(actor, "github", "acme/bugs", "main", "abc1234");
             var coordinator = scope.ServiceProvider.GetRequiredService<ICampaignCoordinator>();
             campaignId = await coordinator.CreateAsync(
-                new AuthorizedScope(new TenantId(tenant.Id), new PrincipalId(user.Id), new ProjectId(project.Id), "Create", "trace"),
-                new CampaignDraft(baseline.Id.Value, new List<Guid>(), "Fix bugs", "Autonomous", "camp-1"));
+                actor,
+                new CampaignDraft(baseline.Id.Value, new List<Guid> { pinned }, "Fix bugs", "Autonomous", "camp-1"));
         }
 
         // 4. Participation Offer

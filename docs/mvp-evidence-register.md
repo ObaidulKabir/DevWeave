@@ -12,7 +12,7 @@ Rule: no M/MVP row may be marked pass without a named test or approved waiver wi
 | TEN-003 | M | pass | The system shall support human, | Principal domain + Identity endpoints | platform | — |
 | TEN-004 | S | pass | The system shall support tenant | Membership activate/revoke tests | platform | — |
 | TEN-005 | S | pass | The system shall support project- | ProjectMembership use cases/API | platform | — |
-| TEN-007 | M | pass | The system shall support OIDC- | TenantRegistrationIntegrationTests (omit local token; pilot bootstrap and token 404 when an authority is set); Program.cs Production fail-fast; docs/ops/production-oidc-cutover.md; Studio LoginPage hides the GUID form when an authority is published. A live Production identity-provider smoke is still open in docs/version-policy.md | platform | — |
+| TEN-007 | M | pass | The system shall support OIDC- | TenantRegistrationIntegrationTests (omit local token; pilot bootstrap and token 404 when an authority is set); Program.cs Production fail-fast; docs/ops/production-oidc-cutover.md; Studio LoginPage hides the GUID form when an authority is published. Live host check 2026-11-26 still has pilot sign-in; waived in the waiver log until 2026-12-11 | platform | — |
 | TEN-009 | M | pass | Platform support access to tenant | SupportAccessIntegrationTests; ManageSupportAccess; support_access_grants RLS | platform | — |
 | APP-003 | M | pass | Applications shall consume | Studio ReportsPage/EvidencePage/LoginPage against API metrics/evidence/auth | platform | — |
 | PRJ-001 | M | pass | An authorized tenant member shall | ProjectUseCaseTests.PRJ_001_create_rejects_an_actor_from_another_tenant; ProjectIsolationIntegrationTests | platform | — |
@@ -116,6 +116,7 @@ Rule: no M/MVP row may be marked pass without a named test or approved waiver wi
 | --- | --- | --- | --- |
 | (email verification) | No business mailbox yet; registration activates Owner immediately | Product | Until mailbox provisioned |
 | EXP-004 | JSON-LD export deferred (FUT) | Product | 2027-06-01 |
+| TEN-007 live host | On 2026-11-26 `https://dev-weave.prospectbdsoftware.com` returned `pilotEnabled: true`, `oidcAuthority: null`, and HTTP 400 from `POST /auth/pilot/bootstrap`. The pilot route is still mapped. In-tree OIDC behavior stays. This waiver closes the MVP checklist item and is not a passed identity-provider smoke | Product | 2026-12-11 |
 
 ## Counts
 

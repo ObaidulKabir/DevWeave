@@ -74,6 +74,8 @@ public interface IParticipationScheduler
         CancellationToken ct = default);
     Task<Guid> CreatePackageAsync(AuthorizedScope scope, PackageDraft draft,
         CancellationToken ct = default);
+    Task<WorkPackageAssignmentView> AssignAsync(AuthorizedScope scope, Guid workPackageId, Guid runtimeId,
+        CancellationToken ct = default);
 }
 
 public interface ILeaseAuthority
@@ -191,6 +193,14 @@ public sealed record CampaignStatusView(
     string Status,
     string Objective);
 
+public sealed record WorkPackageAssignmentView(
+    Guid WorkPackageId,
+    Guid RuntimeId,
+    Guid CampaignId,
+    Guid BaselineId,
+    Guid ContextSnapshotId,
+    IReadOnlyList<Guid> SnapshotRevisionIds);
+
 public sealed record WorkPackageStatusView(
     Guid Id,
     Guid CampaignId,
@@ -208,7 +218,11 @@ public sealed record WorkPackageStatusView(
     bool Unscoped,
     WorkthroughView? LatestWorkthrough = null,
     string ExecutionLocation = "CustomerManaged",
-    string Provider = "customer");
+    string Provider = "customer",
+    IReadOnlyList<Guid>? DependsOnPackageIds = null,
+    Guid? AssignedRuntimeId = null,
+    Guid? ContextSnapshotId = null,
+    IReadOnlyList<Guid>? SnapshotRevisionIds = null);
 
 public sealed record WorkthroughView(
     Guid Id,

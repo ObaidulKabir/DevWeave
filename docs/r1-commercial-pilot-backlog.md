@@ -1,10 +1,12 @@
 # R1 commercial pilot backlog
 
-R1 is parked. [docs/version-policy.md](version-policy.md) makes Foundation MVP
-the only open version through 2026-12-11. Do not add the next campaign,
-commercial, or agency case while that policy is in force. Code already in the
-tree stays. This backlog resumes at R1-A after the MVP close checklist is
-recorded.
+Foundation MVP closed 2026-11-26. R1-A is recorded: a campaign stores the
+approved baseline and the pinned codebase commit. R1-B is recorded: two remote
+runtimes receive coherent packages on one baseline after accepted offers.
+[docs/version-policy.md](version-policy.md) opens the next increment at R1-C.
+R1-C has not started. Do not add R1-D or a later campaign, commercial, or
+agency case ahead of it. Code already in the tree stays. The live-host identity
+waiver expires 2026-12-11 and is not the production-OIDC run in B1.
 
 ## Acceptance checklist
 

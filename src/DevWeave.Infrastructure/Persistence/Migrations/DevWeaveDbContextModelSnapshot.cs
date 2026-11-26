@@ -819,6 +819,50 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.ToTable("agent_runtime_instances", (string)null);
                 });
 
+            modelBuilder.Entity("DevWeave.Domain.Coordination.CampaignCodebasePin", b =>
+                {
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaseCommitSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("PinnedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("TargetBranch")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("CampaignId", "TargetId");
+
+                    b.HasIndex("TenantId", "ProjectId", "CampaignId");
+
+                    b.ToTable("campaign_codebase_pins", (string)null);
+                });
+
             modelBuilder.Entity("DevWeave.Domain.Coordination.ChangeSet", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1471,6 +1515,70 @@ namespace DevWeave.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "PredecessorWorkPackageId");
 
                     b.ToTable("work_packages", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Coordination.WorkPackageAssignment", b =>
+                {
+                    b.Property<Guid>("PackageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("BaselineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ContextSnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RuntimeId")
+                        .HasColumnType("uuid");
+
+                    b.PrimitiveCollection<Guid[]>("SnapshotRevisionIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PackageId");
+
+                    b.HasIndex("TenantId", "CampaignId", "RuntimeId");
+
+                    b.ToTable("work_package_assignments", (string)null);
+                });
+
+            modelBuilder.Entity("DevWeave.Domain.Coordination.WorkPackageDependency", b =>
+                {
+                    b.Property<Guid>("PackageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DependsOnPackageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BaselineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PackageId", "DependsOnPackageId");
+
+                    b.HasIndex("TenantId", "CampaignId", "BaselineId");
+
+                    b.ToTable("work_package_dependencies", (string)null);
                 });
 
             modelBuilder.Entity("DevWeave.Domain.Coordination.WorkPackageWorkthrough", b =>

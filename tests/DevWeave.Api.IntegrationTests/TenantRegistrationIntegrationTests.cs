@@ -101,5 +101,19 @@ public sealed class TenantRegistrationIntegrationTests : IClassFixture<IdentityT
         using var optionsBody = JsonDocument.Parse(await options.Content.ReadAsStringAsync());
         Assert.False(optionsBody.RootElement.GetProperty("pilotEnabled").GetBoolean());
         Assert.Equal(IdentityTestFactory.TestOidcIssuer, optionsBody.RootElement.GetProperty("oidcAuthority").GetString());
+
+        using var bootstrap = await client.PostAsJsonAsync(
+            "/auth/pilot/bootstrap",
+            new { tenantName = "Oidc Delivery", ownerEmail = "owner@oidc.example" });
+        Assert.Equal(HttpStatusCode.NotFound, bootstrap.StatusCode);
+
+        using var pilotToken = await client.PostAsJsonAsync(
+            "/auth/pilot/token",
+            new
+            {
+                tenantId = body.RootElement.GetProperty("tenantId").GetGuid(),
+                principalId = body.RootElement.GetProperty("principalId").GetGuid(),
+            });
+        Assert.Equal(HttpStatusCode.NotFound, pilotToken.StatusCode);
     }
 }

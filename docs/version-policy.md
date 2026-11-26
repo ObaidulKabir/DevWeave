@@ -1,8 +1,8 @@
 # DevWeave version policy
 
 Status: engineering release policy, effective 2026-11-26.
-Baseline: DWV-SRS-001 v1.5, still a proposed baseline. Product-owner and
-engineering-lead approval of the SRS remain pending.
+Baseline: DWV-SRS-001 v1.5. The close ships against this proposed baseline.
+Named product-owner and engineering-lead signatures are not recorded here.
 
 This file decides **when** a capability is built. It does not change what an
 SRS requirement means. Requirement IDs keep the priority and release tag in
@@ -100,19 +100,19 @@ already have code and tests; that code stays, and the next slice waits.
 
 ## Close checklist
 
-MVP is closed only when each line has a date and a named record. Items 1, 3, and 4
-are recorded. Items 2 and 5 are still open, so the version stays open and R1
+MVP is closed only when each line has a date and a named record. Items 1, 3, 4,
+and 5 are recorded. Item 2 is still open, so the version stays open and R1
 stays parked.
 
 | # | Record | Current fact | What closes it |
 | --- | --- | --- | --- |
 | 1 | Evidence register | Recorded 2026-11-26: 101 pass, 1 waived, 0 partial, 0 fail | Leave the counts. A new Must row is a scope change, not a close task |
-| 2 | Production human identity | Open. Production requires a real OIDC authority. Development with an empty authority still mints pilot JWTs. The register cites the cutover runbook | A recorded production smoke from `docs/ops/production-oidc-cutover.md`, or a waiver with owner and expiry |
+| 2 | Production human identity | Open. An OIDC authority disables pilot token minting, including `POST /auth/pilot/bootstrap` (404), and Studio hides the GUID form. A live identity-provider smoke on a Production host is not recorded | A recorded production smoke from `docs/ops/production-oidc-cutover.md`, or a waiver with owner and expiry |
 | 3 | Restore claim | Recorded. Local compose drill on 2026-11-20: RPO within 24 hours, RTO within 45 minutes. WAL archiving is off | That drill is the MVP claim. The SRS §12.3 planning target of RPO within 1 hour stays a later operations drill. Do not enable WAL to chase it during this close |
 | 4 | Owner Studio | Recorded 2026-11-26. Signed-in Development pass: tenant “MVP Close Studio”, project “MVP Close” (`mvp-close`), knowledge `K-01` revision 1 (`requirements.functional`), plan import `mvp-close-plan-1` approved and materialized as `GOAL-01` (Approved) and work `W-CLOSE` (Planned, reported NotStarted, Unverified, Pending). Usage was not part of this gate | One signed-in pass of project, knowledge, and plan import |
-| 5 | Baseline signature | Open. SRS approval is pending | Product owner and engineering lead sign DWV-SRS-001 v1.5, or this file records that MVP ships against the proposed baseline |
+| 5 | Baseline signature | Recorded 2026-11-26. MVP ships against the proposed DWV-SRS-001 v1.5 baseline. Named product-owner and engineering-lead signatures are not in this file | This record is the ship-against-proposed-baseline decision. A later signature does not reopen MVP |
 
-If item 2 or item 5 is still open on 2026-12-11, MVP stays the active version.
+If item 2 is still open on 2026-12-11, MVP stays the active version.
 The date moves only by editing this file. R1 does not start to fill the gap.
 
 ## After the close

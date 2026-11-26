@@ -12,7 +12,7 @@ Rule: no M/MVP row may be marked pass without a named test or approved waiver wi
 | TEN-003 | M | pass | The system shall support human, | Principal domain + Identity endpoints | platform | — |
 | TEN-004 | S | pass | The system shall support tenant | Membership activate/revoke tests | platform | — |
 | TEN-005 | S | pass | The system shall support project- | ProjectMembership use cases/API | platform | — |
-| TEN-007 | M | pass | The system shall support OIDC- | TenantRegistrationIntegrationTests (omit local token); Program.cs Production fail-fast; docs/ops/production-oidc-cutover.md; Studio LoginPage VITE_OIDC_AUTHORITY | platform | — |
+| TEN-007 | M | pass | The system shall support OIDC- | TenantRegistrationIntegrationTests (omit local token; pilot bootstrap and token 404 when an authority is set); Program.cs Production fail-fast; docs/ops/production-oidc-cutover.md; Studio LoginPage hides the GUID form when an authority is published. A live Production identity-provider smoke is still open in docs/version-policy.md | platform | — |
 | TEN-009 | M | pass | Platform support access to tenant | SupportAccessIntegrationTests; ManageSupportAccess; support_access_grants RLS | platform | — |
 | APP-003 | M | pass | Applications shall consume | Studio ReportsPage/EvidencePage/LoginPage against API metrics/evidence/auth | platform | — |
 | PRJ-001 | M | pass | An authorized tenant member shall | ProjectUseCaseTests.PRJ_001_create_rejects_an_actor_from_another_tenant; ProjectIsolationIntegrationTests | platform | — |

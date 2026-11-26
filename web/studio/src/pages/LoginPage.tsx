@@ -50,6 +50,7 @@ export function LoginPage() {
 
   const [loginOptions, setLoginOptions] = useState<LoginOptions | null>(null);
   const oidcAuthorizeUrl = useMemo(() => resolveOidcAuthorizeUrl(loginOptions), [loginOptions]);
+  const pilotEnabled = loginOptions?.pilotEnabled !== false && !oidcAuthorizeUrl;
   const last = getLastIdentity();
   const [tenantId, setTenantId] = useState(() => last?.tenantId ?? getEnvTenantId() ?? '');
   const [principalId, setPrincipalId] = useState(() => last?.principalId ?? '');
@@ -109,7 +110,7 @@ export function LoginPage() {
           <h1 className="mt-4 font-display text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
             {oidcAuthorizeUrl
-              ? 'Production sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'
+              ? 'Sign-in uses your identity provider. After registering a tenant, map the Owner principal in the IdP and continue here.'
               : loginOptions && loginOptions.pilotEnabled === false
                 ? 'GUID sign-in is disabled on this host. Configure an identity provider, or run the API in Development.'
                 : 'Development sign-in uses your tenant and Owner principal. Register a tenant first if these IDs are new.'}
@@ -136,16 +137,14 @@ export function LoginPage() {
         </div>
 
         {oidcAuthorizeUrl ? (
-          <div className="mt-8 space-y-4">
+          <div className="mt-8">
             <a className="btn btn-primary w-full" href={oidcAuthorizeUrl}>
               Sign in with identity provider
             </a>
-            <p className="text-center text-xs text-[var(--muted)]">
-              Pilot GUID form remains available below for emergency break-glass only.
-            </p>
           </div>
         ) : null}
 
+        {pilotEnabled ? (
         <form className="mt-8 space-y-4" onSubmit={onSubmit} noValidate>
           <label className="block space-y-1.5">
             <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -188,9 +187,10 @@ export function LoginPage() {
           ) : null}
 
           <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-            {busy ? 'Signing in…' : oidcAuthorizeUrl ? 'Break-glass pilot sign-in' : 'Sign in to dashboard'}
+            {busy ? 'Signing in…' : 'Sign in to dashboard'}
           </button>
         </form>
+        ) : null}
 
         <p className="mt-6 text-center text-sm text-[var(--muted)]">
           New here?{' '}

@@ -622,6 +622,17 @@ components:
         protocolVersion: { type: string }
         capabilities: { type: array, items: { type: string } }
         attestationRef: { type: string }
+        executionLocation:
+          type: [string, 'null']
+          description: CustomerManaged or DevWeaveManaged. Defaults to CustomerManaged. Stored on the runtime; registration does not provision a runner.
+        provider:
+          type: string
+          default: customer
+          description: Runtime or model provider. Defaults to customer.
+        workspaceProvider: { type: [string, 'null'] }
+        billingMeter:
+          type: [string, 'null']
+          description: Meter recorded on the runtime. Not a campaign field.
     OfferDraft:
       type: object
       required: [campaignId, runtimeId, capabilities, availableUntil]
@@ -652,6 +663,13 @@ components:
           type: array
           description: Specification topics whose binding decisions this work follows.
           items: { type: string }
+        executionLocation:
+          type: [string, 'null']
+          description: CustomerManaged or DevWeaveManaged. Defaults to CustomerManaged when omitted.
+        provider:
+          type: string
+          default: customer
+          description: Provider recorded on the package. Defaults to customer.
     LeaseRequest:
       type: object
       required: [workPackageId, runtimeId, resourceScope, expiresAt, expectedFence, idempotencyKey]

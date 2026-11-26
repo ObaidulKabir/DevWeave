@@ -152,7 +152,9 @@ public sealed class ClosedLoopAnalyticsTests
     [Fact]
     public void A_current_revision_outside_its_valid_interval_is_not_fresh()
     {
-        var graph = NewGraph();
+        // A revision with no ValidFrom is valid from RecordedAt (wall-clock UtcNow). The as-of
+        // has to stay after that, or the current revision is not inside its interval yet.
+        var graph = NewGraph() with { Now = DateTimeOffset.UtcNow.AddMinutes(5) };
         var staleItem = Requirement(graph, "FR-1", "Checkout");
         var stale = staleItem.AddRevision(
             "1.0", "{\"statement\":\"old\"}", graph.Actor.Id, "initial", null, null, 0,

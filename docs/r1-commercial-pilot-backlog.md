@@ -1,8 +1,10 @@
 # R1 commercial pilot backlog
 
-Do not expand this backlog until Foundation MVP Phase A exit (every M/MVP row
-`pass`/`waived`, production OIDC, least-privilege DB, OPS drill recorded), unless
-product explicitly waives selling R1 early.
+R1 is parked. [docs/version-policy.md](version-policy.md) makes Foundation MVP
+the only open version through 2026-12-11. Do not add the next campaign,
+commercial, or agency case while that policy is in force. Code already in the
+tree stays. This backlog resumes at R1-A after the MVP close checklist is
+recorded.
 
 ## Acceptance checklist
 

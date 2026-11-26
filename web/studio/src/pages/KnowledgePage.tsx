@@ -35,7 +35,12 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
 ];
 
-const EMPTY_CONTENT = '{\n  "statement": "",\n  "acceptance": "",\n  "rationale": "",\n  "source": ""\n}';
+const EMPTY_CONTENT = `{
+  "description": "",
+  "acceptanceCriteria": [
+    { "id": "AC-1", "statement": "" }
+  ]
+}`;
 
 function matchesFilter(item: KnowledgeItem, filter: Filter): boolean {
   if (filter === 'all') return true;
@@ -215,6 +220,7 @@ export function KnowledgePage() {
       setKnowledge((list) => [created, ...list]);
       setFilter('all');
       select(created.id);
+      setEditorContent(EMPTY_CONTENT);
       setEditorOpen(true);
       setForm((value) => ({ ...value, key: '', title: '', description: '' }));
       setNotice('Item created. Add its first revision below.');
@@ -255,7 +261,7 @@ export function KnowledgePage() {
   }
 
   function startEdit() {
-    if (current) setEditorContent(current.content);
+    setEditorContent(current ? current.content : EMPTY_CONTENT);
     setEditorOpen(true);
   }
 

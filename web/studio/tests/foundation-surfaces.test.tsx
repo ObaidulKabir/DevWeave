@@ -138,18 +138,35 @@ describe('foundation surfaces', () => {
   });
 
   it('shows tenant usage without treating it as a bill', async () => {
-    apiFetch.mockResolvedValueOnce([
-      {
-        meter: 'coordination.sessions',
-        consumed: 3,
-        resourceClass: 'count',
-        windowStart: '2026-11-01T00:00:00Z',
-        windowEnd: '2026-11-25T00:00:00Z',
-      },
-    ]);
+    apiFetch.mockImplementation((path: unknown) => {
+      const url = typeof path === 'string' ? path : '';
+      if (url.includes('/commercial/plan')) {
+        return Promise.resolve({
+          key: 'standard-2026',
+          version: '1.0',
+          currency: 'USD',
+          price: 149,
+          entitlements: [{ key: 'coordination.sessions', limit: 100, unit: 'count', action: 'Block', overageRate: 0 }],
+        });
+      }
+      return Promise.resolve([
+        {
+          meter: 'coordination.sessions',
+          consumed: 3,
+          resourceClass: 'count',
+          windowStart: '2026-11-01T00:00:00Z',
+          windowEnd: '2026-11-25T00:00:00Z',
+          projectId: 'project-1',
+          executionMode: 'CustomerManaged',
+        },
+      ]);
+    });
     renderPage(<CommercialPage />);
     expect(await screen.findByText('coordination.sessions')).toBeTruthy();
     expect(screen.getByText(/does not bill/i)).toBeTruthy();
+    expect(screen.getByText('standard-2026 1.0')).toBeTruthy();
+    expect(screen.getByText(/CustomerManaged/)).toBeTruthy();
+    expect(screen.getByText(/Block at 100 count/)).toBeTruthy();
   });
 
   it('explains separate closed-loop ratios on Reports', () => {

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DevWeave.Application.Archives;
 using DevWeave.Contracts.Planned.V1;
 using DevWeave.Contracts.Identity.V1;
 using DevWeave.Contracts.Knowledge.V1;
@@ -98,6 +99,69 @@ public sealed class ArchiveIntegrationTests : IClassFixture<IdentityTestFactory>
             new ExportDraft($"exit-{Guid.NewGuid():N}"),
             JsonOptions);
         Assert.Equal(HttpStatusCode.Accepted, exportResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task BUS_AC_08_a_tenant_exports_knowledge_and_artifacts_without_an_execution_subscription()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var tenant = await CreateTenantAsync($"Exit {suffix}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"exit-{suffix}@example.test");
+        using var client = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+
+        using (var plan = await client.GetAsync($"/tenants/{tenant.Id}/commercial/plan"))
+            Assert.Equal(HttpStatusCode.NotFound, plan.StatusCode);
+
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"x{suffix}"[..12], "Exit", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"p{suffix}"[..12], profile.Id, owner.Id);
+        await SeedPublishedSchemaAsync("architecture", "1.0", "{\"type\":\"object\"}");
+        var item = await SeedKnowledgeItemAsync(tenant.Id, project.Id, $"note-{suffix}", owner.Id);
+        var revision = await AddRevisionAsync(tenant.Id, item.Id, owner.Id, 0, "{\"diagram\":\"exit-note\"}");
+
+        using var form = new MultipartFormDataContent();
+        var bytes = System.Text.Encoding.UTF8.GetBytes("permitted exit note");
+        var file = new ByteArrayContent(bytes);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
+        form.Add(file, "file", "exit.txt");
+        form.Add(new StringContent("exit.txt"), "key");
+        form.Add(new StringContent("exit.txt"), "fileName");
+        form.Add(new StringContent("text/plain"), "mediaType");
+        form.Add(new StringContent("Internal"), "classification");
+        form.Add(new StringContent(owner.Id.ToString()), "creator");
+        using var upload = await client.PostAsync($"/tenants/{tenant.Id}/projects/{project.Id}/artifacts", form);
+        upload.EnsureSuccessStatusCode();
+        using var artifactDoc = JsonDocument.Parse(await upload.Content.ReadAsStringAsync());
+        var checksum = artifactDoc.RootElement.GetProperty("checksum").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(checksum));
+
+        using var manifestResponse = await client.GetAsync($"/tenants/{tenant.Id}/export/manifest");
+        Assert.Equal(HttpStatusCode.OK, manifestResponse.StatusCode);
+        var manifest = (await manifestResponse.Content.ReadFromJsonAsync<ExportManifest>(JsonOptions))!;
+        Assert.Contains(manifest.Revisions, reference => reference.Id == item.Id && reference.RevisionId == revision.Id);
+        Assert.Contains(checksum!, manifest.ArtifactChecksums);
+
+        using var exportResponse = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/export",
+            new ExportDraft($"exit-{suffix}"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Accepted, exportResponse.StatusCode);
+
+        using var archiveResponse = await client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{project.Id}/archives/export",
+            new ExportDraft($"archive-{suffix}"),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.Accepted, archiveResponse.StatusCode);
+        var job = (await archiveResponse.Content.ReadFromJsonAsync<ArchiveJobView>(JsonOptions))!;
+        Assert.Equal("Export", job.Kind);
+        Assert.False(string.IsNullOrWhiteSpace(job.Checksum));
+
+        using var scope = _factory.Services.CreateScope();
+        var storage = scope.ServiceProvider.GetRequiredService<IObjectStorage>();
+        await using var stream = await storage.GetAsync(job.ObjectKey);
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        var packaged = System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+        Assert.Contains("exit-note", packaged, StringComparison.Ordinal);
     }
 
     [Fact]

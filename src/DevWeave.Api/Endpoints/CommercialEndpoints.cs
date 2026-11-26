@@ -16,6 +16,7 @@ public static class CommercialEndpoints
         group.MapPost("/assignments", AssignPlanAsync).RequireAuthorization(ApiAuthorizationPolicies.PlatformAdministrator);
         group.MapPost("/usage", RecordUsageAsync).RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/usage", ListUsageAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
+        group.MapGet("/plan", DescribePlanAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/evaluate", EvaluateEntitlementAsync).RequireAuthorization(ApiAuthorizationPolicies.Agent);
         group.MapGet("/decisions", ListDecisionsAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapGet("/training", GetTrainingAsync).RequireAuthorization(ApiAuthorizationPolicies.Human);
@@ -43,6 +44,13 @@ public static class CommercialEndpoints
         var scope = CreateScope(tenantId, http, "Record usage");
         var id = await useCase.RecordAsync(scope, request, ct);
         return Results.Created($"/commercial/usage/{id}", new { id });
+    }
+
+    private static async Task<IResult> DescribePlanAsync(Guid tenantId, HttpContext http, IPlanCatalogue useCase, CancellationToken ct)
+    {
+        var scope = CreateScope(tenantId, http, "Read active plan");
+        var plan = await useCase.DescribeActiveAsync(scope, ct);
+        return plan is null ? Results.NotFound() : Results.Ok(plan);
     }
 
     private static async Task<IResult> ListUsageAsync(Guid tenantId, DateTimeOffset from, DateTimeOffset to, HttpContext http, IUsageMeter useCase, CancellationToken ct)

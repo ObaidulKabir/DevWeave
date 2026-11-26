@@ -142,7 +142,7 @@ The twelve labels organize work, not percentage completion. Add sub-slices where
 
 ### Current implementation status (2026-11-20)
 
-Evidence: [docs/mvp-evidence-register.md](mvp-evidence-register.md) (Foundation MVP rows `pass`/`waived`). R1 work is sequenced in [docs/r1-commercial-pilot-backlog.md](r1-commercial-pilot-backlog.md).
+Evidence: [docs/mvp-evidence-register.md](mvp-evidence-register.md) (Foundation MVP rows `pass`/`waived`). Delivery order is [docs/version-policy.md](version-policy.md): Foundation MVP is the only open version through 2026-12-11. R1 work already in the tree stays, and the next R1 slice waits. The parked list is [docs/r1-commercial-pilot-backlog.md](r1-commercial-pilot-backlog.md).
 
 | Historical slice | Status | Remaining acceptance |
 | --- | --- | --- |

@@ -65,6 +65,42 @@ export function diffContent(beforeRaw: string, afterRaw: string): FieldChange[] 
   return changes;
 }
 
+export interface FunctionalCriterion {
+  id: string;
+  statement: string;
+}
+
+export interface FunctionalRequirementContent {
+  description: string;
+  acceptanceCriteria: FunctionalCriterion[];
+}
+
+/**
+ * The requirements.functional 1.0 shape: a description plus acceptance criteria.
+ * Null when the document has any other property, so unrelated schemas stay on the generic editor.
+ */
+export function toFunctionalRequirement(raw: string): FunctionalRequirementContent | null {
+  const parsed = parseContent(raw);
+  if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null || Array.isArray(parsed.value)) return null;
+  const obj = parsed.value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0 || keys.some((key) => key !== 'description' && key !== 'acceptanceCriteria')) return null;
+  if (typeof obj.description !== 'string' || !Array.isArray(obj.acceptanceCriteria)) return null;
+  const acceptanceCriteria: FunctionalCriterion[] = [];
+  for (const item of obj.acceptanceCriteria) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return null;
+    const row = item as Record<string, unknown>;
+    if (typeof row.id !== 'string' || typeof row.statement !== 'string') return null;
+    if (Object.keys(row).some((key) => key !== 'id' && key !== 'statement')) return null;
+    acceptanceCriteria.push({ id: row.id, statement: row.statement });
+  }
+  return { description: obj.description, acceptanceCriteria };
+}
+
+export function functionalRequirementJson(content: FunctionalRequirementContent): string {
+  return JSON.stringify(content, null, 2);
+}
+
 /** Flat top-level string fields, used by the guided editor. Null when the content is not a plain object of scalars. */
 export function toFlatFields(raw: string): Record<string, string> | null {
   const parsed = parseContent(raw);

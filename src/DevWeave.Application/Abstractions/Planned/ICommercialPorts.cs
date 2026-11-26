@@ -9,6 +9,7 @@ public interface IPlanCatalogue
     Task<Guid> PublishAsync(AuthorizedScope scope, PlanDraft draft, CancellationToken ct = default);
     Task<Guid> AssignAsync(AuthorizedScope scope, Guid tenantId, Guid planId,
         DateTimeOffset effectiveAt, CancellationToken ct = default);
+    Task<ActivePlanView?> DescribeActiveAsync(AuthorizedScope scope, CancellationToken ct = default);
 }
 
 public interface IEntitlementEvaluator

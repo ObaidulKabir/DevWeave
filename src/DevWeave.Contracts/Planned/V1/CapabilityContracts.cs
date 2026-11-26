@@ -110,7 +110,11 @@ public sealed record UsageObservation(Guid? ProjectId, Guid? CampaignId, Guid? R
     string ExecutionMode, string ResourceClass, string Meter, decimal Quantity,
     DateTimeOffset StartedAt, DateTimeOffset EndedAt, string IdempotencyKey);
 public sealed record UsageView(string Meter, decimal Consumed, string ResourceClass,
-    DateTimeOffset WindowStart, DateTimeOffset WindowEnd);
+    DateTimeOffset WindowStart, DateTimeOffset WindowEnd, Guid? ProjectId = null, string ExecutionMode = "");
+public sealed record EntitlementRuleView(string Key, decimal Limit, string Unit, string Action, decimal OverageRate);
+public sealed record ActivePlanView(
+    Guid PlanId, string Key, string Version, string Currency, decimal Price,
+    IReadOnlyList<EntitlementRuleView> Entitlements);
 public sealed record EntitlementDecisionView(
     Guid Id, Guid? PlanId, string? PlanVersion, string Meter, decimal Requested, decimal Observed,
     string Outcome, string Reason, string PolicyVersion, DateTimeOffset DecidedAt);

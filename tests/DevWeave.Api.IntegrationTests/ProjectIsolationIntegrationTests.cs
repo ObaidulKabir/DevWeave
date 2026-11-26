@@ -3,10 +3,14 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevWeave.Application.Abstractions;
+using DevWeave.Application.Abstractions.Planned;
 using DevWeave.Contracts.Identity.V1;
+using DevWeave.Contracts.Knowledge.V1;
+using DevWeave.Contracts.Planned.V1;
 using DevWeave.Contracts.Lifecycle.V1;
 using DevWeave.Contracts.Projects.V1;
 using DevWeave.Domain.Identity;
+using DevWeave.Domain.Knowledge;
 using DevWeave.Domain.Lifecycle;
 using DevWeave.Domain.Projects;
 using DevWeave.Domain.Schema;
@@ -234,6 +238,76 @@ public sealed class ProjectIsolationIntegrationTests : IClassFixture<IdentityTes
             new AddProjectReferenceRequest(ProjectReferenceType.Repository, "acme/stolen", null),
             JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, crossedReference.StatusCode);
+    }
+
+    [Fact]
+    public async Task BUS_AC_07_a_client_stakeholder_does_not_receive_private_agent_messages()
+    {
+        var tenant = await CreateTenantAsync("Agency");
+        var owner = await CreatePrincipalAsync(tenant.Id, $"lead-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var client = await CreatePrincipalAsync(tenant.Id, $"client-{Guid.NewGuid():N}@example.test", PrincipalType.Human);
+        var agent = await CreatePrincipalAsync(tenant.Id, $"agent-{Guid.NewGuid():N}@example.test", PrincipalType.AiAgent);
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"plan-{Guid.NewGuid():N}", "Plan", "1");
+        using (var invite = await _client.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/members",
+            new InviteMemberRequest(client.Id, MembershipRole.Member),
+            JsonOptions))
+            invite.EnsureSuccessStatusCode();
+
+        var shop = await CreateProjectAsync(tenant.Id, $"shop-{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        await GrantMembershipAsync(tenant.Id, shop.Id, client.Id, ProjectRole.Viewer);
+        await GrantMembershipAsync(tenant.Id, shop.Id, agent.Id, ProjectRole.Member);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DevWeaveDbContext>();
+            if (!await db.SchemaDefinitions.AnyAsync(schema => schema.Namespace == "doc.note" && schema.Version == "1.0"))
+            {
+                var schema = SchemaDefinition.Create("doc.note", "1.0", "platform", "Note", "{\"type\":\"object\"}");
+                schema.Publish();
+                db.Add(schema);
+                await db.SaveChangesAsync();
+            }
+        }
+
+        using var ownerHttp = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        using (var shared = await ownerHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{shop.Id}/knowledge",
+            new CreateKnowledgeItemRequest("shop-brief", "Shared brief", Classification.Internal, RepresentationKind.Text, "doc.note", "1.0", owner.Id),
+            JsonOptions))
+            shared.EnsureSuccessStatusCode();
+        using (var restricted = await ownerHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/projects/{shop.Id}/knowledge",
+            new CreateKnowledgeItemRequest("shop-secret", "Restricted ledger", Classification.Restricted, RepresentationKind.Text, "doc.note", "1.0", owner.Id),
+            JsonOptions))
+            restricted.EnsureSuccessStatusCode();
+
+        Guid channelId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var agentScope = new AuthorizedScope(
+                new TenantId(tenant.Id), new PrincipalId(agent.Id), new ProjectId(shop.Id), "Send", "trace");
+            var registry = scope.ServiceProvider.GetRequiredService<IRuntimeRegistry>();
+            var channels = scope.ServiceProvider.GetRequiredService<ICoordinationChannels>();
+            var runtimeId = await registry.RegisterAsync(
+                agentScope, new RuntimeRegistration(agent.Id, "External", "1.0", Array.Empty<string>(), "session"));
+            channelId = await channels.OpenAsync(agentScope, "Direct", null, null);
+            await channels.SendAsync(
+                agentScope,
+                runtimeId,
+                new MessageDraft(channelId, "Note", "1.0", "{\"text\":\"private agent note\"}", Array.Empty<ResourceRef>(), null, $"idem-{Guid.NewGuid():N}"));
+        }
+
+        var messageUrl = $"/tenants/{tenant.Id}/projects/{shop.Id}/coordination/channels/{channelId}/messages?afterSequence=0&limit=20";
+        using var clientHttp = _factory.CreateAuthenticatedHumanClient(tenant.Id, client.Id);
+        Assert.Equal(HttpStatusCode.NotFound, (await clientHttp.GetAsync(messageUrl)).StatusCode);
+
+        var visible = await clientHttp.GetStringAsync($"/tenants/{tenant.Id}/projects/{shop.Id}/knowledge");
+        Assert.Contains("Shared brief", visible, StringComparison.Ordinal);
+        Assert.DoesNotContain("Restricted ledger", visible, StringComparison.Ordinal);
+
+        var ownerMessages = await ownerHttp.GetStringAsync(messageUrl);
+        Assert.Contains("private agent note", ownerMessages, StringComparison.Ordinal);
     }
 
     private async Task<TenantResponse> CreateTenantAsync(string name)

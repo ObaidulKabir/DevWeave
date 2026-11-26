@@ -37,6 +37,43 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
     }
 
     [Fact]
+    public async Task MCP_033_initialize_accepts_only_the_advertised_protocol_version()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var tenant = await CreateTenantAsync($"Protocol {suffix}");
+        var owner = await CreateOwnerAsync(tenant.Id, $"owner-{suffix}@example.test");
+        var agent = await CreateAgentAsync(tenant.Id, $"agent-{suffix}@example.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"p{suffix}"[..12], "Protocol", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"p{suffix}"[..12], profile.Id, owner.Id);
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agent.Id, owner.Id);
+        using var client = _factory.CreateAuthenticatedAgentClient(tenant.Id, agent.Id);
+        var url = $"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc";
+
+        using var accepted = await client.PostAsJsonAsync(url,
+            new JsonRpcRequest("2.0", 1, McpMethods.Initialize, new { protocolVersion = McpServer.ProtocolVersion }),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        using var acceptedDoc = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
+        Assert.False(acceptedDoc.RootElement.TryGetProperty("error", out var acceptedError) &&
+                     acceptedError.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined);
+        var result = acceptedDoc.RootElement.GetProperty("result");
+        Assert.Equal(McpServer.ProtocolVersion, result.GetProperty("protocolVersion").GetString());
+        Assert.Equal(McpServer.ProtocolVersion, result.GetProperty("supportedProtocolVersions")[0].GetString());
+
+        using var refused = await client.PostAsJsonAsync(url,
+            new JsonRpcRequest("2.0", 2, McpMethods.Initialize, new { protocolVersion = "1999-01-01" }),
+            JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, refused.StatusCode);
+        using var refusedDoc = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+        var error = refusedDoc.RootElement.GetProperty("error");
+        Assert.Equal(-32602, error.GetProperty("code").GetInt32());
+        Assert.Equal("invalid", error.GetProperty("data").GetProperty("kind").GetString());
+        var message = error.GetProperty("message").GetString();
+        Assert.Contains("1999-01-01", message, StringComparison.Ordinal);
+        Assert.Contains(McpServer.ProtocolVersion, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MCP_001_035_agent_coordination_lifecycle_works()
     {
         // 1. Setup Tenant and Agent
@@ -180,6 +217,88 @@ public sealed class McpCoordinationIntegrationTests : IClassFixture<IdentityTest
         Assert.True(toolDelivery.Read);
         Assert.True(toolDelivery.Acknowledged);
         Assert.True(toolDelivery.Accepted);
+    }
+
+    [Fact]
+    public async Task BUS_AC_02_an_external_agent_connects_without_purchasing_managed_compute()
+    {
+        var tenant = await CreateTenantAsync($"External {Guid.NewGuid():N}");
+        var agent = await CreateAgentAsync(tenant.Id, $"ext-{Guid.NewGuid():N}@example.test");
+        var owner = await CreateOwnerAsync(tenant.Id, $"owner-{Guid.NewGuid():N}@example.test");
+        var profile = await CreateLifecycleProfileAsync(tenant.Id, $"p{Guid.NewGuid():N}"[..12], "Plan", "1");
+        var project = await CreateProjectAsync(tenant.Id, $"e{Guid.NewGuid():N}"[..12], profile.Id, owner.Id);
+        await GrantProjectAccessAsync(tenant.Id, project.Id, agent.Id, owner.Id);
+
+        using var ownerHttp = _factory.CreateAuthenticatedHumanClient(tenant.Id, owner.Id);
+        Assert.Equal(HttpStatusCode.NotFound, (await ownerHttp.GetAsync($"/tenants/{tenant.Id}/commercial/plan")).StatusCode);
+
+        using var agentHttp = _factory.CreateAuthenticatedAgentClient(tenant.Id, agent.Id);
+        var rpc = $"/tenants/{tenant.Id}/projects/{project.Id}/mcp/rpc";
+        var external = new JsonRpcRequest("2.0", 1, McpMethods.CallTool, new
+        {
+            name = "register_runtime",
+            arguments = new
+            {
+                runtimeClass = "cursor",
+                protocolVersion = "1.0",
+                capabilities = Array.Empty<string>(),
+                attestationRef = "laptop-1",
+            },
+        });
+        var externalResponse = await agentHttp.PostAsJsonAsync(rpc, external, JsonOptions);
+        externalResponse.EnsureSuccessStatusCode();
+        var externalBody = (await externalResponse.Content.ReadFromJsonAsync<JsonRpcResponse>(JsonOptions))!;
+        Assert.Null(externalBody.Error);
+        using var externalResult = JsonDocument.Parse(externalBody.Result!.ToString()!);
+        var externalRuntimeId = externalResult.RootElement.GetProperty("id").GetGuid();
+
+        var managed = new JsonRpcRequest("2.0", 2, McpMethods.CallTool, new
+        {
+            name = "register_runtime",
+            arguments = new
+            {
+                runtimeClass = "runner",
+                protocolVersion = "1.0",
+                capabilities = Array.Empty<string>(),
+                attestationRef = "runner-1",
+                executionLocation = "DevWeaveManaged",
+                provider = "devweave",
+                billingMeter = "managed.compute",
+            },
+        });
+        var managedResponse = await agentHttp.PostAsJsonAsync(rpc, managed, JsonOptions);
+        managedResponse.EnsureSuccessStatusCode();
+        Assert.Null((await managedResponse.Content.ReadFromJsonAsync<JsonRpcResponse>(JsonOptions))!.Error);
+
+        var runtimes = await ownerHttp.GetStringAsync($"/tenants/{tenant.Id}/projects/{project.Id}/coordination/runtimes");
+        Assert.Contains("CustomerManaged", runtimes, StringComparison.Ordinal);
+        Assert.Contains("DevWeaveManaged", runtimes, StringComparison.Ordinal);
+        Assert.Contains("managed.compute", runtimes, StringComparison.Ordinal);
+
+        var knowledge = await ownerHttp.GetStringAsync($"/tenants/{tenant.Id}/projects/{project.Id}/knowledge");
+        Assert.DoesNotContain("laptop-1", knowledge, StringComparison.Ordinal);
+        Assert.DoesNotContain("managed.compute", knowledge, StringComparison.Ordinal);
+
+        var started = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var ended = DateTimeOffset.UtcNow;
+        using var customerUsage = await agentHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/commercial/usage",
+            new UsageObservation(project.Id, null, externalRuntimeId, "CustomerManaged", "session", "platform.session", 1, started, ended, Guid.NewGuid().ToString()),
+            JsonOptions);
+        customerUsage.EnsureSuccessStatusCode();
+        using var managedUsage = await agentHttp.PostAsJsonAsync(
+            $"/tenants/{tenant.Id}/commercial/usage",
+            new UsageObservation(project.Id, null, null, "DevWeaveManaged", "compute", "managed.compute", 2, started, ended, Guid.NewGuid().ToString()),
+            JsonOptions);
+        managedUsage.EnsureSuccessStatusCode();
+
+        var from = Uri.EscapeDataString(started.AddMinutes(-1).ToString("O"));
+        var to = Uri.EscapeDataString(ended.AddMinutes(1).ToString("O"));
+        var usage = await ownerHttp.GetStringAsync($"/tenants/{tenant.Id}/commercial/usage?from={from}&to={to}");
+        Assert.Contains("platform.session", usage, StringComparison.Ordinal);
+        Assert.Contains("CustomerManaged", usage, StringComparison.Ordinal);
+        Assert.Contains("managed.compute", usage, StringComparison.Ordinal);
+        Assert.Contains("DevWeaveManaged", usage, StringComparison.Ordinal);
     }
 
     private async Task<TenantResponse> CreateTenantAsync(string name)

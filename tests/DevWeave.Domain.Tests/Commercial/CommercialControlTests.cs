@@ -37,6 +37,40 @@ public sealed class CommercialControlTests
         Assert.Equal("devweave", activity.Provider);
         Assert.Throws<ArgumentException>(() => AgentRuntimeInstance.Register(
             tenant, project, actor, "session-2", "cursor", "1.0", "hosted"));
+
+        var external = AgentRuntimeInstance.Register(
+            tenant, project, actor, "session-external", "cursor", "1.0");
+        Assert.Equal(ExecutionLocation.CustomerManaged, external.ExecutionLocation);
+        Assert.Equal(ExecutionFacts.CustomerProvider, external.Provider);
+        Assert.Null(external.BillingMeter);
+        Assert.Null(external.WorkspaceProvider);
+        Assert.Empty(external.Capabilities);
+    }
+
+    [Fact]
+    public void COM_022_adapter_facts_stay_on_the_runtime()
+    {
+        var runtime = AgentRuntimeInstance.Register(
+            TenantId.New(), ProjectId.New(), PrincipalId.New(), "session-adapter", "cursor", "1.0",
+            "DevWeaveManaged", "devweave", "customer-disk", "managed.compute",
+            [" code.write ", "", "code.write"]);
+
+        Assert.Equal(new[] { "code.write" }, runtime.Capabilities);
+        Assert.Equal("devweave", runtime.Provider);
+        Assert.Equal(ExecutionLocation.DevWeaveManaged, runtime.ExecutionLocation);
+        Assert.Equal("customer-disk", runtime.WorkspaceProvider);
+        Assert.Equal("managed.compute", runtime.BillingMeter);
+        Assert.Throws<ArgumentException>(() => AgentRuntimeInstance.Register(
+            TenantId.New(), ProjectId.New(), PrincipalId.New(), "session-long", "cursor", "1.0",
+            capabilities: [new string('x', 81)]));
+
+        var campaignProperties = typeof(ExecutionCampaign).GetProperties().Select(property => property.Name);
+        Assert.DoesNotContain(campaignProperties, name =>
+            name.Contains("Provider", StringComparison.Ordinal) ||
+            name.Contains("Capability", StringComparison.Ordinal) ||
+            name.Contains("Billing", StringComparison.Ordinal) ||
+            name.Contains("Workspace", StringComparison.Ordinal) ||
+            name.Contains("Location", StringComparison.Ordinal));
     }
 
     [Fact]

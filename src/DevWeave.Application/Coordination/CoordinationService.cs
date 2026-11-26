@@ -278,6 +278,7 @@ public sealed class CoordinationService :
     public async Task<Guid> CreateAsync(AuthorizedScope scope, CampaignDraft draft, CancellationToken ct = default)
     {
         var baseline = await RequireProjectBaselineAsync(scope, draft.BaselineId, ct);
+        var targets = await RequirePinnedTargetsAsync(scope, draft.CodebaseTargetIds, ct);
         await EnsureCampaignCapacityAsync(scope, ct);
 
         var campaign = ExecutionCampaign.Create(
@@ -286,10 +287,47 @@ public sealed class CoordinationService :
             baseline.Id.Value,
             draft.Objective,
             draft.ExecutionMode);
+        var pins = targets.Select(target => CampaignCodebasePin.Pin(campaign.Id, target)).ToList();
 
         await _repository.AddCampaignAsync(campaign, ct);
+        await _repository.AddCampaignPinsAsync(pins, ct);
         await _uow.SaveChangesAsync(ct);
         return campaign.Id.Value;
+    }
+
+    private async Task<List<CodebaseTarget>> RequirePinnedTargetsAsync(
+        AuthorizedScope scope, IReadOnlyList<Guid>? targetIds, CancellationToken ct)
+    {
+        if (scope.ProjectId is null)
+            throw new ArgumentException("A campaign requires a project.");
+
+        var requested = new List<Guid>();
+        var seen = new HashSet<Guid>();
+        if (targetIds is not null)
+        {
+            foreach (var id in targetIds)
+            {
+                if (id == Guid.Empty || !seen.Add(id))
+                    continue;
+                requested.Add(id);
+            }
+        }
+
+        if (requested.Count == 0)
+            throw new ArgumentException("A campaign requires a pinned codebase commit.");
+
+        var targets = new List<CodebaseTarget>(requested.Count);
+        foreach (var id in requested)
+        {
+            var target = await _repository.GetCodebaseTargetByIdAsync(scope.TenantId, new CodebaseTargetId(id), ct);
+            if (target is null || target.ProjectId != scope.ProjectId)
+                throw new NotFoundException("Codebase target was not found within this project.");
+            if (string.IsNullOrWhiteSpace(target.BaseCommitSha))
+                throw new ArgumentException("A codebase target is missing its pinned commit.");
+            targets.Add(target);
+        }
+
+        return targets;
     }
 
     private async Task EnsureCampaignCapacityAsync(AuthorizedScope scope, CancellationToken ct)
@@ -1130,6 +1168,8 @@ public sealed class CoordinationService :
                 throw new NotFoundException($"Unknown specification topics: {string.Join(", ", unknown)}.");
         }
 
+        var predecessors = await RequirePackageDependenciesAsync(scope, campaign, baseline, draft.DependsOn, ct);
+
         var package = WorkPackage.Create(
             scope.TenantId,
             scope.ProjectId!,
@@ -1144,8 +1184,92 @@ public sealed class CoordinationService :
             draft.Provider);
 
         await _repository.AddWorkPackageAsync(package, ct);
+        await _repository.AddWorkPackageDependenciesAsync(
+            predecessors.Select(predecessor => WorkPackageDependency.Link(package, predecessor)).ToList(), ct);
         await _uow.SaveChangesAsync(ct);
         return package.Id.Value;
+    }
+
+    private async Task<List<WorkPackage>> RequirePackageDependenciesAsync(
+        AuthorizedScope scope,
+        ExecutionCampaign campaign,
+        PlanBaseline baseline,
+        IReadOnlyList<Guid>? dependsOn,
+        CancellationToken ct)
+    {
+        var requested = new List<Guid>();
+        var seen = new HashSet<Guid>();
+        if (dependsOn is not null)
+        {
+            foreach (var id in dependsOn)
+            {
+                if (id == Guid.Empty || !seen.Add(id))
+                    continue;
+                requested.Add(id);
+            }
+        }
+
+        var predecessors = new List<WorkPackage>(requested.Count);
+        foreach (var id in requested)
+        {
+            var predecessor = await _repository.GetWorkPackageByIdAsync(scope.TenantId, new WorkPackageId(id), ct);
+            if (predecessor is null || predecessor.ProjectId != scope.ProjectId)
+                throw new NotFoundException("A package dependency was not found within this project.");
+            if (predecessor.CampaignId != campaign.Id || predecessor.BaselineId != baseline.Id.Value)
+                throw new ConflictException("A package dependency must be another package on the same campaign baseline.");
+            predecessors.Add(predecessor);
+        }
+
+        return predecessors;
+    }
+
+    public async Task<WorkPackageAssignmentView> AssignAsync(
+        AuthorizedScope scope, Guid workPackageId, Guid runtimeId, CancellationToken ct = default)
+    {
+        if (runtimeId == Guid.Empty)
+            throw new ArgumentException("A package assignment requires a runtime.");
+
+        var package = await _repository.GetWorkPackageByIdAsync(scope.TenantId, new WorkPackageId(workPackageId), ct);
+        if (package is null || package.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Work package was not found within this project.");
+
+        var existing = await _repository.GetAssignmentByPackageAsync(scope.TenantId, package.Id, ct);
+        if (existing is not null)
+            throw new ConflictException("This work package is already assigned.");
+
+        var runtime = await _repository.GetRuntimeByIdAsync(scope.TenantId, new RuntimeId(runtimeId), ct);
+        if (runtime is null || runtime.ProjectId != scope.ProjectId)
+            throw new NotFoundException("Runtime was not found within this project.");
+
+        var campaign = await _repository.GetCampaignByIdAsync(scope.TenantId, package.CampaignId, ct)
+            ?? throw new NotFoundException("Campaign was not found within this project.");
+        if (campaign.BaselineId != package.BaselineId)
+            throw new ConflictException("The work package is not on its campaign baseline.");
+
+        var offer = await _repository.FindAcceptedOfferAsync(scope.TenantId, package.CampaignId, runtime.Id, ct);
+        if (offer is null || offer.AvailableUntil < DateTimeOffset.UtcNow)
+            throw new ConflictException("The runtime does not have an accepted participation offer for this campaign.");
+
+        var declared = new HashSet<string>(runtime.Capabilities, StringComparer.Ordinal);
+        foreach (var required in offer.RequiredCapabilities)
+        {
+            var capability = required?.Trim();
+            if (string.IsNullOrEmpty(capability))
+                continue;
+            if (!declared.Contains(capability))
+                throw new ConflictException($"Runtime is missing the offered capability '{capability}'.");
+        }
+
+        var assignment = WorkPackageAssignment.Assign(package, runtime.Id);
+        await _repository.AddWorkPackageAssignmentAsync(assignment, ct);
+        await _uow.SaveChangesAsync(ct);
+        return new WorkPackageAssignmentView(
+            assignment.PackageId.Value,
+            assignment.RuntimeId.Value,
+            assignment.CampaignId.Value,
+            assignment.BaselineId,
+            assignment.ContextSnapshotId,
+            assignment.SnapshotRevisionIds);
     }
 
     // --- IIntegrationQueue ---
@@ -1380,6 +1504,8 @@ public sealed class CoordinationService :
         var version = baselines.FirstOrDefault(b => b.Id.Value == package.BaselineId)?.ExpectedPlanVersion ?? 0;
         var blocked = await DescribeBlockedPackageAsync(scope, package, ct);
         var latest = await _repository.GetLatestWorkthroughAsync(scope.TenantId, package.Id, ct);
+        var dependencies = await _repository.ListDependenciesByPackageAsync(scope.TenantId, package.Id, ct);
+        var assignment = await _repository.GetAssignmentByPackageAsync(scope.TenantId, package.Id, ct);
         return new WorkPackageStatusView(
             package.Id.Value,
             package.CampaignId.Value,
@@ -1397,7 +1523,11 @@ public sealed class CoordinationService :
             package.IsUnscoped,
             latest is null ? null : MapWorkthrough(latest),
             package.ExecutionLocation.ToString(),
-            package.Provider);
+            package.Provider,
+            dependencies.Select(dependency => dependency.DependsOnPackageId.Value).ToArray(),
+            assignment?.RuntimeId.Value,
+            assignment?.ContextSnapshotId,
+            assignment?.SnapshotRevisionIds);
     }
 
     private async Task<bool> ActorHeldLeaseAsync(AuthorizedScope scope, WorkPackageId packageId, CancellationToken ct)

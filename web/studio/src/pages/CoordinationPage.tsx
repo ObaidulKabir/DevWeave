@@ -23,6 +23,15 @@ import {
 } from '../lib/coordination';
 import { useWorkspace } from '../workspace/WorkspaceContext';
 
+function campaignSubtitle(campaign: Campaign): string {
+  const pins = campaign.pins ?? [];
+  if (pins.length === 0) return campaign.executionMode;
+  const pinned = pins
+    .map((pin) => `${pin.repositoryId}@${pin.baseCommitSha.slice(0, 7)}`)
+    .join(', ');
+  return `${campaign.executionMode} · ${pinned}`;
+}
+
 export function CoordinationPage() {
   const { tenantId, project, live, busy, run, campaigns, mcp, setCampaigns, refresh } = useWorkspace();
   const [form, setForm] = useState({
@@ -189,7 +198,7 @@ export function CoordinationPage() {
               <Row
                 key={campaign.id}
                 title={campaign.objective}
-                subtitle={campaign.executionMode}
+                subtitle={campaignSubtitle(campaign)}
                 meta={<StateBadge value={campaign.status} />}
               />
             ))}

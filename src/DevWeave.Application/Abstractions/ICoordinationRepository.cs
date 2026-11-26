@@ -28,6 +28,11 @@ public interface ICoordinationRepository : IWorkPackageImpactSource
 
     // Work Packages
     Task AddWorkPackageAsync(WorkPackage workPackage, CancellationToken ct = default);
+    Task AddWorkPackageDependenciesAsync(IReadOnlyList<WorkPackageDependency> dependencies, CancellationToken ct = default);
+    Task<List<WorkPackageDependency>> ListDependenciesByPackageAsync(TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default);
+    Task AddWorkPackageAssignmentAsync(WorkPackageAssignment assignment, CancellationToken ct = default);
+    Task<WorkPackageAssignment?> GetAssignmentByPackageAsync(TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default);
+    Task<ParticipationOffer?> FindAcceptedOfferAsync(TenantId tenantId, CampaignId campaignId, RuntimeId runtimeId, CancellationToken ct = default);
     Task<WorkPackage?> GetWorkPackageByIdAsync(TenantId tenantId, WorkPackageId id, CancellationToken ct = default);
     Task<WorkPackage?> GetWorkPackageByKeyAsync(TenantId tenantId, CampaignId campaignId, string key, CancellationToken ct = default);
 
@@ -87,6 +92,9 @@ public interface ICoordinationRepository : IWorkPackageImpactSource
     Task<ExecutionCampaign?> GetCampaignByIdAsync(TenantId tenantId, CampaignId id, CancellationToken ct = default);
     Task<List<ExecutionCampaign>> ListCampaignsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default);
     Task AddCampaignAsync(ExecutionCampaign campaign, CancellationToken ct = default);
+    Task AddCampaignPinsAsync(IReadOnlyList<CampaignCodebasePin> pins, CancellationToken ct = default);
+    Task<List<CampaignCodebasePin>> ListPinsByCampaignsAsync(
+        TenantId tenantId, IReadOnlyCollection<CampaignId> campaignIds, CancellationToken ct = default);
 
     // Work packages by campaign
     Task<List<WorkPackage>> ListWorkPackagesByCampaignAsync(TenantId tenantId, CampaignId campaignId, CancellationToken ct = default);

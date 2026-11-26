@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace DevWeave.Infrastructure.Repositories;
 
-internal sealed class UnitOfWork : IUnitOfWork
+internal sealed class UnitOfWork : IUnitOfWork, ITransactionRunner
 {
     private readonly DevWeaveDbContext _db;
 
@@ -42,5 +42,18 @@ internal sealed class UnitOfWork : IUnitOfWork
         {
             throw new ConflictException("Another baseline locked this plan version at the same moment. Refresh the lock preview and try again.");
         }
+    }
+
+    public async Task ExecuteAsync(Func<CancellationToken, Task> action, CancellationToken ct = default)
+    {
+        if (_db.Database.CurrentTransaction is not null)
+        {
+            await action(ct);
+            return;
+        }
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await action(ct);
+        await transaction.CommitAsync(ct);
     }
 }

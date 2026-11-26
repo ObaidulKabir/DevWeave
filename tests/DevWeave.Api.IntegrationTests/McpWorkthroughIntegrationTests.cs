@@ -44,15 +44,15 @@ public sealed class McpWorkthroughIntegrationTests : IClassFixture<IdentityTestF
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", Array.Empty<ResourceRef>(), Array.Empty<Guid>(), new[] { "criterion" }, 1));
+            targetId = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, Array.Empty<Guid>(), "Build version 1", "Mediated", "camp-wt"));
+                new CampaignDraft(baselineId, [targetId], "Build version 1", "Mediated", "camp-wt"));
             var scheduler = services.GetRequiredService<IParticipationScheduler>();
             packageId = await scheduler.CreatePackageAsync(owner, new PackageDraft(
                 campaignId, baselineId, "First package", [], [], [], [seed.RootRevision.Id.Value]));
             otherPackageId = await scheduler.CreatePackageAsync(owner, new PackageDraft(
                 campaignId, baselineId, "Second package", [], [], [], [seed.RootRevision.Id.Value]));
-            targetId = await services.GetRequiredService<ICodebaseRegistry>()
-                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
         }
 
         using var agentA = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.AgentA.Id.Value);

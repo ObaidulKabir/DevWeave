@@ -38,6 +38,8 @@ public sealed class PlanImportService(
     PlanDesignService planDesign,
     ICodebaseRegistry codebases,
     IRepositoryReferenceAdapter git,
+    IKnowledgeItemRepository items,
+    ITransactionRunner transactions,
     IUnitOfWork uow)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -125,9 +127,13 @@ public sealed class PlanImportService(
         var payload = Deserialize(proposal.PayloadJson);
         await ValidatePayloadAsync(tenant, project, payload, Classification.Restricted, ct);
 
-        var mapping = await MaterializeAsync(tenant, project, actor, payload, ct);
-        proposal.Approve(actor, JsonSerializer.Serialize(mapping, JsonOptions), note);
-        await uow.SaveChangesAsync(ct);
+        IReadOnlyDictionary<string, Guid> mapping = new Dictionary<string, Guid>();
+        await transactions.ExecuteAsync(async innerCt =>
+        {
+            mapping = await MaterializeAsync(tenant, project, actor, payload, innerCt);
+            proposal.Approve(actor, JsonSerializer.Serialize(mapping, JsonOptions), note);
+            await uow.SaveChangesAsync(innerCt);
+        }, ct);
         return (proposal, mapping);
     }
 
@@ -325,8 +331,12 @@ public sealed class PlanImportService(
             RequireRef(draft.Ref, "knowledge");
             if (!knowledgeRefs.Add(draft.Ref))
                 throw new ArgumentException($"Duplicate knowledge ref '{draft.Ref}'.");
-            if (string.IsNullOrWhiteSpace(draft.Key) || !keys.Add(draft.Key.Trim()))
+            var key = draft.Key?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(key) || !keys.Add(key))
                 throw new ArgumentException($"Knowledge key '{draft.Key}' is missing or duplicated.");
+            if (await items.KeyExistsAsync(tenant, project, key, ct))
+                throw new ConflictException(
+                    $"A knowledge item with key '{key}' already exists in this project. The plan outline can still be empty. Remove that item or choose another key before importing.");
             if (string.IsNullOrWhiteSpace(draft.Title) || string.IsNullOrWhiteSpace(draft.TypeId) ||
                 string.IsNullOrWhiteSpace(draft.SchemaVersion) || string.IsNullOrWhiteSpace(draft.Content) ||
                 string.IsNullOrWhiteSpace(draft.Reason))

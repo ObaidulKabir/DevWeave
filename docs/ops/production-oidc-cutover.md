@@ -32,6 +32,16 @@ The IdP must emit DevWeave claims on access tokens:
 5. Confirm Studio register shows “Tenant created. Sign in…” and login uses the IdP (not pilot GUID form) once Studio OIDC is wired; until then operators may exchange IdP tokens against the API directly.
 6. Update the MVP evidence register: mark `TEN-007` as `pass` with this runbook + a recorded smoke test.
 
+## Checks
+
+2026-11-26, host `https://dev-weave.prospectbdsoftware.com`:
+
+- `GET /health/ready` returned 200 `{"status":"ready"}`.
+- `GET /auth/login-options` returned `pilotEnabled: true` and `oidcAuthority: null`.
+- `POST /auth/pilot/bootstrap` with a one-character tenant name returned 400, so the pilot route is mapped.
+
+Cutover steps 1–5 are not complete on this host. The MVP checklist records a Product waiver through 2026-12-11 in `docs/mvp-evidence-register.md`. That waiver is not a passed smoke.
+
 ## Rollback
 
 Restore `ASPNETCORE_ENVIRONMENT=Development` and empty `Auth__Oidc__Authority` only for emergency pilot recovery. Re-open a time-bounded waiver in `docs/mvp-evidence-register.md`.

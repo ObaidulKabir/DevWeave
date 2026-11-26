@@ -324,6 +324,12 @@ public sealed class AuthorizePlanRebaseDecisionTests
             return Task.CompletedTask;
         }
 
+        public Task AddWorkPackageDependenciesAsync(IReadOnlyList<WorkPackageDependency> dependencies, CancellationToken ct = default) => Unsupported();
+        public Task<List<WorkPackageDependency>> ListDependenciesByPackageAsync(TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default) => Unsupported<List<WorkPackageDependency>>();
+        public Task AddWorkPackageAssignmentAsync(WorkPackageAssignment assignment, CancellationToken ct = default) => Unsupported();
+        public Task<WorkPackageAssignment?> GetAssignmentByPackageAsync(TenantId tenantId, WorkPackageId packageId, CancellationToken ct = default) => Unsupported<WorkPackageAssignment?>();
+        public Task<ParticipationOffer?> FindAcceptedOfferAsync(TenantId tenantId, CampaignId campaignId, RuntimeId runtimeId, CancellationToken ct = default) => Unsupported<ParticipationOffer?>();
+
         public Task<WorkPackage?> GetWorkPackageByIdAsync(
             TenantId tenantId,
             WorkPackageId id,
@@ -380,6 +386,10 @@ public sealed class AuthorizePlanRebaseDecisionTests
         public Task<bool> IsTargetKilledAsync(TenantId tenantId, KillSwitchTargetType type, Guid targetId, CancellationToken ct = default) => Unsupported<bool>();
         public Task<List<ExecutionCampaign>> ListCampaignsByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) => Unsupported<List<ExecutionCampaign>>();
         public Task AddCampaignAsync(ExecutionCampaign campaign, CancellationToken ct = default) => Unsupported();
+        public Task AddCampaignPinsAsync(IReadOnlyList<CampaignCodebasePin> pins, CancellationToken ct = default) => Unsupported();
+        public Task<List<CampaignCodebasePin>> ListPinsByCampaignsAsync(
+            TenantId tenantId, IReadOnlyCollection<CampaignId> campaignIds, CancellationToken ct = default) =>
+            Unsupported<List<CampaignCodebasePin>>();
         public Task<List<WorkPackage>> ListWorkPackagesByCampaignAsync(TenantId tenantId, CampaignId campaignId, CancellationToken ct = default) => Unsupported<List<WorkPackage>>();
         public Task<List<WorkPackage>> ListWorkPackagesByProjectAsync(TenantId tenantId, ProjectId projectId, CancellationToken ct = default) =>
             Task.FromResult(Packages.Where(package => package.TenantId == tenantId && package.ProjectId == projectId).ToList());

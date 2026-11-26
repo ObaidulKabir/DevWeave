@@ -54,6 +54,8 @@ public static class CoordinationEndpoints
         group.MapPost("/runtimes/{runtimeId:guid}/revoke", RevokeRuntimeAsync);
 
         group.MapPost("/packages", CreatePackageAsync);
+        group.MapPost("/packages/{workPackageId:guid}/assignments", AssignPackageAsync)
+            .RequireAuthorization(ApiAuthorizationPolicies.Human);
         group.MapPost("/offers", OfferParticipationAsync);
         group.MapPost("/offers/{offerId:guid}/decide", DecideOfferAsync);
 
@@ -246,8 +248,10 @@ public static class CoordinationEndpoints
     private static async Task<IResult> ListCampaignsAsync(
         Guid tenantId, Guid projectId, ICoordinationRepository repository, CancellationToken ct)
     {
-        var campaigns = await repository.ListCampaignsByProjectAsync(
-            new TenantId(tenantId), new ProjectId(projectId), ct);
+        var tenant = new TenantId(tenantId);
+        var campaigns = await repository.ListCampaignsByProjectAsync(tenant, new ProjectId(projectId), ct);
+        var pins = await repository.ListPinsByCampaignsAsync(tenant, campaigns.Select(c => c.Id).ToList(), ct);
+        var pinsByCampaign = pins.GroupBy(pin => pin.CampaignId).ToDictionary(group => group.Key, group => group.ToList());
         return Results.Ok(campaigns.Select(c => new
         {
             id = c.Id.Value,
@@ -258,6 +262,15 @@ public static class CoordinationEndpoints
             version = c.Version,
             createdAt = c.CreatedAt,
             updatedAt = c.UpdatedAt,
+            pins = (pinsByCampaign.TryGetValue(c.Id, out var campaignPins) ? campaignPins : [])
+                .Select(pin => new
+                {
+                    codebaseTargetId = pin.TargetId.Value,
+                    provider = pin.Provider,
+                    repositoryId = pin.RepositoryId,
+                    targetBranch = pin.TargetBranch,
+                    baseCommitSha = pin.BaseCommitSha,
+                }),
         }));
     }
 
@@ -329,6 +342,10 @@ public static class CoordinationEndpoints
         unscoped = p.Unscoped,
         executionLocation = p.ExecutionLocation,
         provider = p.Provider,
+        dependsOnPackageIds = p.DependsOnPackageIds ?? Array.Empty<Guid>(),
+        assignedRuntimeId = p.AssignedRuntimeId,
+        contextSnapshotId = p.ContextSnapshotId,
+        snapshotRevisionIds = p.SnapshotRevisionIds ?? Array.Empty<Guid>(),
         latestWorkthrough = p.LatestWorkthrough is null ? null : new
         {
             id = p.LatestWorkthrough.Id,
@@ -425,6 +442,23 @@ public static class CoordinationEndpoints
         {
             var id = await scheduler.CreatePackageAsync(Scope(tenantId, projectId, http, "Create work package"), draft, ct);
             return Results.Created($"/tenants/{tenantId}/projects/{projectId}/coordination/packages/{id}", new { id });
+        }
+        catch (NotFoundException) { return Results.NotFound(); }
+        catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
+
+    private static async Task<IResult> AssignPackageAsync(
+        Guid tenantId, Guid projectId, Guid workPackageId, [FromBody] AssignPackageRequest request,
+        IParticipationScheduler scheduler, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var assignment = await scheduler.AssignAsync(
+                Scope(tenantId, projectId, http, "Assign work package"), workPackageId, request.RuntimeId, ct);
+            return Results.Created(
+                $"/tenants/{tenantId}/projects/{projectId}/coordination/packages/{workPackageId}",
+                assignment);
         }
         catch (NotFoundException) { return Results.NotFound(); }
         catch (ConflictException ex) { return Results.Conflict(new { error = ex.Message }); }
@@ -749,6 +783,7 @@ public static class CoordinationEndpoints
     }
 
     private sealed record DecideRequest(bool Accept);
+    private sealed record AssignPackageRequest(Guid RuntimeId);
     private sealed record RenewLeaseRequest(long ExpectedFence, DateTimeOffset ExpiresAt);
     private sealed record ReleaseLeaseRequest(long ExpectedFence);
     private sealed record DecideIntegrationRequest(long ExpectedFence);

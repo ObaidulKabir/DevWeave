@@ -61,6 +61,7 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<CoordinationCursor> CoordinationCursors => Set<CoordinationCursor>();
     public DbSet<CoordinationEvent> CoordinationEvents => Set<CoordinationEvent>();
     public DbSet<ExecutionCampaign> ExecutionCampaigns => Set<ExecutionCampaign>();
+    public DbSet<CampaignCodebasePin> CampaignCodebasePins => Set<CampaignCodebasePin>();
     public DbSet<PlanBaseline> PlanBaselines => Set<PlanBaseline>();
     public DbSet<PlanBaselineV2> PlanBaselineManifests => Set<PlanBaselineV2>();
     public DbSet<CodebaseTarget> CodebaseTargets => Set<CodebaseTarget>();
@@ -75,6 +76,8 @@ public sealed class DevWeaveDbContext : DbContext
     public DbSet<EntitlementDecision> EntitlementDecisions => Set<EntitlementDecision>();
     public DbSet<TenantTrainingPolicy> TenantTrainingPolicies => Set<TenantTrainingPolicy>();
     public DbSet<WorkPackage> WorkPackages => Set<WorkPackage>();
+    public DbSet<WorkPackageDependency> WorkPackageDependencies => Set<WorkPackageDependency>();
+    public DbSet<WorkPackageAssignment> WorkPackageAssignments => Set<WorkPackageAssignment>();
     public DbSet<WorkPackageWorkthrough> WorkPackageWorkthroughs => Set<WorkPackageWorkthrough>();
     public DbSet<TaskLease> TaskLeases => Set<TaskLease>();
     public DbSet<AgentRuntimeInstance> AgentRuntimeInstances => Set<AgentRuntimeInstance>();

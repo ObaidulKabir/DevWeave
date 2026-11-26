@@ -148,10 +148,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
-            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part2"));
             targetId = await services.GetRequiredService<ICodebaseRegistry>()
                 .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
+            campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
+                new CampaignDraft(baselineId, [targetId], "Build", "Mediated", "camp-part2"));
         }
 
         using var deviceA = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
@@ -265,8 +265,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part3"));
+                new CampaignDraft(baselineId, [pinned], "Build", "Mediated", "camp-part3"));
             runtimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
                 new RuntimeRegistration(seed.Executor.Id.Value, "laptop", "1.0", ["code.write"], $"attest-{Guid.NewGuid():N}"));
             packageId = await services.GetRequiredService<IParticipationScheduler>().CreatePackageAsync(owner,
@@ -344,8 +346,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             var baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             var campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part5"));
+                new CampaignDraft(baselineId, [pinned], "Build", "Mediated", "camp-part5"));
             runtimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
                 new RuntimeRegistration(seed.Executor.Id.Value, "laptop", "1.0", ["code.write"], $"attest-{Guid.NewGuid():N}"));
             otherRuntimeId = await services.GetRequiredService<IRuntimeRegistry>().RegisterAsync(owner,
@@ -401,8 +405,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part6"));
+                new CampaignDraft(baselineId, [pinned], "Build", "Mediated", "camp-part6"));
         }
 
         using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
@@ -452,8 +458,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part7"));
+                new CampaignDraft(baselineId, [pinned], "Build", "Mediated", "camp-part7"));
         }
 
         using var holder = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
@@ -522,8 +530,10 @@ public sealed class McpCasePlaybookTests : IClassFixture<IdentityTestFactory>
             var services = setup.ServiceProvider;
             var baselineId = await services.GetRequiredService<IPlanBaselines>().LockAsync(owner,
                 new BaselineDraft("Version 1", [], [], ["criterion"], 1));
+            var pinned = await services.GetRequiredService<ICodebaseRegistry>()
+                .RegisterAsync(owner, "github", "acme/app", "main", "abc1234");
             campaignId = await services.GetRequiredService<ICampaignCoordinator>().CreateAsync(owner,
-                new CampaignDraft(baselineId, [], "Build", "Mediated", "camp-part4"));
+                new CampaignDraft(baselineId, [pinned], "Build", "Mediated", "camp-part4"));
         }
 
         using var agent = _factory.CreateAuthenticatedAgentClient(seed.Tenant.Id.Value, seed.Executor.Id.Value);
